@@ -88,28 +88,42 @@ macro_rules! pe {
     };
 }
 
-fn fe<E>(e: E) -> String
-where
-    E: fmt::Display,
-{
-    format!("Error: {}", e)
-}
+// fn fe<E>(e: E) -> String
+// where
+//     E: fmt::Display,
+// {
+//     format!("Error: {}", e)
+// }
 
-fn fel<E>(line: u32, e: E) -> String
-where
-    E: fmt::Display,
-{
-    format!("Error at line {}: {}", line, e)
+// fn fel<E>(line: u32, e: E) -> String
+// where
+//     E: fmt::Display,
+// {
+//     format!("Error at line {}: {}", line, e)
+// }
+
+macro_rules! fef {
+    ($s:expr) => {
+        fef!($s,)
+    };
+    ($s:expr, $($fargs:expr),*) => {
+        if cfg!(feature = "error_lines") {
+            format!(concat!("Error at line {}: ", $s), line!(), $($fargs,)*)
+        } else {
+            format!("Error: {}", $s)
+        }
+    };
 }
 
 macro_rules! fe {
     ($e:expr) => {
         if cfg!(feature = "error_lines") {
-            fel(line!(), $e)
+            format!("Error at line {}: {}", line!(), $e)
         } else {
-            fe($e)
+            format!("Error: {}", $e)
         }
     };
+    // ($e:expr) => {};
     () => {
         |e| fe!(e)
     };
@@ -238,11 +252,9 @@ fn download() -> Result<(), ()> {
             let reddit_id = String::from(
                 id_re
                     .captures(&permalink)
-                    .ok_or("Couldn't find ID")
-                    .map_err(fe!())?
+                    .ok_or(fef!("Couldn't find ID"))?
                     .get(1)
-                    .ok_or("Couldn't find ID")
-                    .map_err(fe!())?
+                    .ok_or(fef!("Couldn't find ID"))?
                     .as_str(),
             );
 
@@ -269,60 +281,55 @@ fn download() -> Result<(), ()> {
                     client
                         .clone()
                         .request(request)
-                        .map_err(fe)
+                        .map_err(fe!())
                         .and_then(move |res| {
-                            if res.status().is_success() {
+                            let status = res.status();
+                            if status.is_success() {
                                 match res.headers().get(header::CONTENT_TYPE) {
-                                    Some(ctype) => match ctype.to_str() {
-                                        Ok(val) => {
-                                            if IMAGE_MIMES.iter().any(|t| *t == val) {
-                                                Ok(Loop::Break(res))
-                                            } else {
-                                                Err(format!(
-                                                    "{} sent unsupported file format {}",
-                                                    this_link, val
-                                                ))
-                                            }
+                                    Some(ctype) => {
+                                        let val = ctype.to_str().map_err(fe!())?;
+                                        if IMAGE_MIMES.iter().any(|t| *t == val) {
+                                            Ok(Loop::Break(res))
+                                        } else {
+                                            Err(fef!(
+                                                "{} sent unsupported file format {}",
+                                                this_link, val
+                                            ))
                                         }
-                                        Err(_) => Err(format!(
-                                            "{} sent non-ASCII header content",
-                                            this_link
-                                        )),
                                     },
                                     None => Ok(Loop::Break(res)),
                                 }
-                            } else if res.status().is_redirection() {
+                            } else if status.is_redirection() {
                                 Ok(Loop::Continue(
                                     Some(String::from(
                                         res.headers()
                                             .get(header::LOCATION)
-                                            .unwrap()
+                                            .ok_or_else(||
+                                                        fef!("{} redirected without location", this_link))?
                                             .to_str()
-                                            .unwrap(),
+                                            .map_err(fe!())?,
                                     )),
-                                    //client.clone(),
                                 ))
                             } else {
-                                Err(format!("{} sent status {}", this_link, res.status()))
+                                Err(fef!("{} sent status {}", this_link, status))
                             }
-                            .map_err(fe!())
                         })
                 })
-                .and_then(|res| {
-                    let (parts, body) = res.into_parts();
-                    (ok(parts), body.concat2().map_err(fe!()))
-                })
-                .and_then(move |(_parts, body)| {
-                    let img = load_from_memory(&body).map_err(fe!())?;
+                    .and_then(|res| {
+                        let (parts, body) = res.into_parts();
+                        (ok(parts), body.concat2().map_err(fe!()))
+                    })
+                    .and_then(move |(_parts, body)| {
+                        let img = load_from_memory(&body).map_err(fe!())?;
 
-                    saver.save(dhash(img)).map_err(fe!())
-                })
-                .map_err(|e| {
-                    saver2
-                        .save_errored()
-                        .unwrap_or_else(pe!());
-                    print_err(e);
-                }),
+                        saver.save(dhash(img)).map_err(fe!())
+                    })
+                    .map_err(|e| {
+                        saver2
+                            .save_errored()
+                            .unwrap_or_else(pe!());
+                        print_err(e);
+                    }),
             );
         }
 

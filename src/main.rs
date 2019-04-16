@@ -88,20 +88,6 @@ macro_rules! pe {
     };
 }
 
-// fn fe<E>(e: E) -> String
-// where
-//     E: fmt::Display,
-// {
-//     format!("Error: {}", e)
-// }
-
-// fn fel<E>(line: u32, e: E) -> String
-// where
-//     E: fmt::Display,
-// {
-//     format!("Error at line {}: {}", line, e)
-// }
-
 macro_rules! fef {
     ($s:expr) => {
         fef!($s,)
@@ -123,7 +109,6 @@ macro_rules! fe {
             format!("Error: {}", $e)
         }
     };
-    // ($e:expr) => {};
     () => {
         |e| fe!(e)
     };
@@ -267,7 +252,7 @@ fn download() -> Result<(), ()> {
 
             let saver2 = saver.clone();
 
-            let client = Client::builder().build::<_, hyper::Body>((&https).clone());
+            let client = Client::builder().build::<_, hyper::Body>(https.clone());
 
             tokio::spawn(
                 loop_fn(None, move |this_link: Option<String>| {
@@ -276,8 +261,7 @@ fn download() -> Result<(), ()> {
                     let request = Request::get(&this_link)
                         .header(header::ACCEPT, IMAGE_MIMES.join(","))
                         .body(Body::empty())
-                        .map_err(pe!()).unwrap();
-
+                        .map_err(fe!()).unwrap();
                     client
                         .clone()
                         .request(request)
@@ -333,8 +317,7 @@ fn download() -> Result<(), ()> {
             );
         }
 
-        drop(tx);
-        Ok::<(), String>(())
+        Ok(())
     }).map_err(print_err)
     );
 
@@ -345,6 +328,7 @@ fn main() {
     // let mut res = reqwest::get("https://elastic.pushshift.io/rs/submissions/_search?q=subreddit:aww%20AND%20url:jpg&size=500&sort=score:desc&pretty=true").unwrap();
     // let mut out_file = std::fs::OpenOptions::new()
     //     .write(true)
+    //     .truncate(true)
     //     .open("aww.json")
     //     .unwrap();
     // std::io::copy(&mut res, &mut out_file).unwrap();

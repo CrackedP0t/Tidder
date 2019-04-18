@@ -1,21 +1,2 @@
-[package]
-name = "hasher"
-version = "0.1.0"
-authors = ["Elaina Martineau <elainamartineau@gmail.com>"]
-edition = "2018"
-
-[features]
-default = ["error_lines"]
-error_lines = []
-
-[dependencies]
-futures = "*"
-hyper = "*"
-hyper-tls = "*"
-image = "*"
-regex = "*"
-reqwest = "*"
-serde = { version = "*", features = ["derive"] }
-serde_json = "*"
-tokio = "*"
-tokio-postgres = "0.4.0-rc.2"
+[workspace]
+members = ["hasher", "site"]

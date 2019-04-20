@@ -1,10 +1,5 @@
-<!DOCTYPE html>
-<html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <title>Hello, Gotham!</title>
-    </head>
-    <body>
-        Askama says: "{{ message }}"
-    </body>
-</html>
+{% extends "base.html" %}
+
+{% block title %}Welcome to Tidder!{% endblock %}
+
+{% block content %}<p> Hello! </p>{% endblock %}

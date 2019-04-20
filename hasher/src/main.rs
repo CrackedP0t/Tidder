@@ -1,19 +1,14 @@
-#![allow(dead_code)]
-
-use futures::future::{lazy, loop_fn, ok, result, Loop};
+use common::{dhash, get_image, Hash, StatusFail};
+use failure::Error;
+use futures::future::lazy;
 use futures::sync::mpsc::{self, SendError, UnboundedSender};
 use futures::{Future, Stream};
-use hyper::{header, Body, Client, Request, StatusCode};
+use hyper::{Body, Client, StatusCode};
 use hyper_tls::HttpsConnector;
-use image::{imageops, load_from_memory, DynamicImage};
 use regex::Regex;
 use serde::Deserialize;
-use std::error::Error;
-use std::fmt;
-// use std::fs::File;
 use std::io::BufReader;
-use tokio_postgres::{to_sql_checked, types, NoTls};
-use url::percent_encoding::{utf8_percent_encode, QUERY_ENCODE_SET};
+use tokio_postgres::NoTls;
 
 #[derive(Deserialize, Debug)]
 struct Post {
@@ -38,51 +33,6 @@ struct Posts {
     hits: Hits,
 }
 
-#[derive(Debug)]
-pub struct Hash(u64);
-
-impl fmt::Display for Hash {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl types::ToSql for Hash {
-    fn to_sql(
-        &self,
-        t: &types::Type,
-        w: &mut Vec<u8>,
-    ) -> Result<types::IsNull, Box<Error + Sync + Send>> {
-        (self.0 as i64).to_sql(t, w)
-    }
-
-    fn accepts(t: &types::Type) -> bool {
-        i64::accepts(t)
-    }
-
-    to_sql_checked!();
-}
-
-fn dhash(img: DynamicImage) -> Hash {
-    let small_img = imageops::resize(&img.to_luma(), 9, 8, image::Triangle);
-
-    let mut hash: u64 = 0;
-
-    for y in 0..8 {
-        for x in 0..8 {
-            let bit = ((small_img.get_pixel(x, y).data[0] > small_img.get_pixel(x + 1, y).data[0])
-                as u64)
-                << (x + y * 8);
-            hash |= bit;
-        }
-    }
-
-    Hash(hash)
-}
-
-fn distance(a: Hash, b: Hash) -> u32 {
-    (a.0 ^ b.0).count_ones()
-}
 macro_rules! pe {
     () => {
         |e| eprintln!("{}", fe!(e))
@@ -145,20 +95,6 @@ struct PostRow {
     status_code: Option<StatusCode>,
 }
 
-const IMAGE_MIMES: [&str; 11] = [
-    "image/png",
-    "image/jpeg",
-    "image/gif",
-    "image/webp",
-    "image/x-portable-anymap",
-    "image/tiff",
-    "image/x-targa",
-    "image/x-tga",
-    "image/bmp",
-    "image/vnd.microsoft.icon",
-    "image/vnd.radiance",
-];
-
 #[derive(Clone)]
 struct Saver {
     tx: UnboundedSender<PostRow>,
@@ -192,33 +128,6 @@ impl Saver {
             status_code,
         })
     }
-}
-
-macro_rules! sce {
-    ($sc:expr) => {
-        move |e| -> (String, Option<StatusCode>) { (fe!(e), Some($sc)) }
-    };
-    () => {
-        move |e| -> (String, Option<StatusCode>) { (fe!(e), None) }
-    };
-}
-
-macro_rules! scef {
-    ($sc:expr, $s:expr) => {
-        scnef!($sc, $s,)
-    };
-    ($sc:expr, $s:expr, $($fargs:expr),*) => {
-        (fef!($s, $($fargs),*), Some($sc))
-    };
-}
-
-macro_rules! scnef {
-    ($s:expr) => {
-        scnef!($s,)
-    };
-    ($s:expr, $($fargs:expr),*) => {
-        (fef!($s, $($fargs),*), None)
-    };
 }
 
 fn download() -> Result<(), ()> {
@@ -279,74 +188,24 @@ fn download() -> Result<(), ()> {
                 permalink
             };
 
-
-            let client = Client::builder().build::<_, hyper::Body>(https.clone());
-
+            let client = Client::builder().build::<_, Body>(https.clone());
             tokio::spawn(
-                loop_fn((client, link), move |(client, this_link)| {
-                    let rel_abs_re = Regex::new(r"^/").unwrap();
-                    let this_link = rel_abs_re.replace(this_link.as_str(), "https://reddit.com/").into_owned();
-                    let tl2 = this_link.clone();
-
-                    result(Request::get(
-                        utf8_percent_encode(&this_link, QUERY_ENCODE_SET).to_string().as_str()
-                    )
-                           .header(header::ACCEPT, IMAGE_MIMES.join(","))
-                           .header(header::USER_AGENT, "Mozilla/5.0 (X11; Linux x86_64; rv:66.0) Gecko/20100101 Firefox/66.0")
-                           .body(Body::empty())
-                           .map_err(sce!())).and_then(
-                        |request| client
-                            .request(request)
-                            .map_err(move |e| scnef!("{} caused: {}", tl2, e))
-                            .and_then(move |res| {
-                                let status = res.status();
-                                if status.is_success() {
-                                    match res.headers().get(header::CONTENT_TYPE) {
-                                        Some(ctype) => {
-                                            let val = ctype.to_str().map_err(sce!())?;
-                                            if IMAGE_MIMES.iter().any(|t| *t == val) {
-                                                Ok(Loop::Break((this_link, res)))
-                                            } else {
-                                                Err(scnef!(
-                                                    "{} sent unsupported MIME type {}",
-                                                    this_link, val
-                                                ))
-                                            }
-                                        },
-                                        None => Ok(Loop::Break((this_link, res))),
-                                    }
-                                } else if status.is_redirection() {
-                                    Ok(Loop::Continue(
-                                        (client,
-                                            String::from(
-                                            res.headers()
-                                                .get(header::LOCATION)
-                                                .ok_or_else(||
-                                                            scnef!("{} redirected without location", this_link))?
-                                                .to_str()
-                                                .map_err(sce!())?,
-                                        )),
-                                    ))
-                                } else {
-                                    Err(scef!(status, "{} sent status {}", this_link, status))
-                                }
-                            }))
-                })
-                    .and_then(|(this_link, resp)| {
-                        let (parts, body) = resp.into_parts();
-                        (ok(this_link), ok(parts.status), body.concat2().map_err(sce!(parts.status)))
-                    })
-                    .and_then(move |(this_link, status, body)| {
-                        (ok(this_link), ok(status), load_from_memory(&body).map_err(sce!(status)))
-                    })
+                    get_image(client, link.clone())
                     .then(|res| {
                         match res {
-                            Ok((this_link, status, img)) => saver.save(dhash(img), Some(status)).map_err(fe!()).map(|_| eprintln!("{} successfully hashed", this_link)).map_err(pe!()),
-                            Err((e, status)) => {
+                            Ok((status, img)) => saver.save(dhash(img), Some(status)).map_err(fe!()).map(|_| eprintln!("{} successfully hashed", link)).map_err(pe!()),
+                            Err(e) => {
+                                let (e, status) = match e.downcast::<StatusFail>() {
+                                    Ok(se) => {
+                                        let status = se.status;
+                                        (Error::from(se), Some(status))
+                                    },
+                                    Err(e) => (e, None)
+                                };
                                 saver
                                     .save_errored(status)
                                     .unwrap_or_else(pe!());
-                                print_err(e);
+                                eprintln!("{}", e.context(link));
                                 Err(())
                             }
                         }

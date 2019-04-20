@@ -1,0 +1,5 @@
+<ul>
+    {% for m in matches %}
+        <li><a href="{{m.permalink}}">Match {{loop.index}}:</a> <img src="{{m.link}}"></img></li>
+    {% endfor %}
+</ul>

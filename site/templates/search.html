@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}Search with Tidder!{% endblock %}
+
+{% block content %}
+    <h1>Search for an image!</h1>
+    <form method="get" action="/search">
+        <input type="url" name="imageurl" required="true" />
+        <input type="submit" value="Search" />
+    </form>
+    {% match sent %}
+    {% when Some with (sent) %}
+    <p>You searched for {{sent.url}}</p>
+    {% match sent.findings %}
+        {% when Ok with (findings) %}
+        {{findings|safe}}
+        {% when Err with (message) %}
+        Error: {{message}}
+        {% endmatch %}
+    {% when None %}
+    <p>No search yet...</p>
+    {% endmatch %}
+{% endblock %}

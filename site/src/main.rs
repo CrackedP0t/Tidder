@@ -1,43 +1,136 @@
 use askama::Template;
-use gotham::helpers::http::response::{create_empty_response, create_response};
-use gotham::state::State;
-use hyper::{Body, Response, StatusCode};
-use tokio_postgres::{self, NoTls};
+use common::{dhash, get_image, Hash};
+use failure::Error;
+use fallible_iterator::FallibleIterator;
+use futures::future::{ok, result, Either, Future};
+use http::StatusCode;
+use hyper::{self, Body};
+use hyper_tls::HttpsConnector;
+use postgres::{self, NoTls};
+use r2d2_postgres::{r2d2, PostgresConnectionManager};
+use serde::Deserialize;
+use std::vec::Vec;
+use url::Url;
+use warp::path::{full, FullPath};
+use warp::{get2, path, query, reply, Filter, Rejection, Reply};
 
-pub const MESSAGE: &str = "Hello, Gotham!";
-
-/// The index displays a message to the browser.
-/// The default template directory is `$CRATE_ROOT/templates`,which is what we are using in this example
-#[derive(Debug, Template)]
-#[template(path = "index.html")]
-pub struct Index {
-    pub message: String,
+#[derive(Deserialize)]
+struct SearchQuery {
+    imageurl: Option<String>,
 }
 
-/// Renders the `index.html` template with the `MESSAGE` constant as the message
-pub fn index(state: State) -> (State, Response<Body>) {
-    let tpl = Index {
-        message: MESSAGE.to_string(),
-    };
-
-    // The response is either the rendered template, or a server error if something really goes wrong
-    let res = match tpl.render() {
-        Ok(content) => create_response(
-            &state,
-            StatusCode::OK,
-            mime::TEXT_HTML_UTF_8,
-            content.into_bytes(),
-        ),
-        Err(_) => create_empty_response(&state, StatusCode::INTERNAL_SERVER_ERROR),
-    };
-
-    (state, res)
+struct Match {
+    permalink: String,
+    link: String,
+    reddit_id: String,
 }
 
-/// Run on the normal port for Gotham examples, passing the handler as the only function for the gotham web server.
+#[derive(Template)]
+#[template(path = "findings.html")]
+struct Findings {
+    matches: Vec<Match>,
+}
+
+struct Sent {
+    url: String,
+    findings: Result<Findings, Error>,
+}
+
+#[derive(Template)]
+#[template(path = "search.html")]
+struct Search {
+    sent: Option<Sent>,
+}
+
+fn reply_not_found(path: FullPath) -> impl Reply {
+    reply::with_status(
+        reply::html(format!(
+            "<h1>Error 404: Not Found</h1><h2>{}</h2>",
+            path.as_str()
+        )),
+        StatusCode::NOT_FOUND,
+    )
+}
+
+fn run_server() {
+    let manager = PostgresConnectionManager::new(
+        "dbname=tidder host=/run/postgresql user=postgres"
+            .parse()
+            .unwrap(),
+        NoTls,
+    );
+
+    let pool = r2d2::Pool::new(manager).unwrap();
+
+    let https = HttpsConnector::new(4).unwrap();
+
+    let get_search = move |qs: SearchQuery| {
+        match qs.imageurl {
+            Some(url) => {
+                let valid = Url::parse(&url.clone());
+                Either::A(
+                    result(valid.map_err(Error::from))
+                        .and_then(|url| {
+                            let url = url.to_string();
+                            let h_client = hyper::Client::builder().build::<_, Body>(https.clone());
+                            get_image(h_client, url.clone()).and_then(|(status, image)| {
+                                let hash = dhash(image);
+                                ok(pool
+                                    .get()
+                                    .unwrap()
+                                    .query_iter(
+                                        "SELECT reddit_id, link, permalink FROM posts WHERE hash <@ ($1, 10)",
+                                        &[&hash],
+                                    )
+                                    .map(|rows_iter| Search {
+                                        sent: Some(Sent {
+                                            url: url.clone(),
+                                            findings: Ok(Findings {
+                                                matches: rows_iter
+                                                    .map(|row| {
+                                                        Ok(Match {
+                                                            permalink: format!("https://reddit.com{}", row.get::<_, &str>("permalink")),
+                                                            link: row.get("link"),
+                                                            reddit_id: row.get("reddit_id"),
+                                                        })
+                                                    })
+                                                    .collect()
+                                                    .unwrap(),
+                                            }),
+                                        }),
+                                    })
+                                    .unwrap_or_else(|e| Search {
+                                        sent: Some(Sent {
+                                            url,
+                                            findings: Err(Error::from(e)),
+                                        }),
+                                    }))
+                            })
+                        })
+                        .or_else(|e| {
+                            ok::<Search, Rejection>(Search {
+                                sent: Some(Sent {
+                                    url,
+                                    findings: Err(Error::from(e)),
+                                }),
+                            })
+                        }),
+                )
+            }
+            None => Either::B(ok(Search { sent: None })),
+        }
+        .map(|tpl| reply::html(tpl.render().unwrap_or_else(|e| e.to_string().clone())))
+    };
+
+    let router = path("search")
+        .and(query::<SearchQuery>())
+        .and(get2())
+        .and_then(get_search)
+        .or(full().map(reply_not_found));
+
+    warp::serve(router).run(([127, 0, 0, 1], 7878));
+}
+
 pub fn main() {
-    tokio_postgres::connect("postgres://postgres@%2Frun%2Fpostgresql/tidder", NoTls);
-    let addr = "127.0.0.1:7878";
-    println!("Listening at {}", addr);
-    gotham::start(addr, || Ok(index));
+    run_server();
 }

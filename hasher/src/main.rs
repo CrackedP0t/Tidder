@@ -180,13 +180,13 @@ lazy_static! {
         .unwrap();
     static ref ID_RE: Regex = Regex::new(r"/comments/([^/]+)/").unwrap();
     static ref HTTPS: HttpsConnector<HttpConnector> = HttpsConnector::new(4).unwrap();
+    static ref REQW_CLIENT: reqwest::Client = reqwest::Client::new();
 }
 
 fn download(size: u64) -> Result<(), ()> {
     tokio::run(lazy(move || {
         info!("Querying PushShift");
-        let r_client = reqwest::Client::new();
-        let search_resp = r_client
+        let search_resp = REQW_CLIENT
             .get("https://elastic.pushshift.io/rs/submissions/_search")
             .query(&[
                 ("sort", "created_utc:desc"),

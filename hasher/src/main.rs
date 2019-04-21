@@ -1,19 +1,19 @@
 use chrono::NaiveDateTime;
 use common::{dhash, get_image, Hash, StatusFail};
-use failure::Error;
+use fallible_iterator::FallibleIterator;
 use fern;
 use futures::future::lazy;
-use futures::sync::mpsc::{self, SendError, UnboundedSender};
 use futures::{Future, Stream};
-use hyper::{Body, Client, StatusCode};
+use hyper::{client::HttpConnector, Body, Client, StatusCode};
 use hyper_tls::HttpsConnector;
+use lazy_static::lazy_static;
 use log::LevelFilter;
 use log::{error, info, warn};
+use postgres::{self, NoTls};
+use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use regex::Regex;
 use serde::Deserialize;
 use std::env;
-use std::io::BufReader;
-use tokio_postgres::NoTls;
 
 #[derive(Deserialize, Debug)]
 struct Post {
@@ -42,22 +42,13 @@ struct Hits {
 }
 
 #[derive(Deserialize, Debug)]
-struct Posts {
+struct PushShiftSearch {
     hits: Hits,
 }
 
 macro_rules! pe {
     () => {
         |e| error!("{}", fe!(e))
-    };
-}
-
-macro_rules! pef {
-    ($s:expr) => {
-        pef!($s,)
-    };
-    ($s:expr, $($fargs:expr),*) => {
-        |e| {error!(concat!("Error at line {}: ", $s), line!(), $($fargs,)*); ()}
     };
 }
 
@@ -140,82 +131,84 @@ impl PostRow {
 struct Saver {
     post: Post,
     reddit_id: String,
-    tx: UnboundedSender<PostRow>,
 }
 
 impl Saver {
-    fn save(
-        self,
-        hash: Option<Hash>,
-        status_code: Option<StatusCode>,
-    ) -> Result<(), SendError<PostRow>> {
-        self.tx.unbounded_send(PostRow::from_post(
-            self.post,
-            hash,
-            self.reddit_id,
-            status_code,
-        ))
+    fn save(self, hash: Option<Hash>, status_code: Option<StatusCode>) {
+        let post = PostRow::from_post(self.post, hash, self.reddit_id, status_code);
+
+        let client = DB_POOL
+            .get()
+            .map_err(pe!())
+            .and_then(
+                |mut client|
+                client.transaction().map_err(pe!())
+                    .and_then(|mut trans| {
+                        trans.execute(
+                            "INSERT INTO posts (reddit_id, link, permalink, is_hashable, hash, status_code, author, created_utc, score, subreddit, title, nsfw, spoiler) \
+                             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+                            &[
+                                &post.reddit_id,
+                                &Some(post.link),
+                                &post.permalink,
+                                &post.is_hashable,
+                                &post.hash,
+                                &(post.status_code.map(|sc| sc.as_u16() as i16)),
+                                &post.author,
+                                &(NaiveDateTime::from_timestamp(post.created_utc, 0)),
+                                &post.score,
+                                &post.subreddit,
+                                &post.title,
+                                &post.nsfw,
+                                &post.spoiler,
+                            ],
+                        ).map_err(pe!())
+                    }))
+            .map(|_| ())
+            .unwrap_or_else(|_| ());
     }
+}
+
+lazy_static! {
+    static ref DB_POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> =
+        r2d2::Pool::new(PostgresConnectionManager::new(
+            "dbname=tidder host=/run/postgresql user=postgres"
+                .parse()
+                .unwrap(),
+            NoTls,
+        ))
+        .unwrap();
+    static ref ID_RE: Regex = Regex::new(r"/comments/([^/]+)/").unwrap();
+    static ref HTTPS: HttpsConnector<HttpConnector> = HttpsConnector::new(4).unwrap();
 }
 
 fn download(size: u64) -> Result<(), ()> {
     tokio::run(lazy(move || {
         info!("Querying PushShift");
-        let ingest = BufReader::new(reqwest::get(
-            format!("https://elastic.pushshift.io/rs/submissions/_search?sort=created_utc:desc&size={}&_source=permalink,url,author,created_utc,subreddit,score,title,over_18,spoiler", size).as_str()
-        ).map_err(pe!())?);
+        let r_client = reqwest::Client::new();
+        let search_resp = r_client
+            .get("https://elastic.pushshift.io/rs/submissions/_search")
+            .query(&[
+                ("sort", "created_utc:desc"),
+                ("size", size.to_string().as_str()),
+                (
+                    "_source",
+                    "permalink,url,author,created_utc,subreddit,score,title,over_18,spoiler",
+                ),
+            ])
+            .send()
+            .map_err(pe!())?
+            .error_for_status()
+            .map_err(pe!())?;
 
-        let posts: Posts = serde_json::from_reader(ingest).map_err(pe!())?;
+        let search: PushShiftSearch = serde_json::from_reader(search_resp).map_err(pe!())?;
 
-        let https = HttpsConnector::new(4).map_err(pe!())?;
-
-        let (tx, rx) = mpsc::unbounded();
-
-        tokio::spawn(
-            tokio_postgres::connect("postgres://postgres@%2Frun%2Fpostgresql/tidder", NoTls)
-                .map_err(pe!())
-                .and_then(|(mut client, conn)| {
-                    tokio::spawn(conn.map_err(pe!()));
-
-                    client.prepare(
-                        "INSERT INTO posts (reddit_id, link, permalink, is_hashable, hash, status_code, author, created_utc, score, subreddit, title, nsfw, spoiler) \
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
-                    )
-                        .map_err(pe!())
-                        .and_then(|stmt| {
-                            rx.and_then(move |post: PostRow| {
-                                client.build_transaction().build(
-                                    client.execute(
-                                        &stmt,
-                                        &[&post.reddit_id,
-                                          &Some(post.link),
-                                          &post.permalink,
-                                          &post.is_hashable,
-                                          &post.hash,
-                                          &(post.status_code.map(|sc| sc.as_u16() as i16)),
-                                          &post.author,
-                                          &(NaiveDateTime::from_timestamp(post.created_utc, 0)),
-                                          &post.score,
-                                          &post.subreddit,
-                                          &post.title,
-                                          &post.nsfw,
-                                          &post.spoiler
-                                        ],
-                                    ))
-                                    .map_err(pe!())
-                            })
-                                .then(|_| Ok(()))
-                                .for_each(|_| Ok(()))
-                        })
-                }));
-
-        for postdoc in posts.hits.hits {
-            let id_re: Regex = Regex::new(r"/comments/([^/]+)/").map_err(pe!())?;
+        for postdoc in search.hits.hits {
             let link = postdoc.source.link.clone();
             let permalink = &postdoc.source.permalink;
 
             let reddit_id = String::from(
-                match id_re.captures(&permalink).and_then(|cap| cap.get(1)) {
+                match ID_RE.captures(&permalink).and_then(|cap| cap.get(1)) {
                     Some(reddit_id) => reddit_id.as_str(),
                     None => {
                         error!("Couldn't find ID in {}", permalink);
@@ -224,36 +217,47 @@ fn download(size: u64) -> Result<(), ()> {
                 },
             );
 
-            let tx = tx.clone();
+            let mut db_client = DB_POOL.get().map_err(pe!())?;
+            if db_client
+                .query_iter(
+                    "SELECT EXISTS(SELECT FROM posts WHERE reddit_id = $1)",
+                    &[&reddit_id],
+                )
+                .map_err(pe!())?
+                .next()
+                .map_err(pe!())?
+                .unwrap()
+                .try_get::<_, bool>(0)
+                .map_err(pe!())?
+            {
+                error!("{} already exists", permalink);
+                continue;
+            }
 
             let saver = Saver {
-                tx,
                 reddit_id,
                 post: postdoc.source,
             };
 
-            let client = Client::builder().build::<_, Body>(https.clone());
-            tokio::spawn(get_image(client, link.clone()).then(move |res| {
-                match res {
-                    Ok((status, img)) => saver
-                        .save(Some(dhash(img)), Some(status))
-                        .map_err(pe!())
-                        .map(|_| info!("{} successfully hashed", link)),
-                    Err(e) => {
-                        error!("{}", e);
-                        let ie = e.error;
-                        let status = match ie.downcast::<StatusFail>() {
-                            Ok(se) => Some(se.status),
-                            Err(_) => None,
-                        };
-                        saver.save(None, status).unwrap_or_else(pe!());
-                        Err(())
-                    }
+            let client = Client::builder().build::<_, Body>((*HTTPS).clone());
+            tokio::spawn(get_image(client, link.clone()).then(move |res| match res {
+                Ok((status, img)) => {
+                    saver.save(Some(dhash(img)), Some(status));
+                    info!("{} successfully hashed", link);
+                    Ok(())
+                }
+                Err(e) => {
+                    error!("{}", e);
+                    let ie = e.error;
+                    let status = match ie.downcast::<StatusFail>() {
+                        Ok(se) => Some(se.status),
+                        Err(_) => None,
+                    };
+                    saver.save(None, status);
+                    Err(())
                 }
             }));
         }
-
-        drop(tx);
 
         info!("Reached end of link list");
 

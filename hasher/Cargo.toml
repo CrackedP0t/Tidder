@@ -18,7 +18,7 @@ reqwest = "*"
 serde = { version = "*", features = ["derive"] }
 serde_json = "*"
 tokio = "*"
-tokio-postgres = {version = "0.4.0-rc.2", features = ["with-chrono-0_4"]}
+postgres = {version = "0.16.0-rc.1", features = ["with-chrono-0_4"]}
 url = "*"
 common = {path = "../common"}
 http = "*"
@@ -26,3 +26,6 @@ failure = "*"
 chrono = "*"
 log = "*"
 fern = "*"
+lazy_static = "*"
+r2d2_postgres = "0.15.0-rc.1"
+fallible-iterator = "*"

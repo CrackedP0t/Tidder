@@ -4,7 +4,7 @@ use failure::Error;
 use fallible_iterator::FallibleIterator;
 use futures::future::{ok, result, Either, Future};
 use http::{Response, StatusCode};
-use hyper::{self, client::HttpConnector, Body};
+use hyper::{self, client::HttpConnector, Body, Client};
 use hyper_tls::HttpsConnector;
 use lazy_static::lazy_static;
 use postgres::{self, NoTls};
@@ -79,7 +79,7 @@ fn get_search(qs: SearchQuery) -> impl Future<Item = Response<Body>, Error = Rej
                     .and_then(|url| {
                         let url = url.to_string();
                         let url2 = url.clone();
-                        let h_client = hyper::Client::builder().build::<_, Body>((*HTTPS).clone());
+                        let h_client = Client::builder().build::<_, Body>((*HTTPS).clone());
                         get_image(h_client, url.clone()).map_err(Error::from).and_then(|(status, image)| {
                             let hash = dhash(image);
                             ok(match POOL.get() {

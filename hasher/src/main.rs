@@ -46,27 +46,16 @@ struct PushShiftSearch {
     hits: Hits,
 }
 
-macro_rules! pe {
+macro_rules! le {
     () => {
-        |e| error!("{}", fe!(e))
+        |e| error!("{}", e)
     };
 }
 
-macro_rules! fe {
-    ($e:expr) => {
-        if cfg!(feature = "error_lines") {
-            format!("Error at line {}: {}", line!(), $e)
-        } else {
-            format!("Error: {}", $e)
-        }
-    };
+macro_rules! lei {
     () => {
-        move |e| fe!(e)
+        |e| info!("{}", e)
     };
-}
-
-fn print_err(e: String) {
-    error!("{}", e);
 }
 
 fn image_type_map(mime: &str) -> Result<image::ImageFormat, &str> {
@@ -137,12 +126,10 @@ impl Saver {
     fn save(self, hash: Option<Hash>, status_code: Option<StatusCode>) {
         let post = PostRow::from_post(self.post, hash, self.reddit_id, status_code);
 
-        let client = DB_POOL
-            .get()
-            .map_err(pe!())
+        DB_POOL.get().map_err(le!())
             .and_then(
                 |mut client|
-                client.transaction().map_err(pe!())
+                client.transaction().map_err(le!())
                     .and_then(|mut trans| {
                         trans.execute(
                             "INSERT INTO posts (reddit_id, link, permalink, is_hashable, hash, status_code, author, created_utc, score, subreddit, title, nsfw, spoiler) \
@@ -162,7 +149,8 @@ impl Saver {
                                 &post.nsfw,
                                 &post.spoiler,
                             ],
-                        ).map_err(pe!())
+                        ).map_err(le!())?;
+                        trans.commit().map_err(le!())
                     }))
             .map(|_| ())
             .unwrap_or_else(|_| ());
@@ -197,11 +185,11 @@ fn download(size: u64) -> Result<(), ()> {
                 ),
             ])
             .send()
-            .map_err(pe!())?
+            .map_err(le!())?
             .error_for_status()
-            .map_err(pe!())?;
+            .map_err(le!())?;
 
-        let search: PushShiftSearch = serde_json::from_reader(search_resp).map_err(pe!())?;
+        let search: PushShiftSearch = serde_json::from_reader(search_resp).map_err(le!())?;
 
         for postdoc in search.hits.hits {
             let link = postdoc.source.link.clone();
@@ -217,20 +205,20 @@ fn download(size: u64) -> Result<(), ()> {
                 },
             );
 
-            let mut db_client = DB_POOL.get().map_err(pe!())?;
+            let mut db_client = DB_POOL.get().map_err(le!())?;
             if db_client
                 .query_iter(
                     "SELECT EXISTS(SELECT FROM posts WHERE reddit_id = $1)",
                     &[&reddit_id],
                 )
-                .map_err(pe!())?
+                .map_err(le!())?
                 .next()
-                .map_err(pe!())?
+                .map_err(le!())?
                 .unwrap()
                 .try_get::<_, bool>(0)
-                .map_err(pe!())?
+                .map_err(le!())?
             {
-                error!("{} already exists", permalink);
+                info!("{} already exists", permalink);
                 continue;
             }
 

@@ -1,5 +1,29 @@
-<ul>
-    {% for m in matches %}
-        <li><a href="{{m.permalink}}">Match {{loop.index}}:</a> <img src="{{m.link}}"></img></li>
-    {% endfor %}
-</ul>
+<style>
+ .match {
+     width: 100%;
+     height: 15vh;
+ }
+ .thumbnail {
+     height: 100%;
+ }
+ .findings {
+     display: flex;
+     flex-direction: column;
+     height: 100%;
+     list-style: none;
+ }
+</style>
+{% if matches.len() > 0 %}
+    <ul class="findings">
+        {% for m in matches %}
+            <li>
+                <div class="match">
+                    <a href="{{m.link}}"><img class="thumbnail" src="{{m.link}}" /></a>
+                    [{{m.score}}] <a href="{{m.permalink}}">{{m.title}}</a> posted on {{m.created_utc}} by <a href="https://reddit.com/user/{{m.author}}">{{m.author}}</a> to <a href="https://reddit.com/r/{{m.subreddit}}">/r/{{m.subreddit}}</a>
+                </div>
+            </li>
+        {% endfor %}
+    </ul>
+{% else %}
+    <p>No matches!</p>
+{% endif %}

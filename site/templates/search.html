@@ -10,14 +10,14 @@
     </form>
     {% match sent %}
     {% when Some with (sent) %}
-    <p>You searched for {{sent.url}}</p>
+    <p>You searched for <a href="{{sent.url}}">{{sent.url}}</a></p>
     {% match sent.findings %}
-        {% when Ok with (findings) %}
-        {{findings|safe}}
-        {% when Err with (message) %}
-        Error: {{message}}
+    {% when Ok with (findings) %}
+    {{findings|safe}}
+    {% when Err with (message) %}
+    Error: {{message}}
         {% endmatch %}
-    {% when None %}
-    <p>No search yet...</p>
+        {% when None %}
+        <p>No search yet...</p>
     {% endmatch %}
 {% endblock %}

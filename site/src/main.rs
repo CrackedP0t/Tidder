@@ -1,11 +1,12 @@
 use askama::Template;
-use common::{dhash, get_image, Hash};
+use common::{dhash, get_image};
 use failure::Error;
 use fallible_iterator::FallibleIterator;
 use futures::future::{ok, result, Either, Future};
-use http::StatusCode;
-use hyper::{self, Body};
+use http::{Response, StatusCode};
+use hyper::{self, client::HttpConnector, Body};
 use hyper_tls::HttpsConnector;
+use lazy_static::lazy_static;
 use postgres::{self, NoTls};
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use serde::Deserialize;
@@ -23,6 +24,11 @@ struct Match {
     permalink: String,
     link: String,
     reddit_id: String,
+    author: String,
+    score: i32,
+    created_utc: chrono::NaiveDateTime,
+    subreddit: String,
+    title: String,
 }
 
 #[derive(Template)]
@@ -52,46 +58,51 @@ fn reply_not_found(path: FullPath) -> impl Reply {
     )
 }
 
-fn run_server() {
-    let manager = PostgresConnectionManager::new(
-        "dbname=tidder host=/run/postgresql user=postgres"
-            .parse()
-            .unwrap(),
-        NoTls,
-    );
+lazy_static! {
+    static ref HTTPS: HttpsConnector<HttpConnector> = HttpsConnector::new(4).unwrap();
+    static ref POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> =
+        r2d2::Pool::new(PostgresConnectionManager::new(
+            "dbname=tidder host=/run/postgresql user=postgres"
+                .parse()
+                .unwrap(),
+            NoTls,
+        ))
+        .unwrap();
+}
 
-    let pool = r2d2::Pool::new(manager).unwrap();
-
-    let https = HttpsConnector::new(4).unwrap();
-
-    let get_search = move |qs: SearchQuery| {
-        match qs.imageurl {
-            Some(url) => {
-                let valid = Url::parse(&url.clone());
-                Either::A(
-                    result(valid.map_err(Error::from))
-                        .and_then(|url| {
-                            let url = url.to_string();
-                            let h_client = hyper::Client::builder().build::<_, Body>(https.clone());
-                            get_image(h_client, url.clone()).and_then(|(status, image)| {
-                                let hash = dhash(image);
-                                ok(pool
-                                    .get()
-                                    .unwrap()
-                                    .query_iter(
-                                        "SELECT reddit_id, link, permalink FROM posts WHERE hash <@ ($1, 10)",
+fn get_search(qs: SearchQuery) -> impl Future<Item = Response<Body>, Error = Rejection> {
+    match qs.imageurl {
+        Some(url) => {
+            let valid = Url::parse(&url.clone());
+            Either::A(
+                result(valid.map_err(Error::from))
+                    .and_then(|url| {
+                        let url = url.to_string();
+                        let url2 = url.clone();
+                        let h_client = hyper::Client::builder().build::<_, Body>((*HTTPS).clone());
+                        get_image(h_client, url.clone()).map_err(Error::from).and_then(|(status, image)| {
+                            let hash = dhash(image);
+                            ok(match POOL.get() {
+                                Ok(mut conn) =>
+                                    conn.query_iter(
+                                        "SELECT reddit_id, link, permalink, score, author, created_utc, subreddit, title FROM posts WHERE hash <@ ($1, 10) ORDER BY created_utc DESC",
                                         &[&hash],
                                     )
-                                    .map(|rows_iter| Search {
+                                    .map(move |rows_iter| Search {
                                         sent: Some(Sent {
-                                            url: url.clone(),
+                                            url: url2,
                                             findings: Ok(Findings {
                                                 matches: rows_iter
-                                                    .map(|row| {
+                                                    .map(move |row| {
                                                         Ok(Match {
                                                             permalink: format!("https://reddit.com{}", row.get::<_, &str>("permalink")),
                                                             link: row.get("link"),
                                                             reddit_id: row.get("reddit_id"),
+                                                            score: row.get("score"),
+                                                            author: row.get("author"),
+                                                            created_utc: row.get("created_utc"),
+                                                            subreddit: row.get("subreddit"),
+                                                            title: row.get("title")
                                                         })
                                                     })
                                                     .collect()
@@ -99,29 +110,43 @@ fn run_server() {
                                             }),
                                         }),
                                     })
-                                    .unwrap_or_else(|e| Search {
+                                    .unwrap_or_else(move |e| Search {
                                         sent: Some(Sent {
                                             url,
                                             findings: Err(Error::from(e)),
                                         }),
-                                    }))
+                                    }),
+                                Err(e) => Search {
+                                    sent: Some(Sent {
+                                        url,
+                                        findings: Err(Error::from(e))
+                                    })
+                                }
                             })
                         })
-                        .or_else(|e| {
-                            ok::<Search, Rejection>(Search {
-                                sent: Some(Sent {
-                                    url,
-                                    findings: Err(Error::from(e)),
-                                }),
-                            })
-                        }),
-                )
-            }
-            None => Either::B(ok(Search { sent: None })),
+                    })
+                    .or_else(|e| {
+                        ok(Search {
+                            sent: Some(Sent {
+                                url,
+                                findings: Err(Error::from(e)),
+                            }),
+                        })
+                    }),
+            )
         }
-        .map(|tpl| reply::html(tpl.render().unwrap_or_else(|e| e.to_string().clone())))
-    };
+        None => Either::B(ok(Search { sent: None })),
+    }
+    .map(|tpl| {
+        let out = tpl.render();
+        Response::builder()
+            .status(if out.is_ok() {200} else {500})
+            .header("Content-Type",  "text/html")
+            .body(Body::from(out.unwrap_or("<h1>Error 500: Internal Server Error</h1>".to_string()))).unwrap()
+    })
+}
 
+fn run_server() {
     let router = path("search")
         .and(query::<SearchQuery>())
         .and(get2())

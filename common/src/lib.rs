@@ -13,10 +13,16 @@ use url::percent_encoding::{utf8_percent_encode, QUERY_ENCODE_SET};
 pub struct Hash(u64);
 
 #[derive(Debug, Fail)]
-#[fail(display = "{} sent status {}", link, status)]
+#[fail(display = "Got status {}", status)]
 pub struct StatusFail {
-    pub link: String,
     pub status: StatusCode,
+}
+
+#[derive(Debug, Fail)]
+#[fail(display = "Getting {} failed: {}", link, error)]
+pub struct GetImageFail {
+    pub link: String,
+    pub error: Error,
 }
 
 impl fmt::Display for Hash {
@@ -42,7 +48,7 @@ impl types::ToSql for Hash {
 }
 
 pub fn dhash(img: DynamicImage) -> Hash {
-    let small_img = imageops::resize(&img.to_luma(), 9, 8, image::Triangle);
+    let small_img = imageops::thumbnail(&img.to_luma(), 9, 8);
 
     let mut hash: u64 = 0;
 
@@ -79,10 +85,15 @@ pub const IMAGE_MIMES: [&str; 11] = [
 pub fn get_image<C>(
     client: Client<C, Body>,
     link: String,
-) -> impl Future<Item = (StatusCode, DynamicImage), Error = Error>
+) -> impl Future<Item = (StatusCode, DynamicImage), Error = GetImageFail>
 where
     C: 'static + Connect,
 {
+    let link2 = link.clone();
+    let map_gif = |e| GetImageFail {
+        link: link2,
+        error: e,
+    };
     loop_fn((client, link), move |(client, this_link): (_, String)| {
         let this_link = if this_link.starts_with('/') {
             format!("https://reddit.com{}", this_link)
@@ -113,11 +124,7 @@ where
                                 if IMAGE_MIMES.iter().any(|t| *t == val) {
                                     Ok(Loop::Break(res))
                                 } else {
-                                    Err(format_err!(
-                                        "{} sent unsupported MIME type {}",
-                                        this_link,
-                                        val
-                                    ))
+                                    Err(format_err!("Got unsupported MIME type {}", val))
                                 }
                             }
                             None => Ok(Loop::Break(res)),
@@ -128,18 +135,13 @@ where
                             String::from(
                                 res.headers()
                                     .get(header::LOCATION)
-                                    .ok_or_else(|| {
-                                        format_err!("{} redirected without location", this_link)
-                                    })?
+                                    .ok_or_else(|| format_err!("Redirected without location"))?
                                     .to_str()
                                     .map_err(Error::from)?,
                             ),
                         )))
                     } else {
-                        Err(Error::from(StatusFail {
-                            link: this_link,
-                            status,
-                        }))
+                        Err(Error::from(StatusFail { status }))
                     }
                 })
         })
@@ -149,4 +151,5 @@ where
         (ok(parts.status), body.concat2().map_err(Error::from))
     })
     .and_then(move |(status, body)| (ok(status), load_from_memory(&body).map_err(Error::from)))
+    .map_err(map_gif)
 }

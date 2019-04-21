@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 hyper = "*"
-postgres = "0.16.0-rc.1"
+postgres = {version = "0.16.0-rc.1", features = ["with-chrono-0_4"]}
 askama = {version = "*", features = ["with-gotham"]}
 reqwest = "*"
 url = "*"
@@ -19,6 +19,8 @@ failure = "*"
 futures = "*"
 fallible-iterator = "*"
 r2d2_postgres = "0.15.0-rc.1"
+lazy_static = "*"
+chrono = "*"
 
 [build-dependencies]
 askama = {version = "*", features = ["with-gotham"]}

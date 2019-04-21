@@ -1,20 +1,33 @@
+use chrono::NaiveDateTime;
 use common::{dhash, get_image, Hash, StatusFail};
 use failure::Error;
+use fern;
 use futures::future::lazy;
 use futures::sync::mpsc::{self, SendError, UnboundedSender};
 use futures::{Future, Stream};
 use hyper::{Body, Client, StatusCode};
 use hyper_tls::HttpsConnector;
+use log::LevelFilter;
+use log::{error, info, warn};
 use regex::Regex;
 use serde::Deserialize;
+use std::env;
 use std::io::BufReader;
 use tokio_postgres::NoTls;
 
 #[derive(Deserialize, Debug)]
 struct Post {
+    author: String,
+    created_utc: i64,
     #[serde(rename = "url")]
     link: String,
+    #[serde(rename = "over_18")]
+    nsfw: bool,
     permalink: String,
+    score: i32,
+    spoiler: bool,
+    subreddit: String,
+    title: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -35,20 +48,16 @@ struct Posts {
 
 macro_rules! pe {
     () => {
-        |e| eprintln!("{}", fe!(e))
+        |e| error!("{}", fe!(e))
     };
 }
 
-macro_rules! fef {
+macro_rules! pef {
     ($s:expr) => {
-        fef!($s,)
+        pef!($s,)
     };
     ($s:expr, $($fargs:expr),*) => {
-        if cfg!(feature = "error_lines") {
-            format!(concat!("Error at line {}: ", $s), line!(), $($fargs,)*)
-        } else {
-            format!("Error: {}", $s)
-        }
+        |e| {error!(concat!("Error at line {}: ", $s), line!(), $($fargs,)*); ()}
     };
 }
 
@@ -66,7 +75,7 @@ macro_rules! fe {
 }
 
 fn print_err(e: String) {
-    eprintln!("{}", e);
+    error!("{}", e);
 }
 
 fn image_type_map(mime: &str) -> Result<image::ImageFormat, &str> {
@@ -87,56 +96,78 @@ fn image_type_map(mime: &str) -> Result<image::ImageFormat, &str> {
 }
 
 struct PostRow {
-    reddit_id: String,
-    link: String,
-    permalink: String,
-    is_hashable: bool,
+    author: String,
+    created_utc: i64,
     hash: Option<Hash>,
+    is_hashable: bool,
+    link: String,
+    nsfw: bool,
+    permalink: String,
+    reddit_id: String,
+    score: i32,
+    spoiler: bool,
     status_code: Option<StatusCode>,
+    subreddit: String,
+    title: String,
 }
 
-#[derive(Clone)]
+impl PostRow {
+    fn from_post(
+        post: Post,
+        hash: Option<Hash>,
+        reddit_id: String,
+        status_code: Option<StatusCode>,
+    ) -> PostRow {
+        let is_hashable = hash.is_some();
+        PostRow {
+            author: post.author,
+            created_utc: post.created_utc,
+            hash,
+            is_hashable,
+            link: post.link,
+            nsfw: post.nsfw,
+            permalink: post.permalink,
+            reddit_id,
+            spoiler: post.spoiler,
+            score: post.score,
+            status_code,
+            subreddit: post.subreddit,
+            title: post.title,
+        }
+    }
+}
+
 struct Saver {
-    tx: UnboundedSender<PostRow>,
+    post: Post,
     reddit_id: String,
-    link: String,
-    permalink: String,
-    // is_link: bool,
-    // is_hashable: bool,
-    // hash: Option<Hash>,
+    tx: UnboundedSender<PostRow>,
 }
 
 impl Saver {
-    fn save_errored(self, status_code: Option<StatusCode>) -> Result<(), SendError<PostRow>> {
-        self.tx.unbounded_send(PostRow {
-            reddit_id: self.reddit_id,
-            link: self.link,
-            permalink: self.permalink,
-            is_hashable: false,
-            hash: None,
+    fn save(
+        self,
+        hash: Option<Hash>,
+        status_code: Option<StatusCode>,
+    ) -> Result<(), SendError<PostRow>> {
+        self.tx.unbounded_send(PostRow::from_post(
+            self.post,
+            hash,
+            self.reddit_id,
             status_code,
-        })
-    }
-
-    fn save(self, hash: Hash, status_code: Option<StatusCode>) -> Result<(), SendError<PostRow>> {
-        self.tx.unbounded_send(PostRow {
-            reddit_id: self.reddit_id,
-            link: self.link,
-            permalink: self.permalink,
-            is_hashable: true,
-            hash: Some(hash),
-            status_code,
-        })
+        ))
     }
 }
 
-fn download() -> Result<(), ()> {
-    tokio::run(lazy(|| {
-        let ingest = BufReader::new(reqwest::get("https://elastic.pushshift.io/rs/submissions/_search?sort=created_utc:desc&size=5&_source=permalink,url").map_err(fe!())?);
+fn download(size: u64) -> Result<(), ()> {
+    tokio::run(lazy(move || {
+        info!("Querying PushShift");
+        let ingest = BufReader::new(reqwest::get(
+            format!("https://elastic.pushshift.io/rs/submissions/_search?sort=created_utc:desc&size={}&_source=permalink,url,author,created_utc,subreddit,score,title,over_18,spoiler", size).as_str()
+        ).map_err(pe!())?);
 
-        let posts: Posts = serde_json::from_reader(ingest).map_err(fe!())?;
+        let posts: Posts = serde_json::from_reader(ingest).map_err(pe!())?;
 
-        let https = HttpsConnector::new(4).map_err(fe!())?;
+        let https = HttpsConnector::new(4).map_err(pe!())?;
 
         let (tx, rx) = mpsc::unbounded();
 
@@ -147,8 +178,8 @@ fn download() -> Result<(), ()> {
                     tokio::spawn(conn.map_err(pe!()));
 
                     client.prepare(
-                        "INSERT INTO posts (reddit_id, link, permalink, is_hashable, hash, status_code) \
-                         VALUES ($1, $2, $3, $4, $5, $6)",
+                        "INSERT INTO posts (reddit_id, link, permalink, is_hashable, hash, status_code, author, created_utc, score, subreddit, title, nsfw, spoiler) \
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
                     )
                         .map_err(pe!())
                         .and_then(|stmt| {
@@ -156,7 +187,20 @@ fn download() -> Result<(), ()> {
                                 client.build_transaction().build(
                                     client.execute(
                                         &stmt,
-                                        &[&post.reddit_id, &Some(post.link), &post.permalink, &post.is_hashable, &post.hash, &(post.status_code.map(|sc| sc.as_u16() as i16))],
+                                        &[&post.reddit_id,
+                                          &Some(post.link),
+                                          &post.permalink,
+                                          &post.is_hashable,
+                                          &post.hash,
+                                          &(post.status_code.map(|sc| sc.as_u16() as i16)),
+                                          &post.author,
+                                          &(NaiveDateTime::from_timestamp(post.created_utc, 0)),
+                                          &post.score,
+                                          &post.subreddit,
+                                          &post.title,
+                                          &post.nsfw,
+                                          &post.spoiler
+                                        ],
                                     ))
                                     .map_err(pe!())
                             })
@@ -166,17 +210,18 @@ fn download() -> Result<(), ()> {
                 }));
 
         for postdoc in posts.hits.hits {
-            let id_re: Regex = Regex::new(r"/comments/([^/]+)/").map_err(fe!())?;
-            let link = postdoc.source.link;
-            let permalink = postdoc.source.permalink;
+            let id_re: Regex = Regex::new(r"/comments/([^/]+)/").map_err(pe!())?;
+            let link = postdoc.source.link.clone();
+            let permalink = &postdoc.source.permalink;
 
             let reddit_id = String::from(
-                id_re
-                    .captures(&permalink)
-                    .ok_or(fef!("Couldn't find ID in {}", permalink))?
-                    .get(1)
-                    .ok_or(fef!("Couldn't find ID in {}", permalink))?
-                    .as_str(),
+                match id_re.captures(&permalink).and_then(|cap| cap.get(1)) {
+                    Some(reddit_id) => reddit_id.as_str(),
+                    None => {
+                        error!("Couldn't find ID in {}", permalink);
+                        continue;
+                    }
+                },
             );
 
             let tx = tx.clone();
@@ -184,44 +229,79 @@ fn download() -> Result<(), ()> {
             let saver = Saver {
                 tx,
                 reddit_id,
-                link: link.clone(),
-                permalink
+                post: postdoc.source,
             };
 
             let client = Client::builder().build::<_, Body>(https.clone());
-            tokio::spawn(
-                    get_image(client, link.clone())
-                    .then(|res| {
-                        match res {
-                            Ok((status, img)) => saver.save(dhash(img), Some(status)).map_err(fe!()).map(|_| eprintln!("{} successfully hashed", link)).map_err(pe!()),
-                            Err(e) => {
-                                let (e, status) = match e.downcast::<StatusFail>() {
-                                    Ok(se) => {
-                                        let status = se.status;
-                                        (Error::from(se), Some(status))
-                                    },
-                                    Err(e) => (e, None)
-                                };
-                                saver
-                                    .save_errored(status)
-                                    .unwrap_or_else(pe!());
-                                eprintln!("{}", e.context(link));
-                                Err(())
-                            }
-                        }
-                    }),
-            );
+            tokio::spawn(get_image(client, link.clone()).then(move |res| {
+                match res {
+                    Ok((status, img)) => saver
+                        .save(Some(dhash(img)), Some(status))
+                        .map_err(pe!())
+                        .map(|_| info!("{} successfully hashed", link)),
+                    Err(e) => {
+                        error!("{}", e);
+                        let ie = e.error;
+                        let status = match ie.downcast::<StatusFail>() {
+                            Ok(se) => Some(se.status),
+                            Err(_) => None,
+                        };
+                        saver.save(None, status).unwrap_or_else(pe!());
+                        Err(())
+                    }
+                }
+            }));
         }
 
         drop(tx);
 
+        info!("Reached end of link list");
+
         Ok(())
-    }).map_err(print_err)
-    );
+    }));
 
     Ok(())
 }
 
 fn main() {
-    download().unwrap();
+    fern::Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "{}[{}{}][{}] {}",
+                chrono::Local::now().format("[%Y-%m-%d %H:%M:%S]"),
+                record.target(),
+                match record.file() {
+                    Some(file) => format!(
+                        ":{}{}",
+                        file,
+                        match record.line() {
+                            Some(line) => format!("#{}", line),
+                            None => "".to_string(),
+                        }
+                    ),
+                    None => "".to_string(),
+                },
+                record.level(),
+                message
+            ))
+        })
+        .level(LevelFilter::Warn)
+        .level_for("hasher", LevelFilter::Info)
+        .chain(std::io::stdout())
+        .chain(fern::log_file("output.log").unwrap())
+        .apply()
+        .unwrap();
+    let size = env::args().nth(1);
+    if let Some(size) = size {
+        if let Ok(size) = size.parse::<u64>() {
+            match download(size) {
+                Ok(()) => info!("Hashing completed successfully!"),
+                Err(()) => error!("Hashing unsuccessful!"),
+            }
+        } else {
+            println!("Size is not a valid u64");
+        }
+    } else {
+        println!("Expected an argument");
+    }
 }

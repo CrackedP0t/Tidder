@@ -18,3 +18,4 @@ regex = "*"
 serde = {version = "*", features = ["derive"]}
 r2d2_postgres = "0.15.0-rc.1"
 chrono = "*"
+lazy_static = "*"

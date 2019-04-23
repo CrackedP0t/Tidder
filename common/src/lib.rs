@@ -5,6 +5,7 @@ use futures::{Future, Stream};
 use hyper::client::connect::Connect;
 use hyper::{header, Body, Client, Request, StatusCode};
 use image::{imageops, load_from_memory, DynamicImage};
+use lazy_static::lazy_static;
 use log::error;
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use regex::Regex;
@@ -82,13 +83,14 @@ pub struct PushShiftSearch {
 pub fn save_post(
     pool: &r2d2::Pool<PostgresConnectionManager<NoTls>>,
     post: &Submission,
-    hash: Option<Hash>,
-    status_code: Option<StatusCode>,
+    hash: Hash,
 ) {
-    let id_re = Regex::new(r"/comments/([^/]+)/").map_err(le!()).unwrap();
+    lazy_static! {
+        static ref ID_RE: Regex = Regex::new(r"/comments/([^/]+)/").map_err(le!()).unwrap();
+    }
 
     let reddit_id = String::from(
-        match id_re.captures(&post.permalink).and_then(|cap| cap.get(1)) {
+        match ID_RE.captures(&post.permalink).and_then(|cap| cap.get(1)) {
             Some(reddit_id) => reddit_id.as_str(),
             None => {
                 error!("Couldn't find ID in {}", post.permalink);
@@ -103,15 +105,13 @@ pub fn save_post(
             client.transaction().map_err(le!())
                 .and_then(|mut trans| {
                     trans.execute(
-                        "INSERT INTO posts (reddit_id, link, permalink, is_hashable, hash, status_code, author, created_utc, score, subreddit, title, nsfw, spoiler, is_self) \
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+                        "INSERT INTO posts (reddit_id, link, permalink, hash, author, created_utc, score, subreddit, title, nsfw, spoiler) \
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
                         &[
                             &reddit_id,
                             &post.url,
                             &post.permalink,
-                            &hash.is_some(),
                             &hash,
-                            &(status_code.map(|sc| sc.as_u16() as i16)),
                             &post.author,
                             &(NaiveDateTime::from_timestamp(post.created_utc, 0)),
                             &post.score,
@@ -119,7 +119,6 @@ pub fn save_post(
                             &post.title,
                             &post.over_18,
                             &post.spoiler.unwrap_or(false),
-                            &post.is_self
                         ],
                     ).map_err(le!())?;
                     trans.commit().map_err(le!())
@@ -335,14 +334,17 @@ pub fn setup_logging() {
             ))
         })
         .level(log::LevelFilter::Warn)
-        .level_for("hasher", log::LevelFilter::Info)
+        .level_for("ingest", log::LevelFilter::Info)
+        .level_for("common", log::LevelFilter::Info)
+        // .chain(
+        //     fern::Dispatch::new()
+        //         .filter(|metadata| {
+        //             // Only show 'Info' messages on the terminal
+        //             metadata.level() == log::LevelFilter::Info
+        //         })
         .chain(std::io::stderr())
-        .chain(
-            fern::log_file("output.log")
-                .map_err(|e| eprintln!("{}", e))
-                .unwrap(),
-        )
+        // )
+        .chain(fern::log_file("output.log").unwrap())
         .apply()
-        .map_err(|e| eprintln!("{}", e))
         .unwrap();
 }

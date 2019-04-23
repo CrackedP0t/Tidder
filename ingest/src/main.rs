@@ -1,8 +1,8 @@
 use clap::{clap_app, crate_authors, crate_description, crate_version};
 use common::*;
-use futures::future::{err, ok, Future};
+use futures::future::Future;
 use futures::lazy;
-use hyper::{client::HttpConnector, Body, Client};
+use hyper::{client::HttpConnector, Body, Client, StatusCode};
 use hyper_tls::HttpsConnector;
 use lazy_static::lazy_static;
 use log::{error, info, warn};
@@ -54,6 +54,8 @@ fn main() {
         )
         .into_iter::<Submission>();
 
+        info!("Starting ingestion!");
+
         for post in json_iter {
             match post {
                 Err(e) => {
@@ -61,41 +63,27 @@ fn main() {
                     return Err(());
                 }
                 Ok(post) => {
+                    if post.is_self || !EXT_RE.is_match(&post.url) {
+                        continue;
+                    }
                     tokio::spawn(lazy(move || {
-                        if post.is_self {
-                            warn!("{} is a selfpost", post.url);
-                            save_post(&DB_POOL, &post, None, None);
-                            err(())
-                        } else if !EXT_RE.is_match(&post.url) {
-                            warn!("{} doesn't look like an image link", post.url);
-                            save_post(&DB_POOL, &post, None, None);
-                            err(())
-                        } else {
-                            ok(())
-                        }
-                        .and_then(|_| {
-                            let client = Client::builder().build::<_, Body>((*HTTPS).clone());
-                            get_image(client, post.url.clone()).then(move |res| {
-                                let ret = match res {
-                                    Ok((img, status)) => {
-                                        save_post(&DB_POOL, &post, Some(dhash(img)), Some(status));
-                                        info!("{} successfully hashed", post.url);
-                                        Ok(())
+                        let client = Client::builder().build::<_, Body>((*HTTPS).clone());
+                        get_image(client, post.url.clone()).then(move |res| match res {
+                            Ok((img, _status)) => {
+                                save_post(&DB_POOL, &post, dhash(img));
+                                info!("{} successfully hashed", post.url);
+                                Ok(())
+                            }
+                            Err(e) => {
+                                let msg = format!("{}", e);
+                                let ie = e.error;
+                                if let Ok(sf) = ie.downcast::<StatusFail>() {
+                                    if sf.status != StatusCode::NOT_FOUND {
+                                        warn!("{}", msg);
                                     }
-                                    Err(e) => {
-                                        warn!("{}", e);
-                                        let ie = e.error;
-                                        let status = match ie.downcast::<StatusFail>() {
-                                            Ok(se) => Some(se.status),
-                                            Err(_) => None,
-                                        };
-                                        save_post(&DB_POOL, &post, None, status);
-                                        Err(())
-                                    }
-                                };
-
-                                ret
-                            })
+                                }
+                                Err(())
+                            }
                         })
                     }));
                 }

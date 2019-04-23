@@ -3,21 +3,55 @@
 {% block title %}Search with Tidder!{% endblock %}
 
 {% block content %}
+<style>
+ .search-header {
+     display: flex;
+     flex-direction: column;
+     align-items: center;
+ }
+
+ input {
+     background-color: #fefefe;
+     color: #454545;
+     border-radius: 2px;
+     border: none;
+ }
+ .search-url {
+     width: 30%;
+     margin-right: .5em;
+     padding: .15em .25em;
+ }
+ .search-form {
+     align-self: stretch;
+     display: flex;
+     justify-content: center;
+ }
+</style>
+<div class="search-header">
     <h1>Search for an image!</h1>
-    <form method="get" action="/search">
-        <input type="url" name="imageurl" required="true" />
-        <input type="submit" value="Search" />
+    <form method="get" class="search-form" search-action="/search">
+        <input class="search-url" type="url" name="imageurl" required="true" />
+        <input class="search-button" type="submit" value="Search" />
     </form>
     {% match sent %}
     {% when Some with (sent) %}
     <p>You searched for <a href="{{sent.url}}">{{sent.url}}</a></p>
     {% match sent.findings %}
-    {% when Ok with (findings) %}
-    {{findings|safe}}
     {% when Err with (message) %}
-    Error: {{message}}
-        {% endmatch %}
-        {% when None %}
-        <p>No search yet...</p>
+    <p>Error: {{message}}</p>
+    {% else %}
     {% endmatch %}
+    {% else %}
+    <p>No search yet...</p>
+    {% endmatch %}
+</div>
+{% match sent %}
+{% when Some with (sent) %}
+{% match sent.findings %}
+{% when Ok with (findings) %}
+{{findings|safe}}
+{% else %}
+{% endmatch %}
+{% else %}
+{% endmatch %}
 {% endblock %}

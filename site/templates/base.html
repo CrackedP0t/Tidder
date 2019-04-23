@@ -4,6 +4,28 @@
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/normalize/8.0.1/normalize.min.css" />
         <meta charset="UTF-8">
         <title>{% block title %}{% endblock %}</title>
+        <style>
+         html {
+             background-color: #454545
+         }
+         body {
+             font-family: Open Sans,Arial;
+             color: #fefefe;
+             font-size: 16px;
+             margin: 3vh 5vw;
+             line-height: 1.4;
+         }
+         a {
+             color: #08a;
+         }
+         a:visited {
+             color: #941352;
+         }
+         ul {
+             margin: 0;
+             padding: 0;
+         }
+        </style>x
     </head>
     <body>
         {% block content %}{% endblock %}

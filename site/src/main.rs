@@ -23,7 +23,6 @@ struct SearchQuery {
 struct Match {
     permalink: String,
     link: String,
-    reddit_id: String,
     author: String,
     score: i32,
     created_utc: chrono::NaiveDateTime,
@@ -80,12 +79,12 @@ fn get_search(qs: SearchQuery) -> impl Future<Item = Response<Body>, Error = Rej
                         let url = url.to_string();
                         let url2 = url.clone();
                         let h_client = Client::builder().build::<_, Body>((*HTTPS).clone());
-                        get_image(h_client, url.clone()).map_err(Error::from).and_then(|(status, image)| {
+                        get_image(h_client, url.clone()).map_err(Error::from).and_then(|(image, _status)| {
                             let hash = dhash(image);
-                            ok(match POOL.get() {
+                            Ok(match POOL.get() {
                                 Ok(mut conn) =>
                                     conn.query_iter(
-                                        "SELECT reddit_id, link, permalink, score, author, created_utc, subreddit, title FROM posts WHERE hash <@ ($1, 10) ORDER BY created_utc DESC",
+                                        "SELECT reddit_id, link, permalink, score, author, created_utc, subreddit, title FROM posts WHERE hash <@ ($1, 9) ORDER BY created_utc DESC",
                                         &[&hash],
                                     )
                                     .map(move |rows_iter| Search {
@@ -97,7 +96,6 @@ fn get_search(qs: SearchQuery) -> impl Future<Item = Response<Body>, Error = Rej
                                                         Ok(Match {
                                                             permalink: format!("https://reddit.com{}", row.get::<_, &str>("permalink")),
                                                             link: row.get("link"),
-                                                            reddit_id: row.get("reddit_id"),
                                                             score: row.get("score"),
                                                             author: row.get("author"),
                                                             created_utc: row.get("created_utc"),
@@ -148,9 +146,8 @@ fn get_search(qs: SearchQuery) -> impl Future<Item = Response<Body>, Error = Rej
 
 fn run_server() {
     let router = path("search")
-        .and(query::<SearchQuery>())
         .and(get2())
-        .and_then(get_search)
+        .and(query::<SearchQuery>().and_then(get_search))
         .or(full().map(reply_not_found));
 
     warp::serve(router).run(([127, 0, 0, 1], 7878));

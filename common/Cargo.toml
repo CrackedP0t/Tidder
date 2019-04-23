@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 image = "*"
-tokio-postgres = "0.4.0-rc.2"
+tokio-postgres = {version = "0.4.0-rc.2", features = ["with-chrono-0_4"]}
 url = "*"
 hyper = "*"
 http = "*"
@@ -15,3 +15,6 @@ log = "*"
 fern = "*"
 failure = "*"
 regex = "*"
+serde = {version = "*", features = ["derive"]}
+r2d2_postgres = "0.15.0-rc.1"
+chrono = "*"

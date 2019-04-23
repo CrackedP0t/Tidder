@@ -1,25 +1,22 @@
 [package]
-name = "hasher"
+name = "ingest"
 version = "0.0.1"
 authors = ["Elaina Martineau <elainamartineau@gmail.com>"]
 edition = "2018"
-
-[features]
-default = ["error_lines"]
-error_lines = []
+description = "Tool for automatically ingesting PushShift downloads"
 
 [dependencies]
+zstd = "*"
+serde = { version = "*", features = ["derive"] }
+serde_json = "*"
+reqwest = "*"
+postgres = {version = "0.16.0-rc.1", features = ["with-chrono-0_4"]}
+clap = "*"
+common = {path = "../common"}
+lazy_static = "*"
+tokio = "*"
+r2d2_postgres = "0.15.0-rc.1"
 futures = "*"
+log = "*"
 hyper = "*"
 hyper-tls = "*"
-image = "*"
-reqwest = "*"
-serde_json = "*"
-tokio = "*"
-postgres = {version = "0.16.0-rc.1", features = ["with-chrono-0_4"]}
-common = {path = "../common"}
-chrono = "*"
-log = "*"
-fern = "*"
-lazy_static = "*"
-r2d2_postgres = "0.15.0-rc.1"

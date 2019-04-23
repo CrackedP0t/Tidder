@@ -311,3 +311,38 @@ where
     .and_then(move |(body, status)| (load_from_memory(&body).map_err(Error::from), ok(status)))
     .map_err(map_gif)
 }
+
+pub fn setup_logging() {
+    fern::Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "{}[{}{}][{}] {}",
+                chrono::Local::now().format("[%Y-%m-%d %H:%M:%S]"),
+                record.target(),
+                match record.file() {
+                    Some(file) => format!(
+                        ":{}{}",
+                        file,
+                        match record.line() {
+                            Some(line) => format!("#{}", line),
+                            None => "".to_string(),
+                        }
+                    ),
+                    None => "".to_string(),
+                },
+                record.level(),
+                message
+            ))
+        })
+        .level(log::LevelFilter::Warn)
+        .level_for("hasher", log::LevelFilter::Info)
+        .chain(std::io::stderr())
+        .chain(
+            fern::log_file("output.log")
+                .map_err(|e| eprintln!("{}", e))
+                .unwrap(),
+        )
+        .apply()
+        .map_err(|e| eprintln!("{}", e))
+        .unwrap();
+}

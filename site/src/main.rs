@@ -1,5 +1,5 @@
 use askama::Template;
-use common::{dhash, get_image};
+use common::*;
 use failure::Error;
 use fallible_iterator::FallibleIterator;
 use futures::future::{ok, result, Either, Future};
@@ -145,6 +145,7 @@ fn get_search(qs: SearchQuery) -> impl Future<Item = Response<Body>, Error = Rej
 }
 
 fn run_server() {
+    setup_logging();
     let router = path("search")
         .and(get2())
         .and(query::<SearchQuery>().and_then(get_search))

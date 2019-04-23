@@ -1,5 +1,4 @@
 use common::*;
-use fern;
 use futures::future::lazy;
 use futures::Future;
 use hyper::{client::HttpConnector, Body, Client};
@@ -139,33 +138,7 @@ fn download(size: usize) -> Result<(), ()> {
 
 fn main() {
     tokio::run(lazy(move || {
-        fern::Dispatch::new()
-            .format(|out, message, record| {
-                out.finish(format_args!(
-                    "{}[{}{}][{}] {}",
-                    chrono::Local::now().format("[%Y-%m-%d %H:%M:%S]"),
-                    record.target(),
-                    match record.file() {
-                        Some(file) => format!(
-                            ":{}{}",
-                            file,
-                            match record.line() {
-                                Some(line) => format!("#{}", line),
-                                None => "".to_string(),
-                            }
-                        ),
-                        None => "".to_string(),
-                    },
-                    record.level(),
-                    message
-                ))
-            })
-            .level(LevelFilter::Warn)
-            .level_for("hasher", LevelFilter::Info)
-            .chain(std::io::stderr())
-            .chain(fern::log_file("output.log").unwrap())
-            .apply()
-            .unwrap();
+        setup_logging();
         let size = env::args().nth(1);
         if let Some(size) = size {
             if let Ok(size) = size.parse::<usize>() {

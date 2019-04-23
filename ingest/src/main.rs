@@ -29,6 +29,7 @@ lazy_static! {
 
 fn main() {
     tokio::run(lazy(|| {
+        setup_logging();
         let matches = clap_app!(
             ingest =>
                 (version: crate_version!())

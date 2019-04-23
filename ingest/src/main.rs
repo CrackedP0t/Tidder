@@ -1,14 +1,14 @@
 use clap::{clap_app, crate_authors, crate_description, crate_version};
 use common::*;
-use futures::future::{err, ok, result, Either, Future};
+use futures::future::{err, ok, Future};
 use futures::lazy;
 use hyper::{client::HttpConnector, Body, Client};
 use hyper_tls::HttpsConnector;
 use lazy_static::lazy_static;
-use log::error;
-use log::{info, warn};
+use log::{error, info, warn};
 use postgres::NoTls;
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
+use regex::Regex;
 use reqwest;
 use serde_json::Deserializer;
 use std::fs::File;
@@ -25,6 +25,8 @@ lazy_static! {
         ))
         .unwrap();
     static ref HTTPS: HttpsConnector<HttpConnector> = HttpsConnector::new(4).unwrap();
+    static ref EXT_RE: Regex =
+        Regex::new(r"\.(?:(?:jpe?g)|(?:png)|(?:gif)|(?:webp)|(?:bmp))\b").unwrap();
 }
 
 fn main() {
@@ -35,7 +37,7 @@ fn main() {
                 (version: crate_version!())
                 (author: crate_authors!(","))
                 (about: crate_description!())
-                (@arg URL: -u --url +takes_value "The URL of the file to download")
+                (@arg URL: -u --url +takes_value "The URL of the file to ingest")
                 (@arg FILE: -f --file +takes_value "The path of the file to ingest")
         )
         .get_matches();
@@ -53,40 +55,51 @@ fn main() {
         .into_iter::<Submission>();
 
         for post in json_iter {
-            tokio::spawn(lazy(move || {
-                result(post.map_err(le!())).and_then(|post| {
-                    if post.is_self {
-                        save_post(&DB_POOL, &post, None, None);
-                        err(())
-                    } else {
-                        ok(())
-                    }
-                    .and_then(|_| {
-                        let client = Client::builder().build::<_, Body>((*HTTPS).clone());
-                        get_image(client, post.url.clone()).then(move |res| {
-                            let ret = match res {
-                                Ok((img, status)) => {
-                                    save_post(&DB_POOL, &post, Some(dhash(img)), Some(status));
-                                    info!("{} successfully hashed", post.url);
-                                    Ok(())
-                                }
-                                Err(e) => {
-                                    warn!("{}", e);
-                                    let ie = e.error;
-                                    let status = match ie.downcast::<StatusFail>() {
-                                        Ok(se) => Some(se.status),
-                                        Err(_) => None,
-                                    };
-                                    save_post(&DB_POOL, &post, None, status);
-                                    Err(())
-                                }
-                            };
+            match post {
+                Err(e) => {
+                    error!("{}", e);
+                    return Err(());
+                }
+                Ok(post) => {
+                    tokio::spawn(lazy(move || {
+                        if post.is_self {
+                            warn!("{} is a selfpost", post.url);
+                            save_post(&DB_POOL, &post, None, None);
+                            err(())
+                        } else if !EXT_RE.is_match(&post.url) {
+                            warn!("{} doesn't look like an image link", post.url);
+                            save_post(&DB_POOL, &post, None, None);
+                            err(())
+                        } else {
+                            ok(())
+                        }
+                        .and_then(|_| {
+                            let client = Client::builder().build::<_, Body>((*HTTPS).clone());
+                            get_image(client, post.url.clone()).then(move |res| {
+                                let ret = match res {
+                                    Ok((img, status)) => {
+                                        save_post(&DB_POOL, &post, Some(dhash(img)), Some(status));
+                                        info!("{} successfully hashed", post.url);
+                                        Ok(())
+                                    }
+                                    Err(e) => {
+                                        warn!("{}", e);
+                                        let ie = e.error;
+                                        let status = match ie.downcast::<StatusFail>() {
+                                            Ok(se) => Some(se.status),
+                                            Err(_) => None,
+                                        };
+                                        save_post(&DB_POOL, &post, None, status);
+                                        Err(())
+                                    }
+                                };
 
-                            ret
+                                ret
+                            })
                         })
-                    })
-                })
-            }));
+                    }));
+                }
+            }
         }
 
         Ok(())

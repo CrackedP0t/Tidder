@@ -263,7 +263,7 @@ where
                                 if IMAGE_MIMES.iter().any(|t| *t == val) {
                                     Ok(Loop::Break(resp))
                                 } else {
-                                    Err(lfe!("Got unsupported MIME type {}", val))
+                                    Err(format_err!("Got unsupported MIME type {}", val))
                                 }
                             }
                             None => Ok(Loop::Break(resp)),
@@ -274,7 +274,7 @@ where
                             String::from(
                                 resp.headers()
                                     .get(header::LOCATION)
-                                    .ok_or_else(|| lfe!("Redirected without location"))?
+                                    .ok_or_else(|| format_err!("Redirected without location"))?
                                     .to_str()
                                     .map_err(Error::from)?,
                             ),

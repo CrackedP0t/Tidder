@@ -1,5 +1,6 @@
 use clap::{clap_app, crate_authors, crate_description, crate_version};
 use common::*;
+use google_bigquery2::{Bigquery, QueryRequest};
 use lazy_static::lazy_static;
 use log::{error, info, warn};
 use postgres::NoTls;
@@ -11,7 +12,10 @@ use reqwest::StatusCode;
 use serde_json::Deserializer;
 use std::fs::File;
 use std::io::Read;
+use yup_oauth2::{service_account_key_from_file, ServiceAccountAccess};
 use zstd::stream::read::Decoder;
+
+mod archive;
 
 lazy_static! {
     static ref DB_POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> =
@@ -26,46 +30,83 @@ lazy_static! {
         Regex::new(r"\W(?:png|jpe?g|gif|webp|p[bgpn]m|tiff?|bmp|ico|hdr)\b").unwrap();
 }
 
-fn ingest<R: Read + Send>(reader: R) {
-    info!("Creating iterator...");
+const BQ_PROJECT: &str = "tidder";
 
-    let json_iter =
-        Deserializer::from_reader(Decoder::new(reader).unwrap()).into_iter::<Submission>();
+fn ingest<R: Read + Send>(reader: Option<R>) {
+    println!("Creating iterator...");
 
-    info!("Starting ingestion!");
+    match reader {
+        None => {
+            use hyper::net::HttpsConnector;
+            use hyper_rustls::TlsClient;
 
-    json_iter
-        .filter_map(|post| match post {
-            Err(e) => {
-                error!("{}", e);
-                None
-            }
-            Ok(post) => {
-                if !post.is_self && EXT_RE.is_match(&post.url) {
-                    Some(post)
-                } else {
-                    None
-                }
-            }
-        })
-        .par_bridge()
-        .for_each(|post: Submission| match get_image(post.url.clone()) {
-            Ok(img) => {
-                save_post(&DB_POOL, &post, dhash(img));
-                info!("{} successfully hashed", post.url);
-            }
-            Err(gif) => {
-                let msg = format!("{}", gif);
-                let ie = gif.error;
-                if let Ok(sf) = ie.downcast::<StatusFail>() {
-                    if sf.status != StatusCode::NOT_FOUND {
-                        warn!("{}", msg);
+            let client_secret =
+                service_account_key_from_file(&secrets::load().unwrap().bigquery.key_file).unwrap();
+            let access = ServiceAccountAccess::new(
+                client_secret,
+                hyper::Client::with_connector(HttpsConnector::new(TlsClient::new())),
+            );
+            let hub = Bigquery::new(
+                hyper::Client::with_connector(HttpsConnector::new(TlsClient::new())),
+                access,
+            );
+
+            let q_res = hub
+                .jobs()
+                .query(
+                    QueryRequest {
+                        query: Some(
+                            "SELECT author, created_utc, is_self, over_18, permalink, score, spoiler, `".to_string(),
+                        ),
+                        use_legacy_sql: Some(false),
+                        ..Default::default()
+                    },
+                    BQ_PROJECT,
+                )
+                .doit();
+
+            println!("{:#?}", q_res.unwrap());
+        }
+        Some(reader) => {
+            let json_iter =
+                Deserializer::from_reader(Decoder::new(reader).unwrap()).into_iter::<Submission>();
+
+            info!("Starting ingestion!");
+
+            json_iter
+                .filter_map(|post| match post {
+                    Err(e) => {
+                        error!("{}", e);
+                        None
                     }
-                } else {
-                    warn!("{}", msg);
-                }
-            }
-        });
+                    Ok(post) => {
+                        if !post.is_self && EXT_RE.is_match(&post.url) {
+                            Some(post)
+                        } else {
+                            None
+                        }
+                    }
+                })
+                .par_bridge()
+                .for_each(|post: Submission| match get_image(post.url.clone()) {
+                    Ok(img) => {
+                        save_post(&DB_POOL, &post, dhash(img));
+                        info!("{} successfully hashed", post.url);
+                    }
+                    Err(gif) => {
+                        let msg = format!("{}", gif);
+                        let ie = gif.error;
+                        if let Ok(sf) = ie.downcast::<StatusFail>() {
+                            if sf.status != StatusCode::NOT_FOUND {
+                                warn!("{}", msg);
+                            }
+                        } else {
+                            warn!("{}", msg);
+                        }
+                    }
+                });
+        }
+    }
 }
 
 fn main() {
@@ -75,16 +116,22 @@ fn main() {
             (version: crate_version!())
             (author: crate_authors!(","))
             (about: crate_description!())
-            (@arg URL: -u --url +takes_value "The URL of the file to ingest")
-            (@arg FILE: -f --file +takes_value "The path of the file to ingest")
+            (@group from +required =>
+             (@arg URL: -u --url +takes_value "The URL of the file to ingest")
+             (@arg FILE: -f --file +takes_value "The path of the file to ingest")
+             (@arg bigquery: -b --bigquery "Use BigQuery")
+             (@arg DOWNLOAD: -d --download "Download all of PushShift's archives")
+            )
     )
     .get_matches();
 
+    println!("{:?}", matches.value_of("bigquery"));
+
     if let Some(file) = matches.value_of("FILE") {
-        ingest(File::open(file).unwrap());
+        ingest(Some(File::open(file).unwrap()));
     } else if let Some(url) = matches.value_of("URL") {
-        ingest(reqwest::get(url).unwrap());
-    } else {
-        error!("No file or URL passed");
+        ingest(Some(reqwest::get(url).unwrap()));
+    } else if matches.is_present("bigquery") {
+        ingest::<std::io::Empty>(None)
     }
 }

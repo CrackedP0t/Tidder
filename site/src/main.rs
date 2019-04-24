@@ -1,11 +1,9 @@
 use askama::Template;
 use common::*;
-use failure::Error;
 use fallible_iterator::FallibleIterator;
 use futures::future::{ok, result, Either, Future};
 use http::{Response, StatusCode};
-use hyper::{self, client::HttpConnector, Body, Client};
-use hyper_tls::HttpsConnector;
+use hyper::{self, Body};
 use lazy_static::lazy_static;
 use postgres::{self, NoTls};
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
@@ -58,7 +56,6 @@ fn reply_not_found(path: FullPath) -> impl Reply {
 }
 
 lazy_static! {
-    static ref HTTPS: HttpsConnector<HttpConnector> = HttpsConnector::new(4).unwrap();
     static ref POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> =
         r2d2::Pool::new(PostgresConnectionManager::new(
             "dbname=tidder host=/run/postgresql user=postgres"
@@ -78,8 +75,7 @@ fn get_search(qs: SearchQuery) -> impl Future<Item = Response<Body>, Error = Rej
                     .and_then(|url| {
                         let url = url.to_string();
                         let url2 = url.clone();
-                        let h_client = Client::builder().build::<_, Body>((*HTTPS).clone());
-                        get_image(h_client, url.clone()).map_err(Error::from).and_then(|(image, _status)| {
+                        get_image(url.clone()).map_err(Error::from).and_then(|image| {
                             let hash = dhash(image);
                             Ok(match POOL.get() {
                                 Ok(mut conn) =>
@@ -127,7 +123,7 @@ fn get_search(qs: SearchQuery) -> impl Future<Item = Response<Body>, Error = Rej
                         ok(Search {
                             sent: Some(Sent {
                                 url,
-                                findings: Err(Error::from(e)),
+                                findings: Err(e),
                             }),
                         })
                     }),
@@ -140,7 +136,7 @@ fn get_search(qs: SearchQuery) -> impl Future<Item = Response<Body>, Error = Rej
         Response::builder()
             .status(if out.is_ok() {200} else {500})
             .header("Content-Type",  "text/html")
-            .body(Body::from(out.unwrap_or("<h1>Error 500: Internal Server Error</h1>".to_string()))).unwrap()
+            .body(Body::from(out.unwrap_or_else(|_| "<h1>Error 500: Internal Server Error</h1>".to_string()))).unwrap()
     })
 }
 

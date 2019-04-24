@@ -1,5 +1,5 @@
 use chrono::NaiveDateTime;
-use failure::{format_err, Error, Fail};
+use failure::{format_err, Fail};
 use image::{imageops, load_from_memory, DynamicImage};
 use lazy_static::lazy_static;
 use log::error;
@@ -10,7 +10,10 @@ use serde::Deserialize;
 use std::fmt;
 use std::io::{BufReader, Read};
 use tokio_postgres::{to_sql_checked, types, NoTls};
+use toml;
 use url::percent_encoding::{utf8_percent_encode, QUERY_ENCODE_SET};
+
+pub use failure::{self, Error};
 
 // Log Error, returning empty
 #[macro_export]
@@ -225,26 +228,19 @@ macro_rules! map_gif {
 }
 
 pub fn get_image(
-    // client: Client<C, Body>,
     link: String,
 ) -> Result<
     // (
     DynamicImage,
-    // StatusCode,
     // Option<String>, // Etag
     // Option<NaiveDateTime>, // Date
     // Option<NaiveDateTime>, // Expires
     // ),
     GetImageFail,
->
-// where
-//     C: 'static + Connect,
-{
+> {
     lazy_static! {
         static ref REQW_CLIENT: reqwest::Client = reqwest::Client::new();
     }
-
-    let link2 = link.clone();
 
     let mut this_link = link;
 
@@ -311,7 +307,7 @@ pub fn get_image(
         .read_to_end(&mut file)
         .map_err(map_gif!(this_link))?;
 
-    return load_from_memory(&file).map_err(map_gif!(this_link));
+    load_from_memory(&file).map_err(map_gif!(this_link))
 }
 
 pub fn setup_logging() {
@@ -350,4 +346,29 @@ pub fn setup_logging() {
         .chain(fern::log_file("output.log").unwrap())
         .apply()
         .unwrap();
+}
+
+pub mod secrets {
+    use failure::Error;
+    use serde::Deserialize;
+    use std::io::Read;
+
+    #[derive(Debug, Deserialize)]
+    pub struct BigQuery {
+        pub key_file: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    pub struct Secrets {
+        pub bigquery: BigQuery,
+    }
+
+    pub fn load() -> Result<Secrets, Error> {
+        let mut s = String::new();
+        std::fs::File::open("secrets/secrets.toml")
+            .map_err(Error::from)?
+            .read_to_string(&mut s)
+            .map_err(Error::from)?;
+        toml::from_str::<Secrets>(&s).map_err(Error::from)
+    }
 }

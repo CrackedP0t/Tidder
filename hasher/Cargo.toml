@@ -9,13 +9,9 @@ default = ["error_lines"]
 error_lines = []
 
 [dependencies]
-futures = "*"
-hyper = "*"
-hyper-tls = "*"
 image = "*"
 reqwest = "*"
 serde_json = "*"
-tokio = "*"
 postgres = {version = "0.16.0-rc.1", features = ["with-chrono-0_4"]}
 common = {path = "../common"}
 chrono = "*"
@@ -23,3 +19,4 @@ log = "*"
 fern = "*"
 lazy_static = "*"
 r2d2_postgres = "0.15.0-rc.1"
+rayon = "*"

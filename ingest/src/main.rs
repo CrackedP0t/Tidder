@@ -1,15 +1,13 @@
 use clap::{clap_app, crate_authors, crate_description, crate_version};
 use common::*;
-use futures::future::Future;
-use futures::lazy;
-use hyper::{client::HttpConnector, Body, Client, StatusCode};
-use hyper_tls::HttpsConnector;
 use lazy_static::lazy_static;
 use log::{error, info, warn};
 use postgres::NoTls;
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
+use rayon::iter::ParallelBridge;
+use rayon::prelude::*;
 use regex::Regex;
-use reqwest;
+use reqwest::StatusCode;
 use serde_json::Deserializer;
 use std::fs::File;
 use std::io::Read;
@@ -24,72 +22,69 @@ lazy_static! {
             NoTls,
         ))
         .unwrap();
-    static ref HTTPS: HttpsConnector<HttpConnector> = HttpsConnector::new(4).unwrap();
     static ref EXT_RE: Regex =
-        Regex::new(r"\.(?:(?:jpe?g)|(?:png)|(?:gif)|(?:webp)|(?:bmp))\b").unwrap();
+        Regex::new(r"\W(?:png|jpe?g|gif|webp|p[bgpn]m|tiff?|bmp|ico|hdr)\b").unwrap();
+}
+
+fn ingest<R: Read + Send>(reader: R) {
+    info!("Creating iterator...");
+
+    let json_iter =
+        Deserializer::from_reader(Decoder::new(reader).unwrap()).into_iter::<Submission>();
+
+    info!("Starting ingestion!");
+
+    json_iter
+        .filter_map(|post| match post {
+            Err(e) => {
+                error!("{}", e);
+                None
+            }
+            Ok(post) => {
+                if !post.is_self && EXT_RE.is_match(&post.url) {
+                    Some(post)
+                } else {
+                    None
+                }
+            }
+        })
+        .par_bridge()
+        .for_each(|post: Submission| match get_image(post.url.clone()) {
+            Ok(img) => {
+                save_post(&DB_POOL, &post, dhash(img));
+                info!("{} successfully hashed", post.url);
+            }
+            Err(gif) => {
+                let msg = format!("{}", gif);
+                let ie = gif.error;
+                if let Ok(sf) = ie.downcast::<StatusFail>() {
+                    if sf.status != StatusCode::NOT_FOUND {
+                        warn!("{}", msg);
+                    }
+                } else {
+                    warn!("{}", msg);
+                }
+            }
+        });
 }
 
 fn main() {
-    tokio::run(lazy(|| {
-        setup_logging();
-        let matches = clap_app!(
-            ingest =>
-                (version: crate_version!())
-                (author: crate_authors!(","))
-                (about: crate_description!())
-                (@arg URL: -u --url +takes_value "The URL of the file to ingest")
-                (@arg FILE: -f --file +takes_value "The path of the file to ingest")
-        )
-        .get_matches();
+    setup_logging();
+    let matches = clap_app!(
+        ingest =>
+            (version: crate_version!())
+            (author: crate_authors!(","))
+            (about: crate_description!())
+            (@arg URL: -u --url +takes_value "The URL of the file to ingest")
+            (@arg FILE: -f --file +takes_value "The path of the file to ingest")
+    )
+    .get_matches();
 
-        let json_iter = Deserializer::from_reader(
-            Decoder::new(if let Some(file) = matches.value_of("FILE") {
-                Box::new(File::open(file).map_err(le!())?) as Box<dyn Read>
-            } else if let Some(url) = matches.value_of("URL") {
-                Box::new(reqwest::get(url).map_err(le!())?) as Box<dyn Read>
-            } else {
-                panic!("No file or URL passed");
-            })
-            .map_err(le!())?,
-        )
-        .into_iter::<Submission>();
-
-        info!("Starting ingestion!");
-
-        for post in json_iter {
-            match post {
-                Err(e) => {
-                    error!("{}", e);
-                    return Err(());
-                }
-                Ok(post) => {
-                    if post.is_self || !EXT_RE.is_match(&post.url) {
-                        continue;
-                    }
-                    tokio::spawn(lazy(move || {
-                        let client = Client::builder().build::<_, Body>((*HTTPS).clone());
-                        get_image(client, post.url.clone()).then(move |res| match res {
-                            Ok((img, _status)) => {
-                                save_post(&DB_POOL, &post, dhash(img));
-                                info!("{} successfully hashed", post.url);
-                                Ok(())
-                            }
-                            Err(e) => {
-                                let msg = format!("{}", e);
-                                let ie = e.error;
-                                if let Ok(sf) = ie.downcast::<StatusFail>() {
-                                    if sf.status != StatusCode::NOT_FOUND {
-                                        warn!("{}", msg);
-                                    }
-                                }
-                                Err(())
-                            }
-                        })
-                    }));
-                }
-            }
-        }
-
-        Ok(())
-    }));
+    if let Some(file) = matches.value_of("FILE") {
+        ingest(File::open(file).unwrap());
+    } else if let Some(url) = matches.value_of("URL") {
+        ingest(reqwest::get(url).unwrap());
+    } else {
+        error!("No file or URL passed");
+    }
 }

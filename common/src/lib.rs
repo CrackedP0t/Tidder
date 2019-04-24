@@ -1,16 +1,14 @@
 use chrono::NaiveDateTime;
 use failure::{format_err, Error, Fail};
-use futures::future::{loop_fn, ok, result, Loop};
-use futures::{Future, Stream};
-use hyper::client::connect::Connect;
-use hyper::{header, Body, Client, Request, StatusCode};
 use image::{imageops, load_from_memory, DynamicImage};
 use lazy_static::lazy_static;
 use log::error;
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use regex::Regex;
+use reqwest::{header, StatusCode};
 use serde::Deserialize;
 use std::fmt;
+use std::io::{BufReader, Read};
 use tokio_postgres::{to_sql_checked, types, NoTls};
 use url::percent_encoding::{utf8_percent_encode, QUERY_ENCODE_SET};
 
@@ -200,7 +198,7 @@ pub const IMAGE_MIMES: [&str; 11] = [
     "image/vnd.radiance",
 ];
 
-pub fn image_type_map(mime: &str) -> Result<image::ImageFormat, &str> {
+pub fn image_type_map(mime: &str) -> Result<image::ImageFormat, Error> {
     use image::ImageFormat::*;
     match mime {
         "image/png" => Ok(PNG),
@@ -213,102 +211,107 @@ pub fn image_type_map(mime: &str) -> Result<image::ImageFormat, &str> {
         "image/bmp" => Ok(BMP),
         "image/vnd.microsoft.icon" => Ok(ICO),
         "image/vnd.radiance" => Ok(HDR),
-        _ => Err("Unsupported image format"),
+        _ => Err(format_err!("Unsupported MIME type {}", mime)),
     }
 }
 
-pub fn get_image<C>(
-    client: Client<C, Body>,
-    link: String,
-) -> impl Future<
-    Item = (
-        DynamicImage,
-        StatusCode,
-        // Option<String>, // Etag
-        // Option<NaiveDateTime>, // Date
-        // Option<NaiveDateTime>, // Expires
-    ),
-    Error = GetImageFail,
->
-where
-    C: 'static + Connect,
-{
-    let link2 = link.clone();
-    let map_gif = |e| GetImageFail {
-        link: link2,
-        error: e,
+macro_rules! map_gif {
+    ($link:expr) => {
+        |e| GetImageFail {
+            link: $link.clone(),
+            error: Error::from(e),
+        }
     };
-    loop_fn((client, link), move |(client, this_link): (_, String)| {
-        result(
-            Request::get(utf8_percent_encode(&this_link, QUERY_ENCODE_SET).collect::<String>())
-                .header(header::ACCEPT, IMAGE_MIMES.join(","))
-                .header(
-                    header::USER_AGENT,
-                    "Mozilla/5.0 (X11; Linux x86_64; rv:66.0) Gecko/20100101 Firefox/66.0",
-                )
-                .body(Body::empty()),
-        )
-        .map_err(Error::from)
-        .and_then(|request| {
-            client
-                .request(request)
-                .map_err(Error::from)
-                .and_then(move |resp| {
-                    let status = resp.status();
-                    if status.is_success() {
-                        match resp.headers().get(header::CONTENT_TYPE) {
-                            Some(ctype) => {
-                                let val = ctype.to_str().map_err(Error::from)?;
-                                if IMAGE_MIMES.iter().any(|t| *t == val) {
-                                    Ok(Loop::Break(resp))
-                                } else {
-                                    Err(format_err!("Got unsupported MIME type {}", val))
-                                }
-                            }
-                            None => Ok(Loop::Break(resp)),
-                        }
-                    } else if status.is_redirection() {
-                        Ok(Loop::Continue((
-                            client,
-                            String::from(
-                                resp.headers()
-                                    .get(header::LOCATION)
-                                    .ok_or_else(|| format_err!("Redirected without location"))?
-                                    .to_str()
-                                    .map_err(Error::from)?,
-                            ),
-                        )))
+}
+
+pub fn get_image(
+    // client: Client<C, Body>,
+    link: String,
+) -> Result<
+    // (
+    DynamicImage,
+    // StatusCode,
+    // Option<String>, // Etag
+    // Option<NaiveDateTime>, // Date
+    // Option<NaiveDateTime>, // Expires
+    // ),
+    GetImageFail,
+>
+// where
+//     C: 'static + Connect,
+{
+    lazy_static! {
+        static ref REQW_CLIENT: reqwest::Client = reqwest::Client::new();
+    }
+
+    let link2 = link.clone();
+
+    let mut this_link = link;
+
+    let resp = loop {
+        let resp = REQW_CLIENT
+            .get(&utf8_percent_encode(&this_link, QUERY_ENCODE_SET).collect::<String>())
+            .header(header::ACCEPT, IMAGE_MIMES.join(","))
+            .header(
+                header::USER_AGENT,
+                "Mozilla/5.0 (X11; Linux x86_64; rv:66.0) Gecko/20100101 Firefox/66.0",
+            )
+            .send()
+            .map_err(map_gif!(this_link))?;
+
+        let status = resp.status();
+
+        if status.is_success() {
+            match resp.headers().get(header::CONTENT_TYPE) {
+                Some(ctype) => {
+                    let val = ctype.to_str().map_err(map_gif!(this_link))?;
+                    if IMAGE_MIMES.iter().any(|t| *t == val) {
+                        break resp;
                     } else {
-                        Err(Error::from(StatusFail { status }))
-                    }
-                })
-        })
-    })
-    .and_then(|resp| {
-        // let resp_time = Utc::now().naive_utc();
-        let (parts, body) = resp.into_parts();
-        // let headers = parts.headers;
+                        return Err(GetImageFail {
+                            link: this_link.clone(),
+                            error: format_err!("Got unsupported MIME type {}", val),
+                        });
+                    };
+                }
+                None => {
+                    break resp;
+                }
+            }
+        } else if status.is_redirection() {
+            this_link = String::from(
+                resp.headers()
+                    .get(header::LOCATION)
+                    .ok_or_else(|| GetImageFail {
+                        link: this_link.clone(),
+                        error: format_err!("Redirected without location"),
+                    })?
+                    .to_str()
+                    .map_err(map_gif!(this_link))?,
+            );
+            continue;
+        } else {
+            return Err(GetImageFail {
+                link: this_link,
+                error: Error::from(StatusFail { status }),
+            });
+        }
+    };
 
-        // enum CacheDirective {
-        //     NoCache,
-        //     NoStore,
-        //     NoTransform,
-        //     OnlyIfCached,
-        //     MaxAge(u32),
-        //     MaxStale(u32),
-        //     MinFresh(u32),
-        //     MustRevalidate,
-        //     Public,
-        //     Private,
-        //     ProxyRevalidate,
-        //     SMaxAge(u32),
-        //     Extension(String, Option<String>),
-        // };
+    let headers = resp.headers();
 
-        (body.concat2().map_err(Error::from), ok(parts.status))
-    })
-    .and_then(move |(body, status)| (load_from_memory(&body).map_err(Error::from), ok(status)))
-    .map_err(map_gif)
+    let mut file = Vec::<u8>::with_capacity(
+        headers
+            .get(header::CONTENT_LENGTH)
+            .and_then(|c_l| std::str::from_utf8(c_l.as_bytes()).ok())
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(2048),
+    );
+    BufReader::new(resp)
+        .read_to_end(&mut file)
+        .map_err(map_gif!(this_link))?;
+
+    return load_from_memory(&file).map_err(map_gif!(this_link));
 }
 
 pub fn setup_logging() {

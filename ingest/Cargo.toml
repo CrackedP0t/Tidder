@@ -14,10 +14,7 @@ postgres = {version = "0.16.0-rc.1", features = ["with-chrono-0_4"]}
 clap = "*"
 common = {path = "../common"}
 lazy_static = "*"
-tokio = "*"
 r2d2_postgres = "0.15.0-rc.1"
-futures = "*"
 log = "*"
-hyper = "*"
-hyper-tls = "*"
 regex = "*"
+rayon = "*"

@@ -75,7 +75,7 @@ fn get_search(qs: SearchQuery) -> impl Future<Item = Response<Body>, Error = Rej
                     .and_then(|url| {
                         let url = url.to_string();
                         let url2 = url.clone();
-                        get_hash(url.clone()).map_err(Error::from).and_then(|(hash, _image_id)| {
+                        get_hash(url.clone()).map_err(Error::from).and_then(|(hash, _image_id, _exists)| {
                             Ok(match POOL.get() {
                                 Ok(mut conn) =>
                                     conn.query_iter(

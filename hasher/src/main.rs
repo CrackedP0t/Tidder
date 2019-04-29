@@ -35,9 +35,13 @@ fn download_search(search: PushShiftSearch) -> Result<(), ()> {
         })
         .par_bridge()
         .for_each(|post: Submission| match get_hash(post.url.clone()) {
-            Ok((_hash, image_id)) => {
-                save_post(&DB_POOL, &post, image_id);
-                info!("{} successfully hashed", post.url);
+            Ok((_hash, image_id, exists)) => {
+                if exists {
+                    save_post(&DB_POOL, &post, image_id);
+                    info!("{} successfully hashed", post.url);
+                } else {
+                    info!("{} already exists", post.url);
+                }
             }
             Err(ghf) => {
                 let msg = format!("{}", ghf);

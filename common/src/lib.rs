@@ -218,7 +218,7 @@ macro_rules! map_ghf {
     };
 }
 
-pub fn get_hash(link: String) -> Result<(Hash, i64), GetHashFail> {
+pub fn get_hash(link: String) -> Result<(Hash, i64, bool), GetHashFail> {
     lazy_static! {
         static ref REQW_CLIENT: reqwest::Client = reqwest::Client::new();
         static ref DB_POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> =
@@ -231,6 +231,11 @@ pub fn get_hash(link: String) -> Result<(Hash, i64), GetHashFail> {
             .unwrap();
     }
 
+    let link = link
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">");
+
     let mut client = DB_POOL.get().map_err(map_ghf!(link))?;
     let mut trans = client.transaction().map_err(map_ghf!(link))?;
     if let Some(row) = trans
@@ -238,7 +243,7 @@ pub fn get_hash(link: String) -> Result<(Hash, i64), GetHashFail> {
         .map_err(map_ghf!(link))?
         .get(0)
     {
-        return Ok((Hash(row.get::<_, i64>("hash") as u64), row.get("id")));
+        return Ok((Hash(row.get::<_, i64>("hash") as u64), row.get("id"), true));
     }
 
     let mut this_link = link;
@@ -359,7 +364,7 @@ pub fn get_hash(link: String) -> Result<(Hash, i64), GetHashFail> {
         .get("id");
     trans.commit().map_err(map_ghf!(this_link))?;
 
-    Ok((hash, image_id))
+    Ok((hash, image_id, false))
 }
 
 pub fn setup_logging() {

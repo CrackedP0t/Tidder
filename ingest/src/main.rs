@@ -37,9 +37,13 @@ fn ingest_json<R: Read + Send>(json_stream: R) {
         })
         .par_bridge()
         .for_each(|post: Submission| match get_hash(post.url.clone()) {
-            Ok((_hash, image_id)) => {
+            Ok((_hash, image_id, exists)) => {
+                if exists {
+                    info!("{} already exists", post.url);
+                } else {
+                    info!("{} successfully hashed", post.url);
+                }
                 save_post(&DB_POOL, &post, image_id);
-                info!("{} successfully hashed", post.url);
             }
             Err(ghf) => {
                 let msg = format!("{}", ghf);

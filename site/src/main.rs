@@ -5,7 +5,7 @@ use futures::future::{ok, result, Either, Future};
 use http::{Response, StatusCode};
 use hyper::{self, Body};
 use lazy_static::lazy_static;
-use postgres::{self, NoTls};
+use postgres::NoTls;
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use serde::Deserialize;
 use std::vec::Vec;
@@ -75,12 +75,11 @@ fn get_search(qs: SearchQuery) -> impl Future<Item = Response<Body>, Error = Rej
                     .and_then(|url| {
                         let url = url.to_string();
                         let url2 = url.clone();
-                        get_image(url.clone()).map_err(Error::from).and_then(|image| {
-                            let hash = dhash(image);
+                        get_hash(url.clone()).map_err(Error::from).and_then(|(hash, _image_id)| {
                             Ok(match POOL.get() {
                                 Ok(mut conn) =>
                                     conn.query_iter(
-                                        "SELECT reddit_id, link, permalink, score, author, created_utc, subreddit, title FROM posts WHERE hash <@ ($1, 9) ORDER BY created_utc DESC",
+                                        "SELECT posts.link, permalink, score, author, created_utc, subreddit, title FROM posts INNER JOIN images ON hash <@ ($1, 9) AND image_id = images.id ORDER BY created_utc DESC",
                                         &[&hash],
                                     )
                                     .map(move |rows_iter| Search {

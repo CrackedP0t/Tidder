@@ -21,16 +21,27 @@ lazy_static! {
 fn download_search(search: PushShiftSearch) -> Result<(), ()> {
     use rayon::prelude::*;
 
-    search.hits.hits.into_par_iter().for_each(|post: Hit| {
-        let post = post.source;
-        match get_image(post.url.clone()) {
-            Ok(img) => {
-                save_post(&DB_POOL, &post, dhash(img));
+    search
+        .hits
+        .hits
+        .into_iter()
+        .filter_map(|post| {
+            let post = post.source;
+            if !post.is_self && EXT_RE.is_match(&post.url) {
+                Some(post)
+            } else {
+                None
+            }
+        })
+        .par_bridge()
+        .for_each(|post: Submission| match get_hash(post.url.clone()) {
+            Ok((_hash, image_id)) => {
+                save_post(&DB_POOL, &post, image_id);
                 info!("{} successfully hashed", post.url);
             }
-            Err(gif) => {
-                let msg = format!("{}", gif);
-                let ie = gif.error;
+            Err(ghf) => {
+                let msg = format!("{}", ghf);
+                let ie = ghf.error;
                 if let Ok(sf) = ie.downcast::<StatusFail>() {
                     if sf.status != reqwest::StatusCode::NOT_FOUND {
                         warn!("{}", msg);
@@ -39,8 +50,7 @@ fn download_search(search: PushShiftSearch) -> Result<(), ()> {
                     warn!("{}", msg);
                 }
             }
-        }
-    });
+        });
 
     Ok(())
 }

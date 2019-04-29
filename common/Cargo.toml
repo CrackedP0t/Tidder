@@ -7,7 +7,7 @@ edition = "2018"
 [dependencies]
 image = "*"
 tokio-postgres = {version = "0.4.0-rc.2", features = ["with-chrono-0_4"]}
-url = "*"
+url = "^1.7.2"
 futures = "*"
 log = "^0.4.6"
 fern = "*"
@@ -19,3 +19,4 @@ chrono = "*"
 lazy_static = "*"
 reqwest = "*"
 toml = "*"
+cache_control = {version = "*", path = "../cache_control"}

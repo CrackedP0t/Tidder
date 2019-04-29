@@ -27,17 +27,12 @@ fn ingest_json<R: Read + Send>(json_stream: R) {
     info!("Starting ingestion!");
 
     json_iter
-        .filter_map(|post| match post {
-            Err(e) => {
-                error!("{}", e);
+        .filter_map(|post| {
+            let post = post.unwrap();
+            if !post.is_self && EXT_RE.is_match(&post.url) {
+                Some(post)
+            } else {
                 None
-            }
-            Ok(post) => {
-                if !post.is_self && EXT_RE.is_match(&post.url) {
-                    Some(post)
-                } else {
-                    None
-                }
             }
         })
         .par_bridge()

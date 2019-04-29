@@ -20,3 +20,9 @@ lazy_static = "*"
 reqwest = "*"
 toml = "*"
 cache_control = {version = "*", path = "../cache_control"}
+phf = "*"
+
+[build-dependencies]
+phf = "*"
+phf_codegen = "*"
+image = "*"

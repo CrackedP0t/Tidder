@@ -20,6 +20,8 @@ lazy_static! {
         Regex::new(r"\W(?:png|jpe?g|gif|webp|p[bgpn]m|tiff?|bmp|ico|hdr)\b").unwrap();
 }
 
+include!(concat!(env!("OUT_DIR"), "/codegen.rs"));
+
 // Log Error, returning empty
 #[macro_export]
 macro_rules! le {
@@ -207,23 +209,6 @@ pub const IMAGE_MIMES: [&str; 11] = [
     "image/vnd.radiance",
 ];
 
-pub fn image_mime_map(mime: &str) -> Option<image::ImageFormat> {
-    use image::ImageFormat::*;
-    match mime {
-        "image/png" => Some(PNG),
-        "image/jpeg" => Some(JPEG),
-        "image/gif" => Some(GIF),
-        "image/webp" => Some(WEBP),
-        "image/x-portable-anymap" => Some(PNM),
-        "image/tiff" => Some(TIFF),
-        "image/x-targa" | "image/x-tga" => Some(TGA),
-        "image/bmp" => Some(BMP),
-        "image/vnd.microsoft.icon" => Some(ICO),
-        "image/vnd.radiance" => Some(HDR),
-        _ => None,
-    }
-}
-
 macro_rules! map_ghf {
     ($link:expr) => {
         |e| GetHashFail {
@@ -275,9 +260,9 @@ pub fn get_hash(link: String) -> Result<(Hash, i64), GetHashFail> {
             match resp.headers().get(header::CONTENT_TYPE) {
                 Some(ctype) => {
                     let val = ctype.to_str().map_err(map_ghf!(this_link))?;
-                    match image_mime_map(val) {
-                        format @ Some(_) => {
-                            break (resp, format);
+                    match IMAGE_MIME_MAP.get(val) {
+                        Some(format) => {
+                            break (resp, Some(*format));
                         }
                         None => {
                             return Err(GetHashFail {

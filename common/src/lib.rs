@@ -1,13 +1,15 @@
 use cache_control::CacheControl;
 use chrono::{DateTime, NaiveDateTime};
 use failure::{format_err, Fail};
-use image::{imageops, load_from_memory, load_from_memory_with_format, DynamicImage};
+use image::{imageops, load_from_memory, DynamicImage};
+use img_hash::{precompute_dct_matrix, HashType, ImageHash};
 use lazy_static::lazy_static;
 use log::{error, LevelFilter};
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use regex::Regex;
 use reqwest::{header, StatusCode};
 use serde::Deserialize;
+use std::convert::TryInto;
 use std::fmt;
 use std::io::{BufReader, Read};
 use tokio_postgres::{to_sql_checked, types, NoTls};
@@ -191,6 +193,14 @@ pub fn dhash(img: DynamicImage) -> Hash {
     Hash(hash)
 }
 
+pub fn dct_hash(img: DynamicImage) -> Hash {
+    let hash = ImageHash::hash(&img, HASH_LENGTH, HashType::DCT);
+
+    Hash(u64::from_le_bytes(
+        hash.bitv.to_bytes().as_slice().try_into().unwrap(),
+    ))
+}
+
 pub fn distance(a: Hash, b: Hash) -> u32 {
     (a.0 ^ b.0).count_ones()
 }
@@ -218,6 +228,8 @@ macro_rules! map_ghf {
     };
 }
 
+const HASH_LENGTH: u32 = 8;
+
 pub fn get_hash(link: String) -> Result<(Hash, i64, bool), GetHashFail> {
     lazy_static! {
         static ref REQW_CLIENT: reqwest::Client = reqwest::Client::new();
@@ -231,10 +243,17 @@ pub fn get_hash(link: String) -> Result<(Hash, i64, bool), GetHashFail> {
             .unwrap();
     }
 
-    let link = link
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">");
+    use std::cell::RefCell;
+    thread_local! {
+        static HAVE_DCT: RefCell<bool> = RefCell::new(false);
+    }
+
+    HAVE_DCT.with(|have_dct| {
+        if !(*have_dct.borrow()) {
+            precompute_dct_matrix(HASH_LENGTH);
+            *have_dct.borrow_mut() = true;
+        }
+    });
 
     let mut client = DB_POOL.get().map_err(map_ghf!(link))?;
     let mut trans = client.transaction().map_err(map_ghf!(link))?;
@@ -246,9 +265,9 @@ pub fn get_hash(link: String) -> Result<(Hash, i64, bool), GetHashFail> {
         return Ok((Hash(row.get::<_, i64>("hash") as u64), row.get("id"), true));
     }
 
-    let mut this_link = link;
+    let mut this_link = link.clone();
 
-    let (resp, format) = loop {
+    let (resp, _format) = loop {
         let resp = REQW_CLIENT
             .get(&utf8_percent_encode(&this_link, QUERY_ENCODE_SET).collect::<String>())
             .header(header::ACCEPT, IMAGE_MIMES.join(","))
@@ -325,13 +344,23 @@ pub fn get_hash(link: String) -> Result<(Hash, i64, bool), GetHashFail> {
             .map_err(map_ghf!(this_link))?;
     }
 
-    let hash = dhash(
-        match format {
-            Some(format) => load_from_memory_with_format(&file, format),
-            None => load_from_memory(&file),
-        }
-        .map_err(map_ghf!(this_link))?,
+    // eprintln!("Hashing {}", &link);
+    let hash = dct_hash(
+        // match format {
+        //     Some(format) => load_from_memory_with_format(&file, format),
+        // None =>
+        load_from_memory(&file)
+            // }
+            .map_err(map_ghf!(this_link))?,
     );
+
+    if let Some(row) = trans
+        .query("SELECT hash, id FROM images WHERE link=$1", &[&link])
+        .map_err(map_ghf!(link))?
+        .get(0)
+    {
+        return Ok((Hash(row.get::<_, i64>("hash") as u64), row.get("id"), true));
+    }
 
     let mut client = DB_POOL.get().map_err(map_ghf!(this_link))?;
     let mut trans = client.transaction().map_err(map_ghf!(this_link))?;

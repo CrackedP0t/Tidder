@@ -19,8 +19,9 @@ chrono = "*"
 lazy_static = "*"
 reqwest = "*"
 toml = "*"
-cache_control = {version = "*", path = "../cache_control"}
+cache_control = {path = "../cache_control"}
 phf = "*"
+img_hash = {path = "../img_hash"}
 
 [build-dependencies]
 phf = "*"

@@ -5,6 +5,7 @@ use postgres::{self, NoTls};
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use serde_json::json;
 use std::env;
+use reqwest::StatusCode;
 
 lazy_static! {
     static ref DB_POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> =
@@ -34,24 +35,31 @@ fn download_search(search: PushShiftSearch) -> Result<(), ()> {
             }
         })
         .par_bridge()
-        .for_each(|post: Submission| match get_hash(post.url.clone()) {
-            Ok((_hash, image_id, exists)) => {
-                if exists {
+        .for_each(|mut post: Submission| {
+            post.url = post
+                .url
+                .replace("&amp;", "&")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">");
+            match get_hash(post.url.clone()) {
+                Ok((_hash, image_id, exists)) => {
+                    if exists {
+                        info!("{} already exists", post.url);
+                    } else {
+                        info!("{} successfully hashed", post.url);
+                    }
                     save_post(&DB_POOL, &post, image_id);
-                    info!("{} successfully hashed", post.url);
-                } else {
-                    info!("{} already exists", post.url);
                 }
-            }
-            Err(ghf) => {
-                let msg = format!("{}", ghf);
-                let ie = ghf.error;
-                if let Ok(sf) = ie.downcast::<StatusFail>() {
-                    if sf.status != reqwest::StatusCode::NOT_FOUND {
+                Err(ghf) => {
+                    let msg = format!("{}", ghf);
+                    let ie = ghf.error;
+                    if let Ok(sf) = ie.downcast::<StatusFail>() {
+                        if sf.status != StatusCode::NOT_FOUND {
+                            warn!("{}", msg);
+                        }
+                    } else {
                         warn!("{}", msg);
                     }
-                } else {
-                    warn!("{}", msg);
                 }
             }
         });

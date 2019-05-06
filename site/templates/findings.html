@@ -26,12 +26,13 @@
 {% if matches.len() > 0 %}
     <ul class="findings">
         {% for m in matches %}
-            <li class="match">
-                <label class="thumb_label">
-                    <input type="checkbox" class="thumb_check" />
-                    <img class="thumb_img" src="{{m.link}}" />
-                </label>
-                <span>[{{m.score}}] <a href="{{m.permalink}}">{{m.title}}</a> posted on {{m.created_utc}} by <a href="https://reddit.com/user/{{m.author}}">{{m.author}}</a> to <a href="https://reddit.com/r/{{m.subreddit}}">/r/{{m.subreddit}}</a></span>
+        <li class="match">
+            <span>{{ m.distance }}</span>
+            <label class="thumb_label">
+                <input type="checkbox" class="thumb_check" />
+                <img class="thumb_img" src="{{m.link}}" />
+            </label>
+            <span>[{{m.score}}] <a href="{{m.permalink}}">{{m.title}}</a> posted on {{m.created_utc}} by <a href="https://reddit.com/user/{{m.author}}">{{m.author}}</a> to <a href="https://reddit.com/r/{{m.subreddit}}">/r/{{m.subreddit}}</a></span>
             </li>
         {% endfor %}
     </ul>

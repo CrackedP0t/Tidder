@@ -52,7 +52,9 @@ fn ingest_json<R: Read + Send>(json_stream: R) {
 
     info!("Starting ingestion!");
 
-    Check::new(json_iter)
+    let check_json = Check::new(json_iter);
+
+    check_json
         .filter_map(|post| {
             if !post.is_self && EXT_RE.is_match(&post.url) {
                 Some(post)

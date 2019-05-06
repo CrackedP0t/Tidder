@@ -15,11 +15,15 @@
      color: #454545;
      border-radius: 2px;
      border: none;
- }
- .search-url {
-     width: 30%;
      margin-right: .5em;
      padding: .15em .25em;
+ }
+ .search-link {
+     min-width: 30vw;
+ }
+ .search-distance {
+     min-width: 5vw;
+     max-width: 4em;
  }
  .search-form {
      align-self: stretch;
@@ -30,12 +34,28 @@
 <div class="search-header">
     <h1>Search for an image!</h1>
     <form method="get" class="search-form" search-action="/search">
-        <input class="search-url" type="url" name="imageurl" required="true" />
+        <input class="search-link" name="imagelink" required="true" type="url"
+               value="{% match sent %}
+                      {%- when Some with (sent) %}
+                      {{- sent.link }}
+                      {%- else %}
+                      {%- endmatch %}"/>
+        <input class="search-distance" name="distance" type="number"
+               min="0" max="64" placeholder="{{ common::DEFAULT_DISTANCE }}"
+               value="{% match sent %}
+                      {%- when Some with (sent) %}
+                      {%- match sent.distance %}
+                      {%- when Some with (distance) %}
+                      {{- distance }}
+                      {%- else %}
+                      {%- endmatch %}
+                      {%- else %}
+                      {%- endmatch %}"/>
         <input class="search-button" type="submit" value="Search" />
     </form>
     {% match sent %}
     {% when Some with (sent) %}
-    <p>You searched for <a href="{{sent.url}}">{{sent.url}}</a></p>
+    <p>You searched for <a href="{{ sent.link }}">{{ sent.link }}</a></p>
     {% match sent.findings %}
     {% when Err with (message) %}
     <p>Error: {{message}}</p>
@@ -49,7 +69,7 @@
 {% when Some with (sent) %}
 {% match sent.findings %}
 {% when Ok with (findings) %}
-{{findings|safe}}
+{{ findings|safe }}
 {% else %}
 {% endmatch %}
 {% else %}

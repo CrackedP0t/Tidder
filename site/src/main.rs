@@ -15,15 +15,17 @@ use warp::{get2, path, query, reply, Filter, Rejection, Reply};
 
 #[derive(Deserialize)]
 struct SearchQuery {
-    imageurl: Option<String>,
+    imagelink: Option<String>,
+    distance: Option<i64>
 }
 
 struct Match {
-    permalink: String,
-    link: String,
     author: String,
-    score: i32,
     created_utc: chrono::NaiveDateTime,
+    distance: i64,
+    link: String,
+    permalink: String,
+    score: i32,
     subreddit: String,
     title: String,
 }
@@ -35,7 +37,8 @@ struct Findings {
 }
 
 struct Sent {
-    url: String,
+    link: String,
+    distance: Option<i64>,
     findings: Result<Findings, Error>,
 }
 
@@ -67,29 +70,32 @@ lazy_static! {
 }
 
 fn get_search(qs: SearchQuery) -> impl Future<Item = Response<Body>, Error = Rejection> {
-    match qs.imageurl {
-        Some(url) => {
-            let valid = Url::parse(&url.clone());
+    match qs.imagelink {
+        Some(link) => {
+            let valid = Url::parse(&link.clone());
+            let distance = qs.distance;
             Either::A(
                 result(valid.map_err(Error::from))
-                    .and_then(|url| {
-                        let url = url.to_string();
-                        let url2 = url.clone();
-                        get_hash(url.clone()).map_err(Error::from).and_then(|(hash, _image_id, _exists)| {
+                    .and_then(move |link| {
+                        let link = link.to_string();
+                        let link2 = link.clone();
+                        get_hash(link.clone()).map_err(Error::from).and_then(|(hash, _image_id, _exists)| {
                             Ok(match POOL.get() {
                                 Ok(mut conn) =>
                                     conn.query_iter(
-                                        "SELECT posts.link, permalink, score, author, created_utc, subreddit, title FROM posts INNER JOIN images ON hash <@ ($1, 9) AND image_id = images.id ORDER BY created_utc DESC",
-                                        &[&hash],
+                                        "SELECT  hash <-> $1 as distance, posts.link, permalink, score, author, created_utc, subreddit, title FROM posts INNER JOIN images ON hash <@ ($1, $2) AND image_id = images.id ORDER BY distance ASC, created_utc DESC",
+                                        &[&hash, &distance.unwrap_or(DEFAULT_DISTANCE)],
                                     )
-                                    .map(move |rows_iter| Search {
+                                    .and_then(move |rows_iter| Ok(Search {
                                         sent: Some(Sent {
-                                            url: url2,
+                                            link: link2,
+                                            distance,
                                             findings: Ok(Findings {
                                                 matches: rows_iter
                                                     .map(move |row| {
                                                         Ok(Match {
                                                             permalink: format!("https://reddit.com{}", row.get::<_, &str>("permalink")),
+                                                            distance: row.get("distance"),
                                                             link: row.get("link"),
                                                             score: row.get("score"),
                                                             author: row.get("author"),
@@ -98,30 +104,32 @@ fn get_search(qs: SearchQuery) -> impl Future<Item = Response<Body>, Error = Rej
                                                             title: row.get("title")
                                                         })
                                                     })
-                                                    .collect()
-                                                    .unwrap(),
+                                                    .collect()?,
                                             }),
                                         }),
-                                    })
+                                    }))
                                     .unwrap_or_else(move |e| Search {
                                         sent: Some(Sent {
-                                            url,
+                                            link,
+                                            distance,
                                             findings: Err(Error::from(e)),
                                         }),
                                     }),
                                 Err(e) => Search {
                                     sent: Some(Sent {
-                                        url,
+                                        link,
+                                        distance,
                                         findings: Err(Error::from(e))
                                     })
                                 }
                             })
                         })
                     })
-                    .or_else(|e| {
+                    .or_else(move |e| {
                         ok(Search {
                             sent: Some(Sent {
-                                url,
+                                link,
+                                distance,
                                 findings: Err(e),
                             }),
                         })

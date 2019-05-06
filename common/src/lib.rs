@@ -60,8 +60,11 @@ macro_rules! lfe {
     }};
 }
 
+pub const DEFAULT_DISTANCE: i64 = 4;
+
 #[derive(Deserialize, Debug)]
 pub struct Submission {
+    pub id: i64,
     pub author: Option<String>,
     pub created_utc: i64,
     pub is_self: bool,
@@ -115,8 +118,8 @@ pub fn save_post(
             client.transaction().map_err(le!())
                 .and_then(|mut trans| {
                     trans.execute(
-                        "INSERT INTO posts (reddit_id, link, permalink, author, created_utc, score, subreddit, title, nsfw, spoiler, image_id) \
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+                        "INSERT INTO posts (reddit_id, link, permalink, author, created_utc, score, subreddit, title, nsfw, spoiler, image_id, reddit_id_int) \
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
                          ON CONFLICT DO NOTHING",
                         &[
                             &reddit_id,
@@ -130,6 +133,7 @@ pub fn save_post(
                             &post.over_18,
                             &post.spoiler.unwrap_or(false),
                             &image_id,
+                            &post.id,
                         ],
                     ).map_err(le!())?;
                     trans.commit().map_err(le!())
@@ -196,7 +200,7 @@ pub fn dhash(img: DynamicImage) -> Hash {
 pub fn dct_hash(img: DynamicImage) -> Hash {
     let hash = ImageHash::hash(&img, HASH_LENGTH, HashType::DCT);
 
-    Hash(u64::from_le_bytes(
+    Hash(u64::from_be_bytes(
         hash.bitv.to_bytes().as_slice().try_into().unwrap(),
     ))
 }

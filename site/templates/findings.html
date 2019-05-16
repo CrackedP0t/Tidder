@@ -1,21 +1,21 @@
 <style>
- .match {
-     display: flex;
-     flex-direction: row;
-     width: 100%;
- }
- .thumb_check {
-     display: none;
- }
- .thumb_img {
-     display: block;
-     height: 15vh;
-     cursor: zoom-in;
- }
- .thumb_check:checked ~ .thumb_img {
-     height: 75vh;
-     cursor: zoom-out;
- }
+ /* .match {
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+ }*/
+    .thumb_check {
+    display: none;
+    }
+    .thumb_img {
+    display: block;
+    height: 15vh;
+    cursor: zoom-in;
+    }
+    .thumb_check:checked ~ .thumb_img {
+    height: 75vh;
+    cursor: zoom-out;
+    }
  .findings {
      display: flex;
      flex-direction: column;
@@ -24,18 +24,26 @@
  }
 </style>
 {% if matches.len() > 0 %}
-    <ul class="findings">
+<table class="findings">
+    <tbody>
         {% for m in matches %}
-        <li class="match">
-            <span>{{ m.distance }}</span>
+        <tr class="match">
+            <td>{{ m.distance }}</td>
+            <td>{{ m.score }}</td>
+            <td>{{ m.created_utc }}</td>
+            <td>
             <label class="thumb_label">
                 <input type="checkbox" class="thumb_check" />
-                <img class="thumb_img" src="{{m.link}}" />
+                <img class="thumb_img" src="{{ m.link }}" />
             </label>
-            <span>[{{m.score}}] <a href="{{m.permalink}}">{{m.title}}</a> posted on {{m.created_utc}} by <a href="https://reddit.com/user/{{m.author}}">{{m.author}}</a> to <a href="https://reddit.com/r/{{m.subreddit}}">/r/{{m.subreddit}}</a></span>
-            </li>
+            </td>
+            <td><a href="{{ m.permalink }}">{{ m.title }}</a></td>
+            <td><a href="https://reddit.com/user/{{ m.author }}">{{m.author}}</a></td>
+            <td><a href="https://reddit.com/r/{{ m.subreddit }}">/r/{{ m.subreddit }}</a></td>
+        </tr>
         {% endfor %}
-    </ul>
+    </tbody>
+</table>
 {% else %}
-    <p>No matches!</p>
+<p>No matches!</p>
 {% endif %}

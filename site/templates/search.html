@@ -31,47 +31,49 @@
      justify-content: center;
  }
 </style>
+
 <div class="search-header">
     <h1>Search for an image!</h1>
     <form method="get" class="search-form" search-action="/search">
         <input class="search-link" name="imagelink" required="true" type="url"
-               value="{% match sent %}
-                      {%- when Some with (sent) %}
-                      {{- sent.link }}
-                      {%- else %}
-                      {%- endmatch %}"/>
+               value="{{ form.link }}"/>
         <input class="search-distance" name="distance" type="number"
-               min="0" max="64" placeholder="{{ common::DEFAULT_DISTANCE }}"
-               value="{% match sent %}
-                      {%- when Some with (sent) %}
-                      {%- match sent.distance %}
-                      {%- when Some with (distance) %}
-                      {{- distance }}
-                      {%- else %}
-                      {%- endmatch %}
-                      {%- else %}
-                      {%- endmatch %}"/>
+               min="0" max="64"
+               value="{{ form.distance }}"/>
+        <input class="search-nsfw" type="radio" name="nsfw" value="only" />
+        <input class="search-nsfw" type="radio" name="nsfw" value="allow" />
+        <input class="search-nsfw" type="radio" name="nsfw" value="never" />
         <input class="search-button" type="submit" value="Search" />
     </form>
-    {% match sent %}
-    {% when Some with (sent) %}
-    <p>You searched for <a href="{{ sent.link }}">{{ sent.link }}</a></p>
-    {% match sent.findings %}
+    {% match findings %}
+    {% when Ok with (findings) %}
+        {% match findings %}
+        {% when Some with (findings) %}
+            <p>You searched for <a href="{{ form.link }}">{{ form.link }}</a></p>
+            {% match findings %}
+            {% when Ok with (findings) %}
+                <p>Found {{ findings.matches.len() }} match{{ findings.matches.len()|plural_es }}</p>
+            {% when Err with (message) %}
+                <p>Error: {{message}}</p>
+            {% endmatch %}
+        {% when None %}
+            <p>No search yet...</p>
+        {% endmatch %}
     {% when Err with (message) %}
-    <p>Error: {{message}}</p>
-    {% else %}
-    {% endmatch %}
-    {% else %}
-    <p>No search yet...</p>
+        <p>Error: {{message}}</p>
     {% endmatch %}
 </div>
-{% match sent %}
-{% when Some with (sent) %}
-{% match sent.findings %}
+{% match findings %}
 {% when Ok with (findings) %}
-{{ findings|safe }}
-{% else %}
-{% endmatch %}
+    {% match (findings) %}
+    {% when Some with (findings) %}
+        {% match findings %}
+        {% when Ok with (findings) %}
+            {{ findings|safe }}
+        {% else %}
+        {% endmatch %}
+    {% else %}
+    {% endmatch %}
 {% else %}
 {% endmatch %}
 {% endblock %}

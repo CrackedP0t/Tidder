@@ -3,9 +3,9 @@ use lazy_static::lazy_static;
 use log::{error, info, warn};
 use postgres::{self, NoTls};
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
+use reqwest::StatusCode;
 use serde_json::json;
 use std::env;
-use reqwest::StatusCode;
 
 lazy_static! {
     static ref DB_POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> =

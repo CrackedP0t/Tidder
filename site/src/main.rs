@@ -1,13 +1,13 @@
 use askama::Template;
 use common::*;
 use fallible_iterator::FallibleIterator;
-use futures::future::{ok, result, Either, Future};
 use http::{Response, StatusCode};
 use hyper::{self, Body};
 use lazy_static::lazy_static;
 use postgres::NoTls;
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use serde::Deserialize;
+use std::str::FromStr;
 use std::vec::Vec;
 use url::Url;
 use warp::path::{full, FullPath};
@@ -16,7 +16,59 @@ use warp::{get2, path, query, reply, Filter, Rejection, Reply};
 #[derive(Deserialize)]
 struct SearchQuery {
     imagelink: Option<String>,
-    distance: Option<i64>
+    distance: Option<String>,
+    nsfw: Option<String>,
+}
+
+pub mod filters {
+    pub fn plural_es<N>(n: &N) -> Result<&'static str, askama::Error>
+    where
+        N: From<u8> + PartialEq<N>,
+    {
+        if *n == 1u8.into() {
+            Ok("")
+        } else {
+            Ok("es")
+        }
+    }
+
+    pub fn plural_s<N>(n: N) -> &'static str
+    where
+        N: From<u8> + PartialEq<N>,
+    {
+        if n == 1u8.into() {
+            ""
+        } else {
+            "s"
+        }
+    }
+}
+
+#[derive(Clone)]
+enum NSFWOption {
+    Only,
+    Allow,
+    Never,
+}
+
+impl FromStr for NSFWOption {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        use NSFWOption::*;
+        match s {
+            "only" => Ok(Only),
+            "" | "allow" => Ok(Allow),
+            "never" => Ok(Never),
+            _ => Err(format_err!("Invalid NSFW option: {}", s)),
+        }
+    }
+}
+
+impl Default for NSFWOption {
+    fn default() -> Self {
+        NSFWOption::Allow
+    }
 }
 
 struct Match {
@@ -25,7 +77,7 @@ struct Match {
     distance: i64,
     link: String,
     permalink: String,
-    score: i32,
+    score: i64,
     subreddit: String,
     title: String,
 }
@@ -36,16 +88,37 @@ struct Findings {
     matches: Vec<Match>,
 }
 
-struct Sent {
+#[derive(Clone)]
+struct Form {
     link: String,
-    distance: Option<i64>,
-    findings: Result<Findings, Error>,
+    distance: i64,
+    nsfw: NSFWOption,
+}
+
+impl Default for Form {
+    fn default() -> Self {
+        Form {
+            link: "".to_string(),
+            distance: 1,
+            nsfw: NSFWOption::Allow,
+        }
+    }
 }
 
 #[derive(Template)]
 #[template(path = "search.html")]
 struct Search {
-    sent: Option<Sent>,
+    form: Form,
+    findings: Result<Option<Result<Findings, Error>>, Error>,
+}
+
+impl Default for Search {
+    fn default() -> Search {
+        Search {
+            form: Form::default(),
+            findings: Ok(None),
+        }
+    }
 }
 
 fn reply_not_found(path: FullPath) -> impl Reply {
@@ -69,90 +142,110 @@ lazy_static! {
         .unwrap();
 }
 
-fn get_search(qs: SearchQuery) -> impl Future<Item = Response<Body>, Error = Rejection> {
-    match qs.imagelink {
-        Some(link) => {
-            let valid = Url::parse(&link.clone());
-            let distance = qs.distance;
-            Either::A(
-                result(valid.map_err(Error::from))
-                    .and_then(move |link| {
-                        let link = link.to_string();
-                        let link2 = link.clone();
-                        get_hash(link.clone()).map_err(Error::from).and_then(|(hash, _image_id, _exists)| {
-                            Ok(match POOL.get() {
-                                Ok(mut conn) =>
-                                    conn.query_iter(
-                                        "SELECT  hash <-> $1 as distance, posts.link, permalink, score, author, created_utc, subreddit, title FROM posts INNER JOIN images ON hash <@ ($1, $2) AND image_id = images.id ORDER BY distance ASC, created_utc DESC",
-                                        &[&hash, &distance.unwrap_or(DEFAULT_DISTANCE)],
-                                    )
-                                    .and_then(move |rows_iter| Ok(Search {
-                                        sent: Some(Sent {
-                                            link: link2,
-                                            distance,
-                                            findings: Ok(Findings {
-                                                matches: rows_iter
-                                                    .map(move |row| {
-                                                        Ok(Match {
-                                                            permalink: format!("https://reddit.com{}", row.get::<_, &str>("permalink")),
-                                                            distance: row.get("distance"),
-                                                            link: row.get("link"),
-                                                            score: row.get("score"),
-                                                            author: row.get("author"),
-                                                            created_utc: row.get("created_utc"),
-                                                            subreddit: row.get("subreddit"),
-                                                            title: row.get("title")
-                                                        })
-                                                    })
-                                                    .collect()?,
-                                            }),
-                                        }),
-                                    }))
-                                    .unwrap_or_else(move |e| Search {
-                                        sent: Some(Sent {
-                                            link,
-                                            distance,
-                                            findings: Err(Error::from(e)),
-                                        }),
-                                    }),
-                                Err(e) => Search {
-                                    sent: Some(Sent {
-                                        link,
-                                        distance,
-                                        findings: Err(Error::from(e))
-                                    })
-                                }
-                            })
-                        })
-                    })
-                    .or_else(move |e| {
-                        ok(Search {
-                            sent: Some(Sent {
-                                link,
-                                distance,
-                                findings: Err(e),
-                            }),
-                        })
-                    }),
-            )
-        }
-        None => Either::B(ok(Search { sent: None })),
-    }
-    .map(|tpl| {
-        let out = tpl.render();
-        Response::builder()
-            .status(if out.is_ok() {200} else {500})
-            .header("Content-Type",  "text/html")
-            .body(Body::from(out.unwrap_or_else(|_| "<h1>Error 500: Internal Server Error</h1>".to_string()))).unwrap()
+fn get_findings(link: String, distance: i64, nsfw: NSFWOption) -> Result<Findings, Error> {
+    let (hash, _image_id, _exists) = get_hash(link).map_err(Error::from)?;
+
+    let mut conn = POOL.get().map_err(Error::from)?;
+
+    let rows = conn.query_iter(
+        format_args!("SELECT hash <-> $1 as distance, posts.link, permalink, score, author, created_utc, subreddit, title FROM posts INNER JOIN images ON hash <@ ($1, $2) AND image_id = images.id {}ORDER BY distance ASC, created_utc DESC", match nsfw {
+            NSFWOption::Only => " AND nsfw = true ",
+            NSFWOption::Allow => "",
+            NSFWOption::Never => " AND nsfw = false "
+        }).to_string().as_str(),
+        &[&hash, &distance],
+    ).map_err(Error::from)?;
+
+    Ok(Findings {
+        matches: rows
+            .map(move |row| {
+                Ok(Match {
+                    permalink: format!("https://reddit.com{}", row.get::<_, &str>("permalink")),
+                    distance: row.get("distance"),
+                    link: row.get("link"),
+                    score: row.get("score"),
+                    author: row.get("author"),
+                    created_utc: row.get("created_utc"),
+                    subreddit: row.get("subreddit"),
+                    title: row.get("title"),
+                })
+            })
+            .collect()?,
     })
+}
+
+fn get_search(qs: SearchQuery) -> Result<Search, Error> {
+    let have_link = qs.imagelink.as_ref().map(|s| s != "").unwrap_or(false);
+
+    let make_form = || -> (Form, Option<Error>) {
+        let mut form = Form::default();
+        let mut error = None;
+
+        if let Some(s) = qs.imagelink {
+            if &s != "" {
+                error = Url::parse(&s).map_err(Error::from).err();
+                form.link = s;
+            }
+        }
+        if let Some(s) = qs.distance {
+            if &s != "" {
+                match s.parse::<i64>() {
+                    Ok(d) => form.distance = d,
+                    Err(e) => error = Some(Error::from(e)),
+                }
+            }
+        }
+        if let Some(s) = qs.nsfw {
+            match NSFWOption::from_str(&s) {
+                Ok(n) => form.nsfw = n,
+                Err(e) => error = Some(e),
+            }
+        }
+
+        (form, error)
+    };
+
+    let (form, error) = make_form();
+
+    Ok(Search {
+        form: form.clone(),
+        findings: match error {
+            None => Ok(if have_link {
+                Some(get_findings(form.link, form.distance, form.nsfw))
+            } else {
+                None
+            }),
+            Some(e) => Err(e),
+        },
+    })
+}
+
+fn make_response(qs: SearchQuery) -> Response<Body> {
+    let error;
+    let out = match get_search(qs) {
+        Ok(search) => {
+            error = false;
+            search.render().unwrap()
+        }
+        Err(e) => {
+            error = true;
+            format_args!("<h1>Error 500: Internal Server Error</h1><h2>{}</h2>", e).to_string()
+        }
+    };
+
+    Response::builder()
+        .status(if error { 500 } else { 200 })
+        .header("Content-Type", "text/html")
+        .body(Body::from(out))
+        .unwrap()
 }
 
 fn run_server() {
     setup_logging();
     let router = path("search")
         .and(get2())
-        .and(query::<SearchQuery>().and_then(get_search))
-        .or(full().map(reply_not_found));
+        .and(query::<SearchQuery>().map(make_response));
+    // .or(full().map(reply_not_found));
 
     warp::serve(router).run(([127, 0, 0, 1], 7878));
 }

@@ -1,21 +1,19 @@
 use cache_control::CacheControl;
 use chrono::{DateTime, NaiveDateTime};
-use failure::{format_err, Fail};
+use failure::Fail;
 use image::{imageops, load_from_memory, DynamicImage};
-use img_hash::{precompute_dct_matrix, HashType, ImageHash};
 use lazy_static::lazy_static;
 use log::{error, LevelFilter};
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use regex::Regex;
 use reqwest::{header, StatusCode};
 use serde::Deserialize;
-use std::convert::TryInto;
 use std::fmt;
 use std::io::{BufReader, Read};
 use tokio_postgres::{to_sql_checked, types, NoTls};
 use url::percent_encoding::{utf8_percent_encode, QUERY_ENCODE_SET};
 
-pub use failure::{self, Error};
+pub use failure::{self, format_err, Error};
 
 lazy_static! {
     pub static ref EXT_RE: Regex =
@@ -60,22 +58,60 @@ macro_rules! lfe {
     }};
 }
 
-pub const DEFAULT_DISTANCE: i64 = 4;
+pub const DEFAULT_DISTANCE: i64 = 1;
 
 #[derive(Deserialize, Debug)]
 pub struct Submission {
-    pub id: i64,
+    // #[serde(default)]
+    pub id_int: i64,
+    pub id: String,
     pub author: Option<String>,
+    // #[serde(deserialize_with)]
     pub created_utc: i64,
     pub is_self: bool,
     pub over_18: bool,
     pub permalink: String,
-    pub score: i32,
+    pub score: i64,
     pub spoiler: Option<bool>,
     pub subreddit: String,
     pub title: String,
     pub url: String,
 }
+
+// impl Submission {
+//     pub fn de_id<'de, D>(de: D) -> Result<i64, D::Error>
+//     where
+//         D: Deserializer<'de>,
+//     {
+//         struct DeIdVisitor {}
+
+//         impl<'de> Visitor<'de> for DeIdVisitor {
+//             type Value = String;
+
+//             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+//                 write!(formatter, "a string containing a valid int")
+//             }
+
+//             fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
+//             where
+//                 E: de::Error,
+//             {
+//                 return Ok(s.to_string());
+//             }
+//         }
+
+//         let v = DeIdVisitor {};
+
+//         de.deserialize_str(v)
+//             .and_then(|s| i64::from_str_radix(&s, 36).map_err(|e| D::Error::custom(e)))
+//     }
+
+//     pub fn str_or_int<'de, D>(de: D) -> Result<i64, D::Error>
+//     where
+//         D: Deserializer<'de>,
+//     {
+
+// }
 
 #[derive(Deserialize, Debug)]
 pub struct Hit {
@@ -133,7 +169,7 @@ pub fn save_post(
                             &post.over_18,
                             &post.spoiler.unwrap_or(false),
                             &image_id,
-                            &post.id,
+                            &i64::from_str_radix(&reddit_id, 36).map_err(le!())?
                         ],
                     ).map_err(le!())?;
                     trans.commit().map_err(le!())
@@ -197,14 +233,6 @@ pub fn dhash(img: DynamicImage) -> Hash {
     Hash(hash)
 }
 
-pub fn dct_hash(img: DynamicImage) -> Hash {
-    let hash = ImageHash::hash(&img, HASH_LENGTH, HashType::DCT);
-
-    Hash(u64::from_be_bytes(
-        hash.bitv.to_bytes().as_slice().try_into().unwrap(),
-    ))
-}
-
 pub fn distance(a: Hash, b: Hash) -> u32 {
     (a.0 ^ b.0).count_ones()
 }
@@ -232,8 +260,6 @@ macro_rules! map_ghf {
     };
 }
 
-const HASH_LENGTH: u32 = 8;
-
 pub fn get_hash(link: String) -> Result<(Hash, i64, bool), GetHashFail> {
     lazy_static! {
         static ref REQW_CLIENT: reqwest::Client = reqwest::Client::new();
@@ -247,26 +273,21 @@ pub fn get_hash(link: String) -> Result<(Hash, i64, bool), GetHashFail> {
             .unwrap();
     }
 
-    use std::cell::RefCell;
-    thread_local! {
-        static HAVE_DCT: RefCell<bool> = RefCell::new(false);
-    }
-
-    HAVE_DCT.with(|have_dct| {
-        if !(*have_dct.borrow()) {
-            precompute_dct_matrix(HASH_LENGTH);
-            *have_dct.borrow_mut() = true;
-        }
-    });
-
     let mut client = DB_POOL.get().map_err(map_ghf!(link))?;
     let mut trans = client.transaction().map_err(map_ghf!(link))?;
-    if let Some(row) = trans
-        .query("SELECT hash, id FROM images WHERE link=$1", &[&link])
-        .map_err(map_ghf!(link))?
-        .get(0)
-    {
-        return Ok((Hash(row.get::<_, i64>("hash") as u64), row.get("id"), true));
+
+    let mut get_existing = || {
+        trans
+            .query("SELECT hash, id FROM images WHERE link=$1", &[&link])
+            .map_err(map_ghf!(link))
+            .map(|rows| {
+                rows.get(0)
+                    .map(|row| (Hash(row.get::<_, i64>("hash") as u64), row.get("id"), true))
+            })
+    };
+
+    if let Some(exists) = get_existing()? {
+        return Ok(exists);
     }
 
     let mut this_link = link.clone();
@@ -349,7 +370,7 @@ pub fn get_hash(link: String) -> Result<(Hash, i64, bool), GetHashFail> {
     }
 
     // eprintln!("Hashing {}", &link);
-    let hash = dct_hash(
+    let hash = dhash(
         // match format {
         //     Some(format) => load_from_memory_with_format(&file, format),
         // None =>
@@ -358,21 +379,14 @@ pub fn get_hash(link: String) -> Result<(Hash, i64, bool), GetHashFail> {
             .map_err(map_ghf!(this_link))?,
     );
 
-    if let Some(row) = trans
-        .query("SELECT hash, id FROM images WHERE link=$1", &[&link])
-        .map_err(map_ghf!(link))?
-        .get(0)
-    {
-        return Ok((Hash(row.get::<_, i64>("hash") as u64), row.get("id"), true));
-    }
-
     let mut client = DB_POOL.get().map_err(map_ghf!(this_link))?;
     let mut trans = client.transaction().map_err(map_ghf!(this_link))?;
-    let image_id = trans
+    let rows = trans
         .query(
             "INSERT INTO images (link, hash, no_store, no_cache, expires, \
              etag, must_revalidate, retrieved_on) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+             ON CONFLICT DO NOTHING \
              RETURNING id",
             &[
                 &this_link,
@@ -393,11 +407,16 @@ pub fn get_hash(link: String) -> Result<(Hash, i64, bool), GetHashFail> {
                 &now,
             ],
         )
-        .map_err(map_ghf!(this_link))?[0]
-        .get("id");
+        .map_err(map_ghf!(this_link))?;
+
     trans.commit().map_err(map_ghf!(this_link))?;
 
-    Ok((hash, image_id, false))
+    match rows.get(0) {
+        Some(row) => Ok((hash, row.try_get("id").map_err(map_ghf!(this_link))?, false)),
+        None => {
+            get_existing()?.ok_or(format_err!("Conflict but no existing match")).map_err(map_ghf!(this_link))
+        }
+    }
 }
 
 pub fn setup_logging() {

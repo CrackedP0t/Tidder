@@ -267,7 +267,7 @@ pub fn hash_from_memory(image: &[u8]) -> Result<Hash, Error> {
         // None =>
         load_from_memory(&image)
             // }
-            .map_err(Error::from)?
+            .map_err(Error::from)?,
     ))
 }
 
@@ -416,9 +416,9 @@ pub fn get_hash(link: String) -> Result<(Hash, i64, bool), GetHashFail> {
 
     match rows.get(0) {
         Some(row) => Ok((hash, row.try_get("id").map_err(map_ghf!(this_link))?, false)),
-        None => {
-            get_existing()?.ok_or(format_err!("Conflict but no existing match")).map_err(map_ghf!(this_link))
-        }
+        None => get_existing()?
+            .ok_or(format_err!("Conflict but no existing match"))
+            .map_err(map_ghf!(this_link)),
     }
 }
 

@@ -11,7 +11,7 @@ use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::io::{Bytes, Read};
+use std::io::Read;
 use std::str::FromStr;
 use std::vec::Vec;
 use url::Url;
@@ -20,7 +20,7 @@ use warp::{
     body::{self, FullBody},
     get2,
     header::headers_cloned,
-    path, post2, query, reply, Filter, Rejection, Reply,
+    path, post2, query, reply, Filter, Reply,
 };
 
 #[derive(Deserialize)]
@@ -332,15 +332,16 @@ fn post_response(headers: HeaderMap, body: FullBody) -> Response<Body> {
 
 fn run_server() {
     setup_logging();
-    let router = path("search").and(
-        get2()
-            .and(query::<SearchQuery>().map(get_response))
-            .or(post2()
-                .and(headers_cloned())
-                .and(body::concat())
-                .map(post_response)),
-    );
-    // .or(full().map(reply_not_found));
+    let router = path("search")
+        .and(
+            get2()
+                .and(query::<SearchQuery>().map(get_response))
+                .or(post2()
+                    .and(headers_cloned())
+                    .and(body::concat())
+                    .map(post_response)),
+        )
+        .or(full().map(reply_not_found));
 
     warp::serve(router).run(([127, 0, 0, 1], 7878));
 }

@@ -5,9 +5,10 @@ authors = ["Elaina Martineau <elainamartineau@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-hyper = "*"
+hyper = "^0.12.29"
 postgres = {version = "0.16.0-rc.1", features = ["with-chrono-0_4"]}
 askama = "*"
+bytes = "^0.4.12"
 reqwest = "*"
 url = "*"
 warp = "*"
@@ -15,10 +16,12 @@ serde = {version = "*", features = ["derive"]}
 http = "*"
 common = {path = "../common"}
 futures = "*"
-fallible-iterator = "*"
+fallible-iterator = "0.2"
 r2d2_postgres = "0.15.0-rc.1"
 lazy_static = "*"
 chrono = "*"
+multipart = {version = "*", features = []}
+regex = "^1.1.6"
 
 [build-dependencies]
 askama = "*"

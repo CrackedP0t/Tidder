@@ -1,9 +1,14 @@
 <!DOCTYPE html>
 <html lang="en">
     <head>
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/normalize/8.0.1/normalize.min.css" />
         <meta charset="UTF-8">
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/normalize/8.0.1/normalize.min.css" />
         <title>{% block title %}{% endblock %}</title>
+        <script>
+            function $(sel) {
+            return document.querySelector(sel);
+            }
+        </script>
         <style>
          html {
              background-color: #454545

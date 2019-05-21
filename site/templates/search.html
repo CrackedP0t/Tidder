@@ -9,7 +9,6 @@
      flex-direction: column;
      align-items: center;
  }
-
  input {
      background-color: #fefefe;
      color: #454545;
@@ -18,38 +17,126 @@
      margin-right: .5em;
      padding: .15em .25em;
  }
- .search-link {
+ .search-upload-type {
+ }
+ .search-upload-type[value="link"] {
+ }
+ .search-upload-type[value="file"] {
+ }
+ .search-input {
      min-width: 30vw;
  }
  .search-distance {
      min-width: 5vw;
      max-width: 4em;
  }
- .search-form {
+ #search-form {
      align-self: stretch;
      display: flex;
+     width: 100%;
+     flex-direction: column;
+ }
+ .search-nsfw-box {
+     border-style: solid;
+ }
+ .search-row {
+     display: flex;
      justify-content: center;
+     margin: .2em 0;
+ }
+ .search-send {
+     min-width: 30vw;
  }
 </style>
-
 <div class="search-header">
     <h1>Search for an image!</h1>
-    <form method="get" class="search-form" search-action="/search">
-        <input class="search-link" name="imagelink" required="true" type="url"
-               value="{{ form.link }}"/>
-        <input class="search-distance" name="distance" type="number"
-               min="0" max="64"
-               value="{{ form.distance }}"/>
-        <input class="search-nsfw" type="radio" name="nsfw" value="only" />
-        <input class="search-nsfw" type="radio" name="nsfw" value="allow" />
-        <input class="search-nsfw" type="radio" name="nsfw" value="never" />
-        <input class="search-button" type="submit" value="Search" />
+    <form method="get" id="search-form" search-action="/search">
+        <div class="search-row">
+            <label id="search-link">
+                Link
+                <input class="search-upload-type" type="radio" name="uploadtype" value="link" {{ form.upload|tern("", "checked ") }}/>
+                <input class="search-input" name="imagelink" type="url"
+                       value="{{ form.link }}"/>
+            </label>
+            <label id="search-file">
+                File
+                <input class="search-upload-type" type="radio" name="uploadtype" value="file" {{ form.upload|tern("checked ", "") }}/>
+                <input class="search-input" name="imagefile" type="file" accept="image/*" />
+            </label>
+        </div>
+        <div class="search-row">
+            <input class="search-distance" name="distance" type="number"
+                   min="0" max="64"
+                   value="{{ form.distance }}"/>
+            <div class="search-nsfw-box">
+                <label>
+                    Only
+                    <input class="search-nsfw" type="radio" name="nsfw" value="only" {{ (form.nsfw == NSFWOption::Only)|tern("checked ", "") }}/>
+                </label>
+                <label>
+                    Allow
+                    <input class="search-nsfw" type="radio" name="nsfw" value="allow" {{ (form.nsfw == NSFWOption::Allow)|tern("checked ", "") }}/>
+                </label>
+                <label>
+                    Never
+                    <input class="search-nsfw" type="radio" name="nsfw" value="never" {{ (form.nsfw == NSFWOption::Never)|tern("checked ", "") }}/>
+                </label>
+            </div>
+        </div>
+        <div class="search-row">
+            <input class="search-send" type="submit" value="Search" />
+        </div>
     </form>
+    <script>
+     let form = $("#search-form");
+
+     let link_input = $("#search-link .search-input");
+     let file_input = $("#search-file .search-input");
+
+     let link_check = $("#search-link .search-upload-type");
+     let file_check = $("#search-file .search-upload-type");
+
+     let setLink = function(event) {
+         form.method = "get";
+         form.enctype = "application/x-www-form-urlencoded";
+
+         link_check.checked = true;
+
+         link_input.required = true;
+         file_input.required = false;
+     }
+     let setFile = function(event) {
+         form.method = "post";
+         form.enctype = "multipart/form-data";
+
+         file_check.checked = true;
+
+         link_input.required = false;
+         file_input.required = true;
+     }
+
+     $("#search-link").oninput = setLink;
+     link_input.onfocus = setLink;
+
+     $("#search-file").oninput = setFile;
+     file_input.onfocus = setFile;
+
+     if (file_check.checked) {
+         setFile();
+     } else {
+         setLink();
+         link_input.focus(true);
+     }
+    </script>
     {% match findings %}
     {% when Ok with (findings) %}
         {% match findings %}
         {% when Some with (findings) %}
-            <p>You searched for <a href="{{ form.link }}">{{ form.link }}</a></p>
+            {% if form.upload %}
+                <p>You uploaded an image</p>
+            {% else %}
+                <p>You searched for <a href="{{ form.link }}">{{ form.link }}</a></p>
+            {% endif %}
             {% match findings %}
             {% when Ok with (findings) %}
                 <p>Found {{ findings.matches.len() }} match{{ findings.matches.len()|plural_es }}</p>

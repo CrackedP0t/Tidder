@@ -260,6 +260,17 @@ macro_rules! map_ghf {
     };
 }
 
+pub fn hash_from_memory(image: &[u8]) -> Result<Hash, Error> {
+    Ok(dhash(
+        // match format {
+        //     Some(format) => load_from_memory_with_format(&file, format),
+        // None =>
+        load_from_memory(&image)
+            // }
+            .map_err(Error::from)?
+    ))
+}
+
 pub fn get_hash(link: String) -> Result<(Hash, i64, bool), GetHashFail> {
     lazy_static! {
         static ref REQW_CLIENT: reqwest::Client = reqwest::Client::new();
@@ -349,7 +360,7 @@ pub fn get_hash(link: String) -> Result<(Hash, i64, bool), GetHashFail> {
 
     let headers = resp.headers().clone();
 
-    let mut file = Vec::<u8>::with_capacity(
+    let mut image = Vec::<u8>::with_capacity(
         headers
             .get(header::CONTENT_LENGTH)
             .and_then(|hv| hv.to_str().ok())
@@ -365,19 +376,11 @@ pub fn get_hash(link: String) -> Result<(Hash, i64, bool), GetHashFail> {
 
     {
         BufReader::new(resp)
-            .read_to_end(&mut file)
+            .read_to_end(&mut image)
             .map_err(map_ghf!(this_link))?;
     }
 
-    // eprintln!("Hashing {}", &link);
-    let hash = dhash(
-        // match format {
-        //     Some(format) => load_from_memory_with_format(&file, format),
-        // None =>
-        load_from_memory(&file)
-            // }
-            .map_err(map_ghf!(this_link))?,
-    );
+    let hash = hash_from_memory(&image).map_err(map_ghf!(this_link))?;
 
     let mut client = DB_POOL.get().map_err(map_ghf!(this_link))?;
     let mut trans = client.transaction().map_err(map_ghf!(this_link))?;

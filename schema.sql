@@ -174,10 +174,24 @@ ALTER TABLE ONLY public.posts
 
 
 --
+-- Name: posts_author_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX posts_author_idx ON public.posts USING btree (author);
+
+
+--
 -- Name: posts_image_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX posts_image_id_idx ON public.posts USING btree (image_id);
+
+
+--
+-- Name: posts_subreddit_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX posts_subreddit_idx ON public.posts USING btree (subreddit);
 
 
 --

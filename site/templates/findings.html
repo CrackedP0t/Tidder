@@ -1,49 +1,85 @@
 <style>
- /* .match {
-    display: flex;
-    flex-direction: row;
-    width: 100%;
- }*/
-    .thumb_check {
-    display: none;
-    }
-    .thumb_img {
-    display: block;
-    height: 15vh;
-    cursor: zoom-in;
-    }
-    .thumb_check:checked ~ .thumb_img {
-    height: 75vh;
-    cursor: zoom-out;
-    }
+ .thumb_check {
+     display: none;
+ }
+ .thumb_img {
+     display: block;
+     max-height: 15vh;
+     margin: auto;
+     max-width: 100%;
+     object-fit: contain;
+ }
+ .zoom_img {
+     display: none;
+ }
+ .thumb_check:checked ~ .zoom_img {
+     display: block;
+     max-height: 90vh;
+     max-width: 90vw;
+     cursor: zoom-out;
+     position: fixed;
+     left: 50%;
+     top: 50%;
+     transform: translate(-50%, -50%);
+     object-fit: contain;
+ }
+ .thumb_target {
+     cursor: zoom-in;
+ }
+ .thumb_check:checked ~ .thumb_target {
+     cursor: zoom-out;
+ }
+ .findings-container {
+     width: 100%;
+ }
  .findings {
-     display: flex;
-     flex-direction: column;
+     display: grid;
      height: 100%;
-     list-style: none;
+     grid-template-columns: repeat(7, auto);
+     text-align: center;
+     gap: .5em;
+ }
+ .header {
+     border-bottom: .05em solid #fefefe;
+ }
+ .title {
+     text-align: left;
  }
 </style>
 {% if matches.len() > 0 %}
-<table class="findings">
-    <tbody>
-        {% for m in matches %}
-        <tr class="match">
-            <td>{{ m.distance }}</td>
-            <td>{{ m.score }}</td>
-            <td>{{ m.created_utc }}</td>
-            <td>
-            <label class="thumb_label">
-                <input type="checkbox" class="thumb_check" />
-                <img class="thumb_img" src="{{ m.link }}" />
-            </label>
-            </td>
-            <td><a href="{{ m.permalink }}">{{ m.title }}</a></td>
-            <td><a href="https://reddit.com/user/{{ m.author }}">{{m.author}}</a></td>
-            <td><a href="https://reddit.com/r/{{ m.subreddit }}">/r/{{ m.subreddit }}</a></td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
+    <div class="findings-container">
+        <div class="findings">
+            <span class="header">Image</span>
+            <span class="header">Distance</span>
+            <span class="header">Score</span>
+            <span class="header">Posted on</span>
+            <span class="header">Title</span>
+            <span class="header">Author</span>
+            <span class="header">Subreddit</span>
+            {% for m in matches %}
+                <span>
+                    <label class="thumb_label">
+                        <input type="checkbox" class="thumb_check" />
+                        <div class="thumb_target">
+                            <img class="thumb_img" src="{{ m.link }}" />
+                        </div>
+                        <img class="zoom_img" src="{{ m.link }}" />
+                    </label>
+                </span>
+                <span>{{ m.distance }}</span>
+                <span>{{ m.score }}</span>
+                <span>{{ m.created_utc }}</span>
+                <span class="title"><a href="{{ m.permalink }}">{{ m.title }}</a></span>
+                {% match m.author %}
+                {% when Some with (author) %}
+                <span><a href="https://reddit.com/user/{{ author }}">{{ author }}</a></span>
 {% else %}
-<p>No matches!</p>
+                <span class="no-author">No author</span>
+                {% endmatch %}
+                <span><a href="https://reddit.com/r/{{ m.subreddit }}">/r/{{ m.subreddit }}</a></span>
+            {% endfor %}
+        </div>
+    </div>
+{% else %}
+    <p>No matches!</p>
 {% endif %}

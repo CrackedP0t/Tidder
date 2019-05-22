@@ -104,7 +104,7 @@
 
          link_input.required = true;
          file_input.required = false;
-     }
+     };
      let setFile = function(event) {
          form.method = "post";
          form.enctype = "multipart/form-data";
@@ -113,7 +113,7 @@
 
          link_input.required = false;
          file_input.required = true;
-     }
+     };
 
      $("#search-link").oninput = setLink;
      link_input.onfocus = setLink;

@@ -78,7 +78,7 @@ impl Default for NSFWOption {
 }
 
 struct Match {
-    author: String,
+    author: Option<String>,
     created_utc: chrono::NaiveDateTime,
     distance: i64,
     link: String,

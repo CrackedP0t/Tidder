@@ -133,7 +133,7 @@ struct Form {
 impl Default for Form {
     fn default() -> Self {
         Form {
-            link: "".to_string(),
+            link: String::new(),
             distance: 1,
             nsfw: NSFWOption::Allow,
             upload: false,
@@ -144,6 +144,7 @@ impl Default for Form {
 #[derive(Serialize)]
 struct Search {
     form: Form,
+    default_form: Form,
     findings: Option<Findings>,
     error: Option<String>,
 }
@@ -152,6 +153,7 @@ impl Default for Search {
     fn default() -> Search {
         Search {
             form: Form::default(),
+            default_form: Form::default(),
             findings: None,
             error: None,
         }
@@ -282,6 +284,7 @@ fn get_search(qs: SearchQuery) -> Result<Search, Error> {
         form: form.clone(),
         error: error.map(|e| e.to_string()),
         findings,
+        .. Default::default()
     })
 }
 
@@ -365,6 +368,7 @@ fn post_search(headers: HeaderMap, body: FullBody) -> Result<Search, Error> {
         form: form.clone(),
         error: error.map(|e| e.to_string()),
         findings,
+        .. Default::default()
     })
 }
 

@@ -21,7 +21,7 @@
      .search-input {
          min-width: 30vw;
      }
-     .search-distance {
+     #search-distance {
          min-width: 5vw;
          max-width: 4em;
      }
@@ -50,14 +50,14 @@
         <h1>Search for an image!</h1>
         <form method="get" id="search-form" search-action="/search">
             <div class="search-row">
-                <label id="search-link" class="search-input-label"><span>Link:</span><input class="search-upload-type" type="radio" name="uploadtype" value="link" {{ form.upload|tern(yes="", no="checked ") }}/><input class="search-input" name="imagelink" type="url" value="{{ form.link }}"/></label>
-                <label id="search-file" class="search-input-label"><span>File:</span><input class="search-upload-type" type="radio" name="uploadtype" value="file" {{ form.upload|tern(yes="checked ", no="") }}/><input class="search-input" name="imagefile" type="file" accept="image/*" /></label>
+                <label id="search-link" class="search-input-label"><span>Link:</span><input class="search-input-type" name="searchtype" value="link" type="radio" {{ form.upload|tern(yes="", no="checked ") }}/><input class="search-input" name="imagelink" type="url" value="{{ form.link }}"/></label>
+                <label id="search-file" class="search-input-label"><span>File:</span><input class="search-input-type" name="searchtype" value="file" type="radio" {{ form.upload|tern(yes="checked ", no="") }}/><input class="search-input" name="imagefile" type="file" accept="image/*" /></label>
             </div>
             <div class="search-row">
                 <label>
                     <span>Distance:</span>
-                    <input class="search-distance" name="distance" type="number"
-                           min="0" max="64"
+                    <input id="search-distance" name="distance" type="number"
+                           min="0" max="64" placeholder="{{ default_form.distance }}"
                            value="{{ form.distance }}"/>
                 </label>
                 <div class="search-nsfw-box">
@@ -81,31 +81,88 @@
             </div>
         </form>
         <script>
+         const FORM_DEFAULTS = {
+             distance: "{{ default_form.distance }}",
+             nsfw: "{{ default_form.nsfw }}"
+         };
+
+         let distance_input = $("#search-distance");
+
+         function default_distance() {
+             if (distance_input.value === "" || distance_input.value === FORM_DEFAULTS.distance) {
+                 distance_input.removeAttribute("name");
+             } else {
+                 distance_input.name = "distance";
+             }
+         }
+
+         distance_input.oninput = default_distance;
+
+         let nsfw_radios = $$(".search-nsfw");
+
+         function default_nsfw(event) {
+             let checked;
+             if (event) {
+                 checked = event.target;
+             } else {
+                 checked = $(".search-nsfw:checked");
+             }
+
+             if (checked.value === FORM_DEFAULTS.nsfw) {
+                 for (let el of nsfw_radios) {
+                     el.removeAttribute("name");
+                     el.removeAttribute("checked");
+                 }
+             } else {
+                 for (let el of nsfw_radios) {
+                     el.name = "nsfw";
+                     el.removeAttribute("checked");
+                 }
+             }
+
+             checked.checked = true;
+         }
+
+         for (let el of nsfw_radios) {
+             el.oninput = default_nsfw;
+         };
+
+         default_distance();
+         default_nsfw();
+
          let form = $("#search-form");
 
          let link_input = $("#search-link .search-input");
          let file_input = $("#search-file .search-input");
 
-         let link_check = $("#search-link .search-upload-type");
-         let file_check = $("#search-file .search-upload-type");
+         let link_radio = $("#search-link .search-input-type");
+         let file_radio = $("#search-file .search-input-type");
 
          let setLink = function(event) {
              form.method = "get";
              form.enctype = "application/x-www-form-urlencoded";
 
-             link_check.checked = true;
+             link_radio.checked = true;
+             file_radio.removeAttribute("checked");
 
              link_input.required = true;
              file_input.required = false;
+
+             link_input.name = "imagelink";
+             file_input.removeAttribute("name");
          };
          let setFile = function(event) {
              form.method = "post";
              form.enctype = "multipart/form-data";
 
-             file_check.checked = true;
+             link_radio.removeAttribute("checked");
+             file_radio.checked = true;
 
              link_input.required = false;
              file_input.required = true;
+
+             link_input.removeAttribute("name");
+             file_input.name = "uploadfile";
          };
 
          $("#search-link").oninput = setLink;
@@ -114,7 +171,7 @@
          $("#search-file").oninput = setFile;
          file_input.onfocus = setFile;
 
-         if (file_check.checked) {
+         if (file_radio.checked) {
              setFile();
          } else {
              setLink();

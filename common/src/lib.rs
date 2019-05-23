@@ -271,7 +271,8 @@ pub fn hash_from_memory(image: &[u8]) -> Result<Hash, Error> {
     ))
 }
 
-pub fn get_hash(link: String) -> Result<(Hash, i64, bool), GetHashFail> {
+pub fn get_hash(link: &str) -> Result<(Hash, i64, bool), GetHashFail> {
+    let link = link.to_string();
     lazy_static! {
         static ref REQW_CLIENT: reqwest::Client = reqwest::Client::new();
         static ref DB_POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> =

@@ -46,7 +46,7 @@
      text-align: left;
  }
 </style>
-{% if matches.len() > 0 %}
+{# {% if (matches | length) > 0  %} #}
     <div class="findings-container">
         <div class="findings">
             <span class="header">Image</span>
@@ -56,7 +56,7 @@
             <span class="header">Title</span>
             <span class="header">Author</span>
             <span class="header">Subreddit</span>
-            {% for m in matches %}
+            {% for m in findings.matches %}
                 <span>
                     <label class="thumb_label">
                         <input type="checkbox" class="thumb_check" />
@@ -70,16 +70,16 @@
                 <span>{{ m.score }}</span>
                 <span>{{ m.created_utc }}</span>
                 <span class="title"><a href="{{ m.permalink }}">{{ m.title }}</a></span>
-                {% match m.author %}
-                {% when Some with (author) %}
-                <span><a href="https://reddit.com/user/{{ author }}">{{ author }}</a></span>
-{% else %}
+                {% if m.author %}
+                <span><a href="https://reddit.com/user/{{ m.author }}">{{ m.author }}</a></span>
+                {% else %}
                 <span class="no-author">No author</span>
-                {% endmatch %}
+                {% endif %}
                 <span><a href="https://reddit.com/r/{{ m.subreddit }}">/r/{{ m.subreddit }}</a></span>
             {% endfor %}
         </div>
     </div>
-{% else %}
+    {#
+    {% else %}
     <p>No matches!</p>
-{% endif %}
+    {% endif %} #}

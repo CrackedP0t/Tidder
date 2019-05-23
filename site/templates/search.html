@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-
+{% import "macros.html" as macros %}
 {% block title %}Search with Tidder!{% endblock %}
 
 {% block content %}
@@ -50,8 +50,8 @@
         <h1>Search for an image!</h1>
         <form method="get" id="search-form" search-action="/search">
             <div class="search-row">
-                <label id="search-link" class="search-input-label"><span>Link:</span><input class="search-upload-type" type="radio" name="uploadtype" value="link" {{ form.upload|tern("", "checked ") }}/><input class="search-input" name="imagelink" type="url" value="{{ form.link }}"/></label>
-                <label id="search-file" class="search-input-label"><span>File:</span><input class="search-upload-type" type="radio" name="uploadtype" value="file" {{ form.upload|tern("checked ", "") }}/><input class="search-input" name="imagefile" type="file" accept="image/*" /></label>
+                <label id="search-link" class="search-input-label"><span>Link:</span><input class="search-upload-type" type="radio" name="uploadtype" value="link" {{ form.upload|tern(yes="", no="checked ") }}/><input class="search-input" name="imagelink" type="url" value="{{ form.link }}"/></label>
+                <label id="search-file" class="search-input-label"><span>File:</span><input class="search-upload-type" type="radio" name="uploadtype" value="file" {{ form.upload|tern(yes="checked ", no="") }}/><input class="search-input" name="imagefile" type="file" accept="image/*" /></label>
             </div>
             <div class="search-row">
                 <label>
@@ -64,15 +64,15 @@
                     <span>NSFW:</span>
                     <label>
                         <span>Only</span>
-                        <input class="search-nsfw" type="radio" name="nsfw" value="only" {{ (form.nsfw == NSFWOption::Only)|tern("checked ", "") }}/>
+                        <input class="search-nsfw" type="radio" name="nsfw" value="only" {{ macros::nsfw_checked(input=form.nsfw, match="only") }}/>
                     </label>
                     <label>
                         <span>Allow</span>
-                        <input class="search-nsfw" type="radio" name="nsfw" value="allow" {{ (form.nsfw == NSFWOption::Allow)|tern("checked ", "") }}/>
+                        <input class="search-nsfw" type="radio" name="nsfw" value="allow" {{ macros::nsfw_checked(input=form.nsfw, match="allow") }}/>
                     </label>
                     <label>
                         <span>Never</span>
-                        <input class="search-nsfw" type="radio" name="nsfw" value="never" {{ (form.nsfw == NSFWOption::Never)|tern("checked ", "") }}/>
+                        <input class="search-nsfw" type="radio" name="nsfw" value="never" {{ macros::nsfw_checked(input=form.nsfw, match="never") }}/>
                     </label>
                 </div>
             </div>
@@ -121,39 +121,19 @@
              link_input.focus(true);
          }
         </script>
-        {% match findings %}
-        {% when Ok with (findings) %}
-        {% match findings %}
-        {% when Some with (findings) %}
-        {% if form.upload %}
-            <p>You uploaded an image</p>
-        {% else %}
-            <p>You searched for <a href="{{ form.link }}">{{ form.link }}</a></p>
-        {% endif %}
-        {% match findings %}
-        {% when Ok with (findings) %}
-        <p>Found {{ findings.matches.len() }} match{{ findings.matches.len()|plural_es }}</p>
-        {% when Err with (message) %}
-        <p>Error: {{message}}</p>
-            {% endmatch %}
-            {% when None %}
+        {% if error %}
+            <p>Error: {{ error }}</p>
+        {% elif findings is null %}
             <p>No search yet...</p>
-        {% endmatch %}
-        {% when Err with (message) %}
-        <p>Error: {{message}}</p>
-    {% endmatch %}
-    </div>
-    {% match findings %}
-    {% when Ok with (findings) %}
-    {% match (findings) %}
-    {% when Some with (findings) %}
-    {% match findings %}
-    {% when Ok with (findings) %}
-    {{ findings|safe }}
         {% else %}
-        {% endmatch %}
-    {% else %}
-    {% endmatch %}
-{% else %}
-{% endmatch %}
+            {% if form.upload %}
+                <p>You uploaded an image</p>
+            {% else %}
+                <p>You searched for <a href="{{ form.link }}">{{ form.link }}</a></p>
+            {% endif %}
+        {% endif %}
+    </div>
+    {% if findings is not null %}
+        {% include "findings.html" %}
+    {% endif %}
 {% endblock %}

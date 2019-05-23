@@ -1,19 +1,19 @@
-use askama::Template;
 use bytes::Buf;
 use common::*;
 use fallible_iterator::FallibleIterator;
 use http::{Response, StatusCode};
 use hyper::{self, Body, HeaderMap};
-use lazy_static::lazy_static;
+use lazy_static::{lazy_static, LazyStatic};
 use multipart::server::Multipart;
 use postgres::NoTls;
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use regex::Regex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
 use std::str::FromStr;
 use std::vec::Vec;
+use tera::Tera;
 use url::Url;
 use warp::path::{full, FullPath};
 use warp::{
@@ -30,27 +30,51 @@ struct SearchQuery {
     nsfw: Option<String>,
 }
 
-pub mod filters {
-    pub fn plural_es<N>(n: &N) -> Result<&'static str, askama::Error>
-    where
-        N: From<u8> + PartialEq<N>,
-    {
-        Ok(if *n == 1u8.into() { "" } else { "es" })
+pub mod utils {
+    use std::collections::HashMap;
+    use tera::{to_value, try_get_value, Error, Result, Value};
+
+    pub fn pluralize(value: &Value, args: &HashMap<String, Value>) -> Result<Value> {
+        let num = try_get_value!("pluralize", "value", f64, value);
+
+        let plural = match args.get("plural") {
+            Some(val) => try_get_value!("pluralize", "plural", String, val),
+            None => "s".to_string(),
+        };
+
+        let singular = match args.get("singular") {
+            Some(val) => try_get_value!("pluralize", "singular", String, val),
+            None => "".to_string(),
+        };
+
+        // English uses plural when it isn't one
+        if (num.abs() - 1.).abs() > ::std::f64::EPSILON {
+            Ok(to_value(&plural).unwrap())
+        } else {
+            Ok(to_value(&singular).unwrap())
+        }
     }
 
-    pub fn plural_s<N>(n: &N) -> Result<&'static str, askama::Error>
-    where
-        N: From<u8> + PartialEq<N>,
-    {
-        Ok(if *n == 1u8.into() { "" } else { "s" })
+    pub fn tern(cond: &Value, args: &HashMap<String, Value>) -> Result<Value> {
+        let cond = cond.as_bool().ok_or(Error::msg("Expected bool"))?;
+        let yes = args
+            .get("yes")
+            .ok_or(Error::msg("Argument 'yes' missing"))?
+            .clone();
+        let no = args
+            .get("no")
+            .ok_or(Error::msg("Argument 'no' missing"))?
+            .clone();
+        Ok(if cond { yes } else { no })
     }
 
-    pub fn tern<D: std::fmt::Display>(cond: &bool, yes: D, no: D) -> Result<D, askama::Error> {
-        Ok(if *cond { yes } else { no })
+    pub fn null(arg: Option<&Value>, _args: &[Value]) -> Result<bool> {
+        arg.ok_or(Error::msg("Tester `null` was called on an undefined variable")).map(|v| v.is_null())
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Serialize, Copy)]
+#[serde(rename_all="lowercase")]
 enum NSFWOption {
     Only,
     Allow,
@@ -71,12 +95,17 @@ impl FromStr for NSFWOption {
     }
 }
 
+// impl ToStr for NSFWOption {
+
+// }
+
 impl Default for NSFWOption {
     fn default() -> Self {
         NSFWOption::Allow
     }
 }
 
+#[derive(Serialize)]
 struct Match {
     author: Option<String>,
     created_utc: chrono::NaiveDateTime,
@@ -88,13 +117,12 @@ struct Match {
     title: String,
 }
 
-#[derive(Template)]
-#[template(path = "findings.html")]
+#[derive(Serialize)]
 struct Findings {
     matches: Vec<Match>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 struct Form {
     link: String,
     distance: i64,
@@ -113,18 +141,19 @@ impl Default for Form {
     }
 }
 
-#[derive(Template)]
-#[template(path = "search.html")]
+#[derive(Serialize)]
 struct Search {
     form: Form,
-    findings: Result<Option<Result<Findings, Error>>, Error>,
+    findings: Option<Findings>,
+    error: Option<String>,
 }
 
 impl Default for Search {
     fn default() -> Search {
         Search {
             form: Form::default(),
-            findings: Ok(None),
+            findings: None,
+            error: None,
         }
     }
 }
@@ -148,23 +177,44 @@ lazy_static! {
             NoTls,
         ))
         .unwrap();
+    static ref TERA: Tera = match Tera::new("site/templates/*") {
+        Ok(mut t) => {
+            t.register_filter("tern", utils::tern);
+            t.register_filter("plural", utils::pluralize);
+            t.register_tester("null", utils::null);
+            t
+        }
+        Err(e) => {
+            println!("Parsing error(s): {}", e);
+            std::process::exit(1);
+        }
+    };
 }
 
 fn make_findings(hash: Hash, distance: i64, nsfw: NSFWOption) -> Result<Findings, Error> {
-    let mut conn = POOL.get().map_err(Error::from)?;
-
-    let rows = conn.query_iter(
-        format_args!("SELECT hash <-> $1 as distance, posts.link, permalink, score, author, created_utc, subreddit, title FROM posts INNER JOIN images ON hash <@ ($1, $2) AND image_id = images.id {}ORDER BY distance ASC, created_utc ASC", match nsfw {
-            NSFWOption::Only => " AND nsfw = true ",
-            NSFWOption::Allow => "",
-            NSFWOption::Never => " AND nsfw = false "
-        }).to_string().as_str(),
-        &[&hash, &distance],
-    ).map_err(Error::from)?;
-
-    Ok(Findings {
-        matches: rows
-            .map(move |row| {
+    let matches = POOL.get().map_err(Error::from).and_then(|mut conn| {
+        conn.query_iter(
+            format_args!(
+                "SELECT hash <-> $1 as distance, posts.link, permalink, \
+                 score, author, created_utc, subreddit, title \
+                 FROM posts INNER JOIN images \
+                 ON hash <@ ($1, $2) \
+                 AND image_id = images.id \
+                 {} \
+                 ORDER BY distance ASC, created_utc ASC",
+                match nsfw {
+                    NSFWOption::Only => "AND nsfw = true",
+                    NSFWOption::Allow => "",
+                    NSFWOption::Never => "AND nsfw = false",
+                }
+            )
+            .to_string()
+            .as_str(),
+            &[&hash, &distance],
+        )
+        .map_err(Error::from)
+        .and_then(|rows| {
+            rows.map(move |row| {
                 Ok(Match {
                     permalink: format!("https://reddit.com{}", row.get::<_, &str>("permalink")),
                     distance: row.get("distance"),
@@ -176,8 +226,12 @@ fn make_findings(hash: Hash, distance: i64, nsfw: NSFWOption) -> Result<Findings
                     title: row.get("title"),
                 })
             })
-            .collect()?,
-    })
+            .collect()
+            .map_err(Error::from)
+        })
+    });
+
+    matches.map(|matches| Findings { matches })
 }
 
 fn get_search(qs: SearchQuery) -> Result<Search, Error> {
@@ -207,17 +261,27 @@ fn get_search(qs: SearchQuery) -> Result<Search, Error> {
         }
     }
 
+    let findings = if error.is_some() || !have_link {
+        None
+    } else {
+        let distance = form.distance;
+        let nsfw = form.nsfw;
+        match get_hash(&form.link)
+            .map_err(Error::from)
+            .and_then(|(hash, _image_id, _exists)| make_findings(hash, distance, nsfw))
+        {
+            Ok(findings) => Some(findings),
+            Err(e) => {
+                error = Some(e);
+                None
+            }
+        }
+    };
+
     Ok(Search {
         form: form.clone(),
-        findings: match error {
-            None => Ok(if have_link {
-                let (hash, _image_id, _exists) = get_hash(form.link).map_err(Error::from)?;
-                Some(make_findings(hash, form.distance, form.nsfw))
-            } else {
-                None
-            }),
-            Some(e) => Err(e),
-        },
+        error: error.map(|e| e.to_string()),
+        findings,
     })
 }
 
@@ -281,32 +345,46 @@ fn post_search(headers: HeaderMap, body: FullBody) -> Result<Search, Error> {
         }
     }
 
+    let findings = if error.is_some() {
+        None
+    } else {
+        let distance = form.distance;
+        let nsfw = form.nsfw;
+        match hash.map(|hash| make_findings(hash, distance, nsfw))
+        {
+            None => None,
+            Some(Ok(findings)) => Some(findings),
+            Some(Err(e)) => {
+                error = Some(e);
+                None
+            }
+        }
+    };
+
     Ok(Search {
         form: form.clone(),
-        findings: match error {
-            None => Ok(hash.map(|hash| make_findings(hash, form.distance, form.nsfw))),
-            Some(e) => Err(e),
-        },
+        error: error.map(|e| e.to_string()),
+        findings,
     })
 }
 
 fn get_response(qs: SearchQuery) -> Response<Body> {
-    let error;
-    let out = match get_search(qs) {
-        Ok(search) => {
-            error = false;
-            search.render().unwrap()
-        }
-        Err(e) => {
-            error = true;
+    let out = get_search(qs)
+        .map_err(|e| e.to_string())
+        .and_then(|search| {
+            TERA.render_value("search.html", &search).map_err(|e| {
+                println!("{:?}", e);
+                e.to_string()
+            })
+        })
+        .map_err(|e| {
             format_args!("<h1>Error 500: Internal Server Error</h1><h2>{}</h2>", e).to_string()
-        }
-    };
+        });
 
     Response::builder()
-        .status(if error { 500 } else { 200 })
+        .status(if out.is_err() { 500 } else { 200 })
         .header("Content-Type", "text/html")
-        .body(Body::from(out))
+        .body(Body::from(out.unwrap_or_else(|s| s)))
         .unwrap()
 }
 
@@ -315,7 +393,7 @@ fn post_response(headers: HeaderMap, body: FullBody) -> Response<Body> {
     let out = match post_search(headers, body) {
         Ok(search) => {
             error = false;
-            search.render().unwrap()
+            TERA.render_value("search.html", &search).unwrap()
         }
         Err(e) => {
             error = true;
@@ -332,6 +410,7 @@ fn post_response(headers: HeaderMap, body: FullBody) -> Response<Body> {
 
 fn run_server() {
     setup_logging();
+    TERA::initialize(&TERA);
     let router = path("search")
         .and(
             get2()

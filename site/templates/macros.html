@@ -1,0 +1,7 @@
+{% macro nsfw_checked(input, match) %}
+    {%- if input == match -%}
+        {{ "checked " }}
+    {%- else -%}
+        {{ "" }}
+    {%- endif -%}
+{% endmacro %}

@@ -22,6 +22,14 @@ lazy_static! {
 
 include!(concat!(env!("OUT_DIR"), "/codegen.rs"));
 
+// Make a String from a &str
+#[macro_export]
+macro_rules! string {
+    ($s:expr) => {
+        String::from($s)
+    }
+}
+
 // Log Error, returning empty
 #[macro_export]
 macro_rules! le {

@@ -28,6 +28,8 @@ struct SearchQuery {
     imagelink: Option<String>,
     distance: Option<String>,
     nsfw: Option<String>,
+    subreddits: Option<String>,
+    authors: Option<String>,
 }
 
 pub mod utils {
@@ -39,12 +41,12 @@ pub mod utils {
 
         let plural = match args.get("plural") {
             Some(val) => try_get_value!("pluralize", "plural", String, val),
-            None => "s".to_string(),
+            None => String::from("s"),
         };
 
         let singular = match args.get("singular") {
             Some(val) => try_get_value!("pluralize", "singular", String, val),
-            None => "".to_string(),
+            None => String::from(""),
         };
 
         // English uses plural when it isn't one
@@ -69,12 +71,15 @@ pub mod utils {
     }
 
     pub fn null(arg: Option<&Value>, _args: &[Value]) -> Result<bool> {
-        arg.ok_or(Error::msg("Tester `null` was called on an undefined variable")).map(|v| v.is_null())
+        arg.ok_or(Error::msg(
+            "Tester `null` was called on an undefined variable",
+        ))
+        .map(|v| v.is_null())
     }
 }
 
 #[derive(Clone, PartialEq, Serialize, Copy)]
-#[serde(rename_all="lowercase")]
+#[serde(rename_all = "lowercase")]
 enum NSFWOption {
     Only,
     Allow,
@@ -125,18 +130,20 @@ struct Findings {
 #[derive(Clone, Serialize)]
 struct Form {
     link: String,
-    distance: i64,
-    nsfw: NSFWOption,
-    upload: bool,
+    distance: String,
+    nsfw: String,
+    subreddits: String,
+    authors: String,
 }
 
 impl Default for Form {
-    fn default() -> Self {
+    fn default() -> Form {
         Form {
-            link: String::new(),
-            distance: 1,
-            nsfw: NSFWOption::Allow,
-            upload: false,
+            link: string!(""),
+            distance: string!("1"),
+            nsfw: string!("allow"),
+            subreddits: string!(""),
+            authors: string!(""),
         }
     }
 }
@@ -147,6 +154,7 @@ struct Search {
     default_form: Form,
     findings: Option<Findings>,
     error: Option<String>,
+    upload: bool,
 }
 
 impl Default for Search {
@@ -156,7 +164,30 @@ impl Default for Search {
             default_form: Form::default(),
             findings: None,
             error: None,
+            upload: false,
         }
+    }
+}
+
+struct Params {
+    distance: i64,
+    nsfw: NSFWOption,
+    subreddits: Vec<String>,
+    authors: Vec<String>,
+}
+
+impl Params {
+    pub fn from_form(form: &Form) -> Result<Params, Error> {
+        Ok(Params {
+            distance: if form.distance.is_empty() {
+                1
+            } else {
+                form.distance.parse().map_err(Error::from)?
+            },
+            nsfw: form.nsfw.parse().map_err(Error::from)?,
+            subreddits: form.subreddits.split_whitespace().map(String::from).collect(),
+            authors: form.authors.split_whitespace().map(String::from).collect(),
+        })
     }
 }
 
@@ -193,7 +224,7 @@ lazy_static! {
     };
 }
 
-fn make_findings(hash: Hash, distance: i64, nsfw: NSFWOption) -> Result<Findings, Error> {
+fn make_findings(hash: Hash, params: Params) -> Result<Findings, Error> {
     let matches = POOL.get().map_err(Error::from).and_then(|mut conn| {
         conn.query_iter(
             format_args!(
@@ -204,7 +235,7 @@ fn make_findings(hash: Hash, distance: i64, nsfw: NSFWOption) -> Result<Findings
                  AND image_id = images.id \
                  {} \
                  ORDER BY distance ASC, created_utc ASC",
-                match nsfw {
+                match params.nsfw {
                     NSFWOption::Only => "AND nsfw = true",
                     NSFWOption::Allow => "",
                     NSFWOption::Never => "AND nsfw = false",
@@ -212,7 +243,7 @@ fn make_findings(hash: Hash, distance: i64, nsfw: NSFWOption) -> Result<Findings
             )
             .to_string()
             .as_str(),
-            &[&hash, &distance],
+            &[&hash, &params.distance],
         )
         .map_err(Error::from)
         .and_then(|rows| {
@@ -237,138 +268,124 @@ fn make_findings(hash: Hash, distance: i64, nsfw: NSFWOption) -> Result<Findings
 }
 
 fn get_search(qs: SearchQuery) -> Result<Search, Error> {
-    let have_link = qs.imagelink.as_ref().map(|s| s != "").unwrap_or(false);
+    let imagelink = qs.imagelink.clone();
 
-    let mut form = Form::default();
-    let mut error = None;
+    let default_form = Form::default();
+    let form = Form {
+        distance: qs.distance.unwrap_or(default_form.distance),
+        nsfw: qs.nsfw.unwrap_or(default_form.nsfw),
+        subreddits: qs.subreddits.unwrap_or(default_form.subreddits),
+        authors: qs.authors.unwrap_or(default_form.authors),
+        link: qs.imagelink.unwrap_or(default_form.link),
+    };
 
-    if let Some(s) = qs.imagelink {
-        if &s != "" {
-            error = Url::parse(&s).map_err(Error::from).err();
-            form.link = s;
-        }
-    }
-    if let Some(s) = qs.distance {
-        if &s != "" {
-            match s.parse::<i64>() {
-                Ok(d) => form.distance = d,
-                Err(e) => error = Some(Error::from(e)),
-            }
-        }
-    }
-    if let Some(s) = qs.nsfw {
-        match NSFWOption::from_str(&s) {
-            Ok(n) => form.nsfw = n,
-            Err(e) => error = Some(e),
-        }
-    }
-
-    let findings = if error.is_some() || !have_link {
-        None
-    } else {
-        let distance = form.distance;
-        let nsfw = form.nsfw;
-        match get_hash(&form.link)
-            .map_err(Error::from)
-            .and_then(|(hash, _image_id, _exists)| make_findings(hash, distance, nsfw))
-        {
-            Ok(findings) => Some(findings),
-            Err(e) => {
-                error = Some(e);
+    let findings = imagelink
+        .and_then(|link| {
+            if &link != "" {
+                Some(Url::parse(&link).map_err(Error::from).and_then(|_| {
+                    let (hash, _image_id, _exists) = get_hash(&link)?;
+                    make_findings(hash, Params::from_form(&form)?)
+                }))
+            } else {
                 None
             }
-        }
+        })
+        .unwrap_or_else(|| {
+            Ok(Findings {
+                matches: Vec::new(),
+            })
+        });
+
+    let (findings, error) = match findings {
+        Ok(findings) => (Some(findings), None),
+        Err(error) => (None, Some(error)),
     };
 
     Ok(Search {
         form: form.clone(),
         error: error.map(|e| e.to_string()),
         findings,
-        .. Default::default()
+        upload: false,
+        ..Default::default()
     })
 }
 
 fn post_search(headers: HeaderMap, body: FullBody) -> Result<Search, Error> {
+    fn utf8_to_string(utf8: &Vec<u8>) -> String {
+        String::from_utf8_lossy(utf8.as_slice()).to_string()
+    }
+
     lazy_static! {
         static ref BOUNDARY_RE: Regex = Regex::new(r"boundary=(.+)").unwrap();
     }
 
-    let mut mp = Multipart::with_body(
-        body.reader(),
-        BOUNDARY_RE
-            .captures(
-                headers
-                    .get("Content-Type")
-                    .ok_or(format_err!("No Content-Type header supplied"))?
-                    .to_str()
-                    .map_err(Error::from)?,
-            )
-            .and_then(|captures| captures.get(1))
-            .map(|capture| capture.as_str())
-            .ok_or(format_err!("No boundary in Content-Type"))?,
-    );
+    let output = headers
+        .get("Content-Type")
+        .ok_or(format_err!("No Content-Type header supplied"))
+        .and_then(|header_value| {
+            let boundary = BOUNDARY_RE
+                .captures(header_value.to_str().map_err(Error::from)?)
+                .and_then(|captures| captures.get(1))
+                .map(|capture| capture.as_str())
+                .ok_or(format_err!("No boundary in Content-Type"))?;
 
-    let mut map: HashMap<String, Vec<u8>> = HashMap::new();
+            let mut mp = Multipart::with_body(body.reader(), boundary);
+            let mut map: HashMap<String, Vec<u8>> = HashMap::new();
 
-    while let Ok(Some(mut field)) = mp.read_entry() {
-        let mut data = Vec::new();
-        field.data.read_to_end(&mut data).map_err(Error::from)?;
-        map.insert(field.headers.name.to_string(), data);
-    }
-
-    let mut form = Form::default();
-    let mut error = None;
-
-    form.upload = map.contains_key("imagefile");
-    let hash = if let Some(b) = map.get("imagefile") {
-        match hash_from_memory(b) {
-            Ok(hash) => Some(hash),
-            Err(e) => {
-                error = Some(e.into());
-                None
+            while let Ok(Some(mut field)) = mp.read_entry() {
+                let mut data = Vec::new();
+                field.data.read_to_end(&mut data).map_err(Error::from)?;
+                map.insert(field.headers.name.to_string(), data);
             }
-        }
-    } else {
-        None
-    };
-    if let Some(b) = map.get("distance") {
-        let s = std::str::from_utf8(&b).map_err(Error::from)?;
-        if s != "" {
-            match s.parse::<i64>() {
-                Ok(d) => form.distance = d,
-                Err(e) => error = Some(Error::from(e)),
-            }
-        }
-    }
-    if let Some(b) = map.get("nsfw") {
-        let s = std::str::from_utf8(&b).map_err(Error::from)?;
-        match NSFWOption::from_str(s) {
-            Ok(n) => form.nsfw = n,
-            Err(e) => error = Some(e),
-        }
-    }
 
-    let findings = if error.is_some() {
-        None
-    } else {
-        let distance = form.distance;
-        let nsfw = form.nsfw;
-        match hash.map(|hash| make_findings(hash, distance, nsfw))
-        {
-            None => None,
-            Some(Ok(findings)) => Some(findings),
-            Some(Err(e)) => {
-                error = Some(e);
-                None
-            }
-        }
+            let default_form = Form::default();
+            let form = Form {
+                distance: map
+                    .get("distance")
+                    .map(utf8_to_string)
+                    .unwrap_or(default_form.distance),
+                nsfw: map
+                    .get("nsfw")
+                    .map(utf8_to_string)
+                    .unwrap_or(default_form.nsfw),
+                subreddits: map
+                    .get("subreddits")
+                    .map(utf8_to_string)
+                    .unwrap_or(default_form.subreddits),
+                authors: map
+                    .get("authors")
+                    .map(utf8_to_string)
+                    .unwrap_or(default_form.authors),
+                ..Default::default()
+            };
+
+            let hash = map
+                .get("imagefile")
+                .map(|bytes| hash_from_memory(bytes))
+                .transpose()?;
+
+            let params = Params::from_form(&form)?;
+
+            hash.map(|hash| make_findings(hash, params))
+                .unwrap_or_else(|| {
+                    Ok(Findings {
+                        matches: Vec::new(),
+                    })
+                })
+                .map(|findings| (form, findings))
+        });
+
+    let (form, findings, error) = match output {
+        Ok((form, findings)) => (form, Some(findings), None),
+        Err(error) => (Form::default(), None, Some(error)),
     };
 
     Ok(Search {
-        form: form.clone(),
+        form: form,
         error: error.map(|e| e.to_string()),
         findings,
-        .. Default::default()
+        upload: true,
+        ..Default::default()
     })
 }
 

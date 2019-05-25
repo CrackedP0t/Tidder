@@ -78,7 +78,7 @@ pub mod utils {
     }
 }
 
-#[derive(Clone, PartialEq, Serialize, Copy)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 enum NSFWOption {
     Only,
@@ -100,17 +100,13 @@ impl FromStr for NSFWOption {
     }
 }
 
-// impl ToStr for NSFWOption {
-
-// }
-
 impl Default for NSFWOption {
     fn default() -> Self {
         NSFWOption::Allow
     }
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct Match {
     author: Option<String>,
     created_utc: chrono::NaiveDateTime,
@@ -122,12 +118,12 @@ struct Match {
     title: String,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct Findings {
     matches: Vec<Match>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 struct Form {
     link: String,
     distance: String,
@@ -148,7 +144,7 @@ impl Default for Form {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct Search {
     form: Form,
     default_form: Form,
@@ -169,6 +165,7 @@ impl Default for Search {
     }
 }
 
+#[derive(Debug)]
 struct Params {
     distance: i64,
     nsfw: NSFWOption,
@@ -185,8 +182,16 @@ impl Params {
                 form.distance.parse().map_err(Error::from)?
             },
             nsfw: form.nsfw.parse().map_err(Error::from)?,
-            subreddits: form.subreddits.split_whitespace().map(String::from).collect(),
-            authors: form.authors.split_whitespace().map(String::from).collect(),
+            subreddits: form
+                .subreddits
+                .split_whitespace()
+                .map(str::to_lowercase)
+                .collect(),
+            authors: form
+                .authors
+                .split_whitespace()
+                .map(str::to_lowercase)
+                .collect(),
         })
     }
 }
@@ -225,7 +230,48 @@ lazy_static! {
 }
 
 fn make_findings(hash: Hash, params: Params) -> Result<Findings, Error> {
+    macro_rules! tosql {
+        ($v:expr) => {
+            (&$v as &dyn postgres::types::ToSql)
+        };
+    }
+
     let matches = POOL.get().map_err(Error::from).and_then(|mut conn| {
+        let (s_query, a_query, args) = if params.subreddits.is_empty() && params.authors.is_empty()
+        {
+            ("", "", vec![tosql!(hash), tosql!(params.distance)])
+        } else if params.authors.is_empty() {
+            (
+                "AND LOWER(subreddit) = ANY($3)",
+                "",
+                vec![
+                    tosql!(hash),
+                    tosql!(params.distance),
+                    tosql!(params.subreddits),
+                ],
+            )
+        } else if params.subreddits.is_empty() {
+            (
+                "",
+                "AND LOWER(author) = ANY($3)",
+                vec![
+                    tosql!(hash),
+                    tosql!(params.distance),
+                    tosql!(params.authors),
+                ],
+            )
+        } else {
+            (
+                "AND LOWER(subreddit) = ANY($3)",
+                "AND LOWER(author) = ANY($4)",
+                vec![
+                    tosql!(hash),
+                    tosql!(params.distance),
+                    tosql!(params.subreddits),
+                    tosql!(params.authors),
+                ],
+            )
+        };
         conn.query_iter(
             format_args!(
                 "SELECT hash <-> $1 as distance, posts.link, permalink, \
@@ -234,16 +280,20 @@ fn make_findings(hash: Hash, params: Params) -> Result<Findings, Error> {
                  ON hash <@ ($1, $2) \
                  AND image_id = images.id \
                  {} \
+                 {} \
+                 {} \
                  ORDER BY distance ASC, created_utc ASC",
                 match params.nsfw {
                     NSFWOption::Only => "AND nsfw = true",
                     NSFWOption::Allow => "",
                     NSFWOption::Never => "AND nsfw = false",
-                }
+                },
+                s_query,
+                a_query
             )
             .to_string()
             .as_str(),
-            &[&hash, &params.distance],
+            &args,
         )
         .map_err(Error::from)
         .and_then(|rows| {
@@ -283,21 +333,18 @@ fn get_search(qs: SearchQuery) -> Result<Search, Error> {
         .and_then(|link| {
             if &link != "" {
                 Some(Url::parse(&link).map_err(Error::from).and_then(|_| {
+                    let params = Params::from_form(&form)?;
                     let (hash, _image_id, _exists) = get_hash(&link)?;
-                    make_findings(hash, Params::from_form(&form)?)
+                    make_findings(hash, params)
                 }))
             } else {
                 None
             }
         })
-        .unwrap_or_else(|| {
-            Ok(Findings {
-                matches: Vec::new(),
-            })
-        });
+        .transpose();
 
     let (findings, error) = match findings {
-        Ok(findings) => (Some(findings), None),
+        Ok(findings) => (findings, None),
         Err(error) => (None, Some(error)),
     };
 
@@ -366,17 +413,14 @@ fn post_search(headers: HeaderMap, body: FullBody) -> Result<Search, Error> {
 
             let params = Params::from_form(&form)?;
 
-            hash.map(|hash| make_findings(hash, params))
-                .unwrap_or_else(|| {
-                    Ok(Findings {
-                        matches: Vec::new(),
-                    })
-                })
-                .map(|findings| (form, findings))
+            match hash {
+                None => Ok((form, None)),
+                Some(hash) => make_findings(hash, params).map(|findings| (form, Some(findings))),
+            }
         });
 
     let (form, findings, error) = match output {
-        Ok((form, findings)) => (form, Some(findings), None),
+        Ok((form, findings)) => (form, findings, None),
         Err(error) => (Form::default(), None, Some(error)),
     };
 

@@ -47,7 +47,7 @@
      }
     </style>
     <div class="search-header">
-        <h1>Search for an image!</h1>
+        <h1><a href="/search">Search for an image!</a></h1>
         <form method="get" id="search-form" search-action="/search">
             <div class="search-row">
                 <label id="search-link" class="search-input-label"><span>Link:</span><input class="search-input-type" name="searchtype" value="link" type="radio" {{ upload | tern(yes="", no="checked ") }}/><input class="search-input" name="imagelink" type="url" value="{{ form.link }}"/></label>
@@ -77,6 +77,10 @@
                 </div>
             </div>
             <div class="search-row">
+                <label><span>Subreddits: </span><input class="search-text" type="text" name="subreddits" value="{{ form.subreddits }}" /></label>
+                <label><span>Authors: </span><input class="search-text" type="text" name="authors" value="{{ form.authors }}" /></label>
+            </div>
+            <div class="search-row">
                 <input class="search-send" type="submit" value="Search" />
             </div>
         </form>
@@ -85,6 +89,22 @@
              distance: "{{ default_form.distance }}",
              nsfw: "{{ default_form.nsfw }}"
          };
+
+         function default_blank(event) {
+             if (event.target.value === "") {
+                 event.target.dataset.name = event.target.name;
+                 event.target.removeAttribute("name");
+             } else {
+                 if (!event.target.hasAttribute("name")) {
+                     event.target.name = event.target.dataset.name;
+                 }
+             }
+         }
+
+         for (let input of $$(".search-text")) {
+             default_blank({target: input});
+             input.oninput = default_blank;
+         }
 
          let distance_input = $("#search-distance");
 
@@ -162,7 +182,7 @@
              file_input.required = true;
 
              link_input.removeAttribute("name");
-             file_input.name = "uploadfile";
+             file_input.name = "imagefile";
          };
 
          $("#search-link").oninput = setLink;
@@ -175,19 +195,21 @@
              setFile();
          } else {
              setLink();
-             link_input.focus(true);
+             if (link_input.value === "") {
+                 link_input.focus();
+             }
          }
         </script>
         {% if error %}
             <p>Error: {{ error }}</p>
-        {% elif findings is null %}
-            <p>No search yet...</p>
-        {% else %}
-            {% if upload %}
-                <p>You uploaded an image</p>
-            {% else %}
-                <p>You searched for <a href="{{ form.link }}">{{ form.link }}</a></p>
-            {% endif %}
+        {% elif findings is not null %}
+            <p>
+                {{ findings.matches | length }} {{ findings.matches | length | plural(singular="match", plural="matches") }} for {{ " " }}
+                {%- if upload -%}
+                    your upload
+                {%- else -%}
+                    <a href="{{ form.link }}">{{ form.link }}</a>
+                {%- endif -%}
         {% endif %}
     </div>
     {% if findings is not null %}

@@ -46,7 +46,8 @@
      text-align: left;
  }
 </style>
-{# {% if (matches | length) > 0  %} #}
+{% set matches_length = findings.matches | length %}
+{% if matches_length > 0  %}
     <div class="findings-container">
         <div class="findings">
             <span class="header">Image</span>
@@ -79,7 +80,4 @@
             {% endfor %}
         </div>
     </div>
-    {#
-    {% else %}
-    <p>No matches!</p>
-    {% endif %} #}
+{% endif %}

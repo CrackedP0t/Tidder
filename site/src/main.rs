@@ -18,9 +18,10 @@ use url::Url;
 use warp::path::{full, FullPath};
 use warp::{
     body::{self, FullBody},
+    filters::path::end,
     get2,
     header::headers_cloned,
-    path, post2, query, reply, Filter, Reply,
+    post2, query, reply, Filter, Reply,
 };
 
 #[derive(Deserialize)]
@@ -437,34 +438,36 @@ fn get_response(qs: SearchQuery) -> Response<Body> {
     let out = get_search(qs)
         .map_err(|e| e.to_string())
         .and_then(|search| {
-            TERA.render_value("search.html", &search).map_err(|e| {
-                println!("{:?}", e);
-                e.to_string()
-            })
-        })
-        .map_err(|e| {
-            format_args!("<h1>Error 500: Internal Server Error</h1><h2>{}</h2>", e).to_string()
+            TERA.render_value("search.html", &search)
+                .map_err(|e| e.to_string())
         });
 
+    let error = out.is_err();
+
+    let out = out.unwrap_or_else(|e| {
+        format_args!("<h1>Error 500: Internal Server Error</h1><h2>{}</h2>", e).to_string()
+    });
+
     Response::builder()
-        .status(if out.is_err() { 500 } else { 200 })
+        .status(if error { 500 } else { 200 })
         .header("Content-Type", "text/html")
-        .body(Body::from(out.unwrap_or_else(|s| s)))
+        .body(Body::from(out))
         .unwrap()
 }
 
 fn post_response(headers: HeaderMap, body: FullBody) -> Response<Body> {
-    let error;
-    let out = match post_search(headers, body) {
-        Ok(search) => {
-            error = false;
-            TERA.render_value("search.html", &search).unwrap()
-        }
-        Err(e) => {
-            error = true;
-            format_args!("<h1>Error 500: Internal Server Error</h1><h2>{}</h2>", e).to_string()
-        }
-    };
+    let out = post_search(headers, body)
+        .map_err(|e| e.to_string())
+        .and_then(|search| {
+            TERA.render_value("search.html", &search)
+                .map_err(|e| e.to_string())
+        });
+
+    let error = out.is_err();
+
+    let out = out.unwrap_or_else(|e| {
+        format_args!("<h1>Error 500: Internal Server Error</h1><h2>{}</h2>", e).to_string()
+    });
 
     Response::builder()
         .status(if error { 500 } else { 200 })
@@ -476,15 +479,17 @@ fn post_response(headers: HeaderMap, body: FullBody) -> Response<Body> {
 fn run_server() {
     setup_logging();
     TERA::initialize(&TERA);
-    let router = path("search")
-        .and(
-            get2()
-                .and(query::<SearchQuery>().map(get_response))
-                .or(post2()
-                    .and(headers_cloned())
-                    .and(body::concat())
-                    .map(post_response)),
-        )
+
+    let search = get2()
+        .and(query::<SearchQuery>().map(get_response))
+        .or(post2()
+            .and(headers_cloned())
+            .and(body::concat())
+            .map(post_response));
+
+    let router = end()
+        .and(search)
+        .or(warp::path("search").and(search))
         .or(full().map(reply_not_found));
 
     warp::serve(router).run(([127, 0, 0, 1], 7878));

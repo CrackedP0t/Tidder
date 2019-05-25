@@ -47,8 +47,8 @@
      }
     </style>
     <div class="search-header">
-        <h1><a href="/search">Search for an image!</a></h1>
-        <form method="get" id="search-form" search-action="/search">
+        <h1><a href="/">Search for an image!</a></h1>
+        <form method="get" id="search-form" search-action="/">
             <div class="search-row">
                 <label id="search-link" class="search-input-label"><span>Link:</span><input class="search-input-type" name="searchtype" value="link" type="radio" {{ upload | tern(yes="", no="checked ") }}/><input class="search-input" name="imagelink" type="url" value="{{ form.link }}"/></label>
                 <label id="search-file" class="search-input-label"><span>File:</span><input class="search-input-type" name="searchtype" value="file" type="radio" {{ upload | tern(yes="checked ", no="") }}/><input class="search-input" name="imagefile" type="file" accept="image/*" /></label>

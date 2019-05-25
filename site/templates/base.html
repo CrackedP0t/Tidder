@@ -2,6 +2,7 @@
 <html lang="en">
     <head>
         <meta charset="UTF-8">
+        <!-- <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/yegor256/tacit@gh-pages/tacit-css.min.css"/> -->
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/normalize/8.0.1/normalize.min.css" />
         <title>{% block title %}{% endblock %}</title>
         <script>
@@ -14,20 +15,25 @@
         </script>
         <style>
          html {
-             background-color: #454545
+             height: 100%;
          }
          body {
+             background-color: #454545;
              font-family: Open Sans,Arial;
              color: #fefefe;
              font-size: 16px;
-             margin: 3vh 5vw;
              line-height: 1.4;
+             height: 100%;
+             padding: 0;
          }
          a {
              color: #08a;
          }
          a:visited {
              color: #941352;
+         }
+         h1 {
+             margin-top: 0;
          }
         </style>
     </head>

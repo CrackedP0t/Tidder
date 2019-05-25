@@ -46,173 +46,175 @@
          min-width: 30vw;
      }
     </style>
-    <div class="search-header">
-        <h1><a href="/">Search for an image!</a></h1>
-        <form method="get" id="search-form" search-action="/">
-            <div class="search-row">
-                <label id="search-link" class="search-input-label"><span>Link:</span><input class="search-input-type" name="searchtype" value="link" type="radio" {{ upload | tern(yes="", no="checked ") }}/><input class="search-input" name="imagelink" type="url" value="{{ form.link }}"/></label>
-                <label id="search-file" class="search-input-label"><span>File:</span><input class="search-input-type" name="searchtype" value="file" type="radio" {{ upload | tern(yes="checked ", no="") }}/><input class="search-input" name="imagefile" type="file" accept="image/*" /></label>
-            </div>
-            <div class="search-row">
-                <label>
-                    <span>Distance:</span>
-                    <input id="search-distance" name="distance" type="number"
-                           min="0" max="64" placeholder="{{ default_form.distance }}"
-                           value="{{ form.distance }}"/>
-                </label>
-                <div class="search-nsfw-box">
-                    <span>NSFW:</span>
-                    <label>
-                        <span>Only</span>
-                        <input class="search-nsfw" type="radio" name="nsfw" value="only" {{ macros::nsfw_checked(input=form.nsfw, match="only") }}/>
-                    </label>
-                    <label>
-                        <span>Allow</span>
-                        <input class="search-nsfw" type="radio" name="nsfw" value="allow" {{ macros::nsfw_checked(input=form.nsfw, match="allow") }}/>
-                    </label>
-                    <label>
-                        <span>Never</span>
-                        <input class="search-nsfw" type="radio" name="nsfw" value="never" {{ macros::nsfw_checked(input=form.nsfw, match="never") }}/>
-                    </label>
+    <div class="main-wrapper">
+        <div class="search-header">
+            <h1><a href="/">Search for an image!</a></h1>
+            <form method="get" id="search-form" search-action="/">
+                <div class="search-row">
+                    <label id="search-link" class="search-input-label"><span>Link:</span><input class="search-input-type" name="searchtype" value="link" type="radio" {{ upload | tern(yes="", no="checked ") }}/><input class="search-input" name="imagelink" type="url" value="{{ form.link }}"/></label>
+                    <label id="search-file" class="search-input-label"><span>File:</span><input class="search-input-type" name="searchtype" value="file" type="radio" {{ upload | tern(yes="checked ", no="") }}/><input class="search-input" name="imagefile" type="file" accept="image/*" /></label>
                 </div>
-            </div>
-            <div class="search-row">
-                <label><span>Subreddits: </span><input class="search-text" type="text" name="subreddits" value="{{ form.subreddits }}" /></label>
-                <label><span>Authors: </span><input class="search-text" type="text" name="authors" value="{{ form.authors }}" /></label>
-            </div>
-            <div class="search-row">
-                <input class="search-send" type="submit" value="Search" />
-            </div>
-        </form>
-        <script>
-         const FORM_DEFAULTS = {
-             distance: "{{ default_form.distance }}",
-             nsfw: "{{ default_form.nsfw }}"
-         };
+                <div class="search-row">
+                    <label>
+                        <span>Distance:</span>
+                        <input id="search-distance" name="distance" type="number"
+                               min="0" max="64" placeholder="{{ default_form.distance }}"
+                               value="{{ form.distance }}"/>
+                    </label>
+                    <div class="search-nsfw-box">
+                        <span>NSFW:</span>
+                        <label>
+                            <span>Only</span>
+                            <input class="search-nsfw" type="radio" name="nsfw" value="only" {{ macros::nsfw_checked(input=form.nsfw, match="only") }}/>
+                        </label>
+                        <label>
+                            <span>Allow</span>
+                            <input class="search-nsfw" type="radio" name="nsfw" value="allow" {{ macros::nsfw_checked(input=form.nsfw, match="allow") }}/>
+                        </label>
+                        <label>
+                            <span>Never</span>
+                            <input class="search-nsfw" type="radio" name="nsfw" value="never" {{ macros::nsfw_checked(input=form.nsfw, match="never") }}/>
+                        </label>
+                    </div>
+                </div>
+                <div class="search-row">
+                    <label><span>Subreddits: </span><input class="search-text" type="text" name="subreddits" value="{{ form.subreddits }}" /></label>
+                    <label><span>Authors: </span><input class="search-text" type="text" name="authors" value="{{ form.authors }}" /></label>
+                </div>
+                <div class="search-row">
+                    <input class="search-send" type="submit" value="Search" />
+                </div>
+            </form>
+            <script>
+             const FORM_DEFAULTS = {
+                 distance: "{{ default_form.distance }}",
+                 nsfw: "{{ default_form.nsfw }}"
+             };
 
-         function default_blank(event) {
-             if (event.target.value === "") {
-                 event.target.dataset.name = event.target.name;
-                 event.target.removeAttribute("name");
-             } else {
-                 if (!event.target.hasAttribute("name")) {
-                     event.target.name = event.target.dataset.name;
-                 }
-             }
-         }
-
-         for (let input of $$(".search-text")) {
-             default_blank({target: input});
-             input.oninput = default_blank;
-         }
-
-         let distance_input = $("#search-distance");
-
-         function default_distance() {
-             if (distance_input.value === "" || distance_input.value === FORM_DEFAULTS.distance) {
-                 distance_input.removeAttribute("name");
-             } else {
-                 distance_input.name = "distance";
-             }
-         }
-
-         distance_input.oninput = default_distance;
-
-         let nsfw_radios = $$(".search-nsfw");
-
-         function default_nsfw(event) {
-             let checked;
-             if (event) {
-                 checked = event.target;
-             } else {
-                 checked = $(".search-nsfw:checked");
-             }
-
-             if (checked.value === FORM_DEFAULTS.nsfw) {
-                 for (let el of nsfw_radios) {
-                     el.removeAttribute("name");
-                     el.removeAttribute("checked");
-                 }
-             } else {
-                 for (let el of nsfw_radios) {
-                     el.name = "nsfw";
-                     el.removeAttribute("checked");
+             function default_blank(event) {
+                 if (event.target.value === "") {
+                     event.target.dataset.name = event.target.name;
+                     event.target.removeAttribute("name");
+                 } else {
+                     if (!event.target.hasAttribute("name")) {
+                         event.target.name = event.target.dataset.name;
+                     }
                  }
              }
 
-             checked.checked = true;
-         }
-
-         for (let el of nsfw_radios) {
-             el.oninput = default_nsfw;
-         };
-
-         default_distance();
-         default_nsfw();
-
-         let form = $("#search-form");
-
-         let link_input = $("#search-link .search-input");
-         let file_input = $("#search-file .search-input");
-
-         let link_radio = $("#search-link .search-input-type");
-         let file_radio = $("#search-file .search-input-type");
-
-         let setLink = function(event) {
-             form.method = "get";
-             form.enctype = "application/x-www-form-urlencoded";
-
-             link_radio.checked = true;
-             file_radio.removeAttribute("checked");
-
-             link_input.required = true;
-             file_input.required = false;
-
-             link_input.name = "imagelink";
-             file_input.removeAttribute("name");
-         };
-         let setFile = function(event) {
-             form.method = "post";
-             form.enctype = "multipart/form-data";
-
-             link_radio.removeAttribute("checked");
-             file_radio.checked = true;
-
-             link_input.required = false;
-             file_input.required = true;
-
-             link_input.removeAttribute("name");
-             file_input.name = "imagefile";
-         };
-
-         $("#search-link").oninput = setLink;
-         link_input.onfocus = setLink;
-
-         $("#search-file").oninput = setFile;
-         file_input.onfocus = setFile;
-
-         if (file_radio.checked) {
-             setFile();
-         } else {
-             setLink();
-             if (link_input.value === "") {
-                 link_input.focus();
+             for (let input of $$(".search-text")) {
+                 default_blank({target: input});
+                 input.oninput = default_blank;
              }
-         }
-        </script>
-        {% if error %}
-            <p>Error: {{ error }}</p>
-        {% elif findings is not null %}
-            <p>
-                {{ findings.matches | length }} {{ findings.matches | length | plural(singular="match", plural="matches") }} for {{ " " }}
-                {%- if upload -%}
-                    your upload
-                {%- else -%}
-                    <a href="{{ form.link }}">{{ form.link }}</a>
-                {%- endif -%}
+
+             let distance_input = $("#search-distance");
+
+             function default_distance() {
+                 if (distance_input.value === "" || distance_input.value === FORM_DEFAULTS.distance) {
+                     distance_input.removeAttribute("name");
+                 } else {
+                     distance_input.name = "distance";
+                 }
+             }
+
+             distance_input.oninput = default_distance;
+
+             let nsfw_radios = $$(".search-nsfw");
+
+             function default_nsfw(event) {
+                 let checked;
+                 if (event) {
+                     checked = event.target;
+                 } else {
+                     checked = $(".search-nsfw:checked");
+                 }
+
+                 if (checked.value === FORM_DEFAULTS.nsfw) {
+                     for (let el of nsfw_radios) {
+                         el.removeAttribute("name");
+                         el.removeAttribute("checked");
+                     }
+                 } else {
+                     for (let el of nsfw_radios) {
+                         el.name = "nsfw";
+                         el.removeAttribute("checked");
+                     }
+                 }
+
+                 checked.checked = true;
+             }
+
+             for (let el of nsfw_radios) {
+                 el.oninput = default_nsfw;
+             };
+
+             default_distance();
+             default_nsfw();
+
+             let form = $("#search-form");
+
+             let link_input = $("#search-link .search-input");
+             let file_input = $("#search-file .search-input");
+
+             let link_radio = $("#search-link .search-input-type");
+             let file_radio = $("#search-file .search-input-type");
+
+             let setLink = function(event) {
+                 form.method = "get";
+                 form.enctype = "application/x-www-form-urlencoded";
+
+                 link_radio.checked = true;
+                 file_radio.removeAttribute("checked");
+
+                 link_input.required = true;
+                 file_input.required = false;
+
+                 link_input.name = "imagelink";
+                 file_input.removeAttribute("name");
+             };
+             let setFile = function(event) {
+                 form.method = "post";
+                 form.enctype = "multipart/form-data";
+
+                 link_radio.removeAttribute("checked");
+                 file_radio.checked = true;
+
+                 link_input.required = false;
+                 file_input.required = true;
+
+                 link_input.removeAttribute("name");
+                 file_input.name = "imagefile";
+             };
+
+             $("#search-link").oninput = setLink;
+             link_input.onfocus = setLink;
+
+             $("#search-file").oninput = setFile;
+             file_input.onfocus = setFile;
+
+             if (file_radio.checked) {
+                 setFile();
+             } else {
+                 setLink();
+                 if (link_input.value === "") {
+                     link_input.focus();
+                 }
+             }
+            </script>
+            {% if error %}
+                <p>Error: {{ error }}</p>
+            {% elif findings is not null %}
+                <p>
+                    {{ findings.matches | length }} {{ findings.matches | length | plural(singular="match", plural="matches") }} for {{ " " }}
+                    {%- if upload -%}
+                        your upload
+                    {%- else -%}
+                        <a href="{{ form.link }}">{{ form.link }}</a>
+                    {%- endif -%}
+            {% endif %}
+        </div>
+        {% if findings is not null %}
+            {% include "findings.html" %}
         {% endif %}
     </div>
-    {% if findings is not null %}
-        {% include "findings.html" %}
-    {% endif %}
 {% endblock %}

@@ -33,6 +33,7 @@ struct SearchQuery {
     authors: Option<String>,
 }
 
+#[allow(clippy::implicit_hasher)]
 pub mod utils {
     use std::collections::HashMap;
     use tera::{to_value, try_get_value, Error, Result, Value};
@@ -59,23 +60,21 @@ pub mod utils {
     }
 
     pub fn tern(cond: &Value, args: &HashMap<String, Value>) -> Result<Value> {
-        let cond = cond.as_bool().ok_or(Error::msg("Expected bool"))?;
+        let cond = cond.as_bool().ok_or_else(|| Error::msg("Expected bool"))?;
         let yes = args
             .get("yes")
-            .ok_or(Error::msg("Argument 'yes' missing"))?
+            .ok_or_else(|| Error::msg("Argument 'yes' missing"))?
             .clone();
         let no = args
             .get("no")
-            .ok_or(Error::msg("Argument 'no' missing"))?
+            .ok_or_else(|| Error::msg("Argument 'no' missing"))?
             .clone();
         Ok(if cond { yes } else { no })
     }
 
     pub fn null(arg: Option<&Value>, _args: &[Value]) -> Result<bool> {
-        arg.ok_or(Error::msg(
-            "Tester `null` was called on an undefined variable",
-        ))
-        .map(|v| v.is_null())
+        arg.ok_or_else(|| Error::msg("Tester `null` was called on an undefined variable"))
+            .map(Value::is_null)
     }
 }
 
@@ -359,6 +358,7 @@ fn get_search(qs: SearchQuery) -> Result<Search, Error> {
 }
 
 fn post_search(headers: HeaderMap, body: FullBody) -> Result<Search, Error> {
+    #[allow(clippy::ptr_arg)]
     fn utf8_to_string(utf8: &Vec<u8>) -> String {
         String::from_utf8_lossy(utf8.as_slice()).to_string()
     }
@@ -369,13 +369,13 @@ fn post_search(headers: HeaderMap, body: FullBody) -> Result<Search, Error> {
 
     let output = headers
         .get("Content-Type")
-        .ok_or(format_err!("No Content-Type header supplied"))
+        .ok_or_else(|| format_err!("No Content-Type header supplied"))
         .and_then(|header_value| {
             let boundary = BOUNDARY_RE
                 .captures(header_value.to_str().map_err(Error::from)?)
                 .and_then(|captures| captures.get(1))
                 .map(|capture| capture.as_str())
-                .ok_or(format_err!("No boundary in Content-Type"))?;
+                .ok_or_else(|| format_err!("No boundary in Content-Type"))?;
 
             let mut mp = Multipart::with_body(body.reader(), boundary);
             let mut map: HashMap<String, Vec<u8>> = HashMap::new();
@@ -426,7 +426,7 @@ fn post_search(headers: HeaderMap, body: FullBody) -> Result<Search, Error> {
     };
 
     Ok(Search {
-        form: form,
+        form,
         error: error.map(|e| e.to_string()),
         findings,
         upload: true,

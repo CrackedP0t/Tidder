@@ -8,7 +8,7 @@ use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use regex::Regex;
 use reqwest::{header, Response, StatusCode};
 use serde::Deserialize;
-use serde_json::{to_string_pretty, Value};
+use serde_json::Value;
 use std::fmt;
 use std::io::{BufReader, Read};
 use std::string::ToString;
@@ -312,18 +312,18 @@ pub fn get_hash(link: &str) -> Result<(Hash, i64, bool), GetHashFail> {
         if host == "imgur.com" {
             let mut path_segs = url.path_segments().ok_or_else(|| GetHashFail {
                 link: link.to_string(),
-                error: format_err!("Cannot-be-a-base URL"),
+                error: format_err!("cannot-be-a-base URL"),
             })?;
             let first = path_segs.next().ok_or_else(|| GetHashFail {
                 link: link.to_string(),
-                error: format_err!("Base URL"),
+                error: format_err!("base URL"),
             })?;
 
             match first {
                 "a" | "gallery" => {
                     let hash = path_segs
                         .next()
-                        .ok_or_else(|| GetHashFail::new(link, format_err!("No album hash")))?;
+                        .ok_or_else(|| GetHashFail::new(link, format_err!("no album hash")))?;
                     let mut resp = REQW_CLIENT
                         .get(&format!("https://api.imgur.com/3/album/{}/images", hash))
                         .header(
@@ -344,7 +344,7 @@ pub fn get_hash(link: &str) -> Result<(Hash, i64, bool), GetHashFail> {
                         .ok_or_else(|| {
                             GetHashFail::new(
                                 link,
-                                format_err!("Couldn't extract image from Imgur album"),
+                                format_err!("couldn't extract image from Imgur album"),
                             )
                         })?
                 }
@@ -368,7 +368,7 @@ pub fn get_hash(link: &str) -> Result<(Hash, i64, bool), GetHashFail> {
                         .ok_or_else(|| {
                             GetHashFail::new(
                                 link,
-                                format_err!("Couldn't extract image from Imgur page"),
+                                format_err!("couldn't extract image from Imgur page"),
                             )
                         })?
                 }
@@ -397,59 +397,50 @@ pub fn get_hash(link: &str) -> Result<(Hash, i64, bool), GetHashFail> {
         return Ok(exists);
     }
 
-    let mut this_link = link.to_string();
+    let resp = REQW_CLIENT
+        .get(&utf8_percent_encode(&link, QUERY_ENCODE_SET).collect::<String>())
+        .header(header::ACCEPT, IMAGE_MIMES.join(","))
+        .header(
+            header::USER_AGENT,
+            "Mozilla/5.0 (X11; Linux x86_64; rv:66.0) Gecko/20100101 Firefox/66.0",
+        )
+        .send()
+        .map_err(map_ghf!(link))?;
 
-    let (resp, _format) = loop {
-        let resp = REQW_CLIENT
-            .get(&utf8_percent_encode(&this_link, QUERY_ENCODE_SET).collect::<String>())
-            .header(header::ACCEPT, IMAGE_MIMES.join(","))
-            .header(
-                header::USER_AGENT,
-                "Mozilla/5.0 (X11; Linux x86_64; rv:66.0) Gecko/20100101 Firefox/66.0",
-            )
-            .send()
-            .map_err(map_ghf!(this_link))?;
+    let status = resp.status();
 
-        let status = resp.status();
-
-        if status.is_success() {
-            match resp.headers().get(header::CONTENT_TYPE) {
-                Some(ctype) => {
-                    let val = ctype.to_str().map_err(map_ghf!(this_link))?;
-                    match IMAGE_MIME_MAP.get(val) {
-                        Some(format) => {
-                            break (resp, Some(*format));
-                        }
-                        None => {
-                            return Err(GetHashFail {
-                                link: this_link.clone(),
-                                error: format_err!("Got unsupported MIME type {}", val),
-                            });
-                        }
-                    }
-                }
-                None => {
-                    break (resp, None);
-                }
-            }
-        } else if status.is_redirection() {
-            this_link = String::from(
-                resp.headers()
-                    .get(header::LOCATION)
-                    .ok_or_else(|| GetHashFail {
-                        link: this_link.clone(),
-                        error: format_err!("Redirected without location"),
-                    })?
-                    .to_str()
-                    .map_err(map_ghf!(this_link))?,
-            );
-            continue;
-        } else {
+    // TODO: When image can parse janky webp images
+    let _format = if status.is_success() {
+        let url = resp.url();
+        if url
+            .host_str()
+            .map(|host| host == "i.imgur.com")
+            .unwrap_or(false)
+            && url.path() == "/removed.png"
+        {
             return Err(GetHashFail {
-                link: this_link,
-                error: Error::from(StatusFail { status }),
-            });
+                link: link.to_string(),
+                error: format_err!("removed from Imgur")
+            })
         }
+        resp.headers()
+            .get(header::CONTENT_TYPE)
+            .map(|ctype| {
+                let val = ctype.to_str().map_err(map_ghf!(link))?;
+                match IMAGE_MIME_MAP.get(val) {
+                    Some(format) => Ok(*format),
+                    None => Err(GetHashFail {
+                        link: link.to_string(),
+                        error: format_err!("got unsupported MIME type {}", val),
+                    }),
+                }
+            })
+            .transpose()?
+    } else {
+        return Err(GetHashFail {
+            link: link.to_string(),
+            error: Error::from(StatusFail { status }),
+        })
     };
 
     let now = chrono::offset::Utc::now().naive_utc();
@@ -473,13 +464,13 @@ pub fn get_hash(link: &str) -> Result<(Hash, i64, bool), GetHashFail> {
     {
         BufReader::new(resp)
             .read_to_end(&mut image)
-            .map_err(map_ghf!(this_link))?;
+            .map_err(map_ghf!(link))?;
     }
 
-    let hash = hash_from_memory(&image).map_err(map_ghf!(this_link))?;
+    let hash = hash_from_memory(&image).map_err(map_ghf!(link))?;
 
-    let mut client = DB_POOL.get().map_err(map_ghf!(this_link))?;
-    let mut trans = client.transaction().map_err(map_ghf!(this_link))?;
+    let mut client = DB_POOL.get().map_err(map_ghf!(link))?;
+    let mut trans = client.transaction().map_err(map_ghf!(link))?;
     let rows = trans
         .query(
             "INSERT INTO images (link, hash, no_store, no_cache, expires, \
@@ -488,7 +479,7 @@ pub fn get_hash(link: &str) -> Result<(Hash, i64, bool), GetHashFail> {
              ON CONFLICT DO NOTHING \
              RETURNING id",
             &[
-                &this_link,
+                &link,
                 &hash,
                 &cc.map(|cc| cc.no_store),
                 &cc.map(|cc| cc.no_cache),
@@ -506,15 +497,15 @@ pub fn get_hash(link: &str) -> Result<(Hash, i64, bool), GetHashFail> {
                 &now,
             ],
         )
-        .map_err(map_ghf!(this_link))?;
+        .map_err(map_ghf!(link))?;
 
-    trans.commit().map_err(map_ghf!(this_link))?;
+    trans.commit().map_err(map_ghf!(link))?;
 
     match rows.get(0) {
-        Some(row) => Ok((hash, row.try_get("id").map_err(map_ghf!(this_link))?, false)),
+        Some(row) => Ok((hash, row.try_get("id").map_err(map_ghf!(link))?, false)),
         None => get_existing()?
-            .ok_or_else(|| format_err!("Conflict but no existing match"))
-            .map_err(map_ghf!(this_link)),
+            .ok_or_else(|| format_err!("conflict but no existing match"))
+            .map_err(map_ghf!(link)),
     }
 }
 

@@ -293,7 +293,21 @@ pub fn hash_from_memory(image: &[u8]) -> Result<Hash, Error> {
     ))
 }
 
-pub fn get_hash(link: &str) -> Result<(Hash, i64, bool), GetHashFail> {
+pub enum HashDest {
+    Images,
+    ImageCache,
+}
+
+impl HashDest {
+    pub fn table_name(&self) -> &'static str {
+        match self {
+            HashDest::Images => "images",
+            HashDest::ImageCache => "image_cache",
+        }
+    }
+}
+
+pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), GetHashFail> {
     lazy_static! {
         static ref REQW_CLIENT: reqwest::Client = reqwest::Client::new();
         static ref DB_POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> =
@@ -385,7 +399,14 @@ pub fn get_hash(link: &str) -> Result<(Hash, i64, bool), GetHashFail> {
 
     let mut get_existing = || {
         trans
-            .query("SELECT hash, id FROM images WHERE link=$1", &[&link])
+            .query(
+                format!(
+                    "SELECT hash, id FROM {} WHERE link=$1",
+                    hash_dest.table_name()
+                )
+                .as_str(),
+                &[&link],
+            )
             .map_err(map_ghf!(link))
             .map(|rows| {
                 rows.get(0)
@@ -420,8 +441,8 @@ pub fn get_hash(link: &str) -> Result<(Hash, i64, bool), GetHashFail> {
         {
             return Err(GetHashFail {
                 link: link.to_string(),
-                error: format_err!("removed from Imgur")
-            })
+                error: format_err!("removed from Imgur"),
+            });
         }
         resp.headers()
             .get(header::CONTENT_TYPE)
@@ -440,7 +461,7 @@ pub fn get_hash(link: &str) -> Result<(Hash, i64, bool), GetHashFail> {
         return Err(GetHashFail {
             link: link.to_string(),
             error: Error::from(StatusFail { status }),
-        })
+        });
     };
 
     let now = chrono::offset::Utc::now().naive_utc();
@@ -473,11 +494,15 @@ pub fn get_hash(link: &str) -> Result<(Hash, i64, bool), GetHashFail> {
     let mut trans = client.transaction().map_err(map_ghf!(link))?;
     let rows = trans
         .query(
-            "INSERT INTO images (link, hash, no_store, no_cache, expires, \
-             etag, must_revalidate, retrieved_on) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
-             ON CONFLICT DO NOTHING \
-             RETURNING id",
+            format!(
+                "INSERT INTO {} (link, hash, no_store, no_cache, expires, \
+                 etag, must_revalidate, retrieved_on) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+                 ON CONFLICT DO NOTHING \
+                 RETURNING id",
+                hash_dest.table_name()
+            )
+            .as_str(),
             &[
                 &link,
                 &hash,

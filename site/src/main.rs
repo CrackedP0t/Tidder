@@ -334,7 +334,7 @@ fn get_search(qs: SearchQuery) -> Result<Search, Error> {
             if &link != "" {
                 Some(Url::parse(&link).map_err(Error::from).and_then(|_| {
                     let params = Params::from_form(&form)?;
-                    let (hash, _image_id, _exists) = get_hash(&link)?;
+                    let (hash, _image_id, _exists) = get_hash(&link, HashDest::ImageCache)?;
                     make_findings(hash, params)
                 }))
             } else {

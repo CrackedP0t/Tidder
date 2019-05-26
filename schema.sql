@@ -2,8 +2,8 @@
 -- PostgreSQL database dump
 --
 
--- Dumped from database version 11.2
--- Dumped by pg_dump version 11.2
+-- Dumped from database version 11.3
+-- Dumped by pg_dump version 11.3
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -12,6 +12,7 @@ SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
 SELECT pg_catalog.set_config('search_path', '', false);
 SET check_function_bodies = false;
+SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
 
@@ -29,9 +30,38 @@ CREATE EXTENSION IF NOT EXISTS bktree WITH SCHEMA public;
 COMMENT ON EXTENSION bktree IS 'BK-tree implementation';
 
 
+--
+-- Name: image_cache_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.image_cache_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
 SET default_tablespace = '';
 
 SET default_with_oids = false;
+
+--
+-- Name: image_cache; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.image_cache (
+    id bigint DEFAULT nextval('public.image_cache_id_seq'::regclass) NOT NULL,
+    link character varying NOT NULL,
+    hash bigint NOT NULL,
+    no_store boolean,
+    no_cache boolean,
+    expires timestamp without time zone,
+    etag character varying,
+    must_revalidate boolean,
+    retrieved_on timestamp without time zone NOT NULL
+);
+
 
 --
 -- Name: images; Type: TABLE; Schema: public; Owner: -
@@ -126,6 +156,22 @@ ALTER TABLE ONLY public.posts ALTER COLUMN id SET DEFAULT nextval('public.posts_
 
 
 --
+-- Name: image_cache image_cache_link_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.image_cache
+    ADD CONSTRAINT image_cache_link_key UNIQUE (link);
+
+
+--
+-- Name: image_cache image_cache_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.image_cache
+    ADD CONSTRAINT image_cache_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: images images_link_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -171,6 +217,20 @@ ALTER TABLE ONLY public.posts
 
 ALTER TABLE ONLY public.posts
     ADD CONSTRAINT posts_reddit_id_key UNIQUE (reddit_id);
+
+
+--
+-- Name: image_cache_hash_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX image_cache_hash_idx ON public.image_cache USING spgist (hash public.bktree_ops);
+
+
+--
+-- Name: images_hash_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX images_hash_idx ON public.images USING spgist (hash public.bktree_ops);
 
 
 --

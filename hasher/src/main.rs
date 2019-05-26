@@ -41,7 +41,7 @@ fn download_search(search: PushShiftSearch) -> Result<(), ()> {
                 .replace("&amp;", "&")
                 .replace("&lt;", "<")
                 .replace("&gt;", ">");
-            match get_hash(post.url.clone()) {
+            match get_hash(&post.url) {
                 Ok((_hash, image_id, exists)) => {
                     if exists {
                         info!("{} already exists", post.url);

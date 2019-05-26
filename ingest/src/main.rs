@@ -63,12 +63,12 @@ fn ingest_json<R: Read + Send>(json_stream: R, min_skip: Option<i64>, max_skip: 
         Ok(Submission {
             id_int: i64::from_str_radix(&id, 36)
                 .map_err(|e| format_err!("Couldn't parse number from ID '{}': {}", &id, e))?,
-            id: id,
+            id,
             author: from_value(post["author"].take()).map_err(Error::from)?,
             created_utc: match post["created_utc"].take() {
                 Value::Number(n) => n
                     .as_i64()
-                    .ok_or(format_err!("'created_utc' is not a valid i64"))?,
+                    .ok_or_else(|| format_err!("'created_utc' is not a valid i64"))?,
                 Value::String(n) => n
                     .parse()
                     .map_err(|e| format_err!("'created_utc' can't be parsed as an i64: {}", e))?,
@@ -110,7 +110,7 @@ fn ingest_json<R: Read + Send>(json_stream: R, min_skip: Option<i64>, max_skip: 
                 .replace("&amp;", "&")
                 .replace("&lt;", "<")
                 .replace("&gt;", ">");
-            match get_hash(post.url.clone()) {
+            match get_hash(&post.url) {
                 Ok((_hash, image_id, exists)) => {
                     if exists {
                         info!("{} already exists", post.url);
@@ -153,26 +153,24 @@ fn main() -> Result<(), Error> {
     )
     .get_matches();
 
-    std::env::set_var("RAYON_NUM_THREADS", "8");
-
     for path in matches.values_of_lossy("PATHS").unwrap() {
         info!("Ingesting {}", &path);
 
-        let month: f64 = MONTH_RE
+        let month: i32 = MONTH_RE
             .captures(&path)
             .and_then(|caps| caps.get(1))
-            .ok_or(format_err!("couldn't find month in {}", path))
+            .ok_or_else(|| format_err!("couldn't find month in {}", path))
             .and_then(|m| m.as_str().parse().map_err(Error::from))?;
 
-        let year: f64 = YEAR_RE
+        let year: i32 = YEAR_RE
             .find(&path)
-            .ok_or(format_err!("couldn't find year in {}", path))
+            .ok_or_else(|| format_err!("couldn't find year in {}", path))
             .and_then(|m| m.as_str().parse().map_err(Error::from))?;
 
-        let (next_month, next_year) = if month == 12.0 {
-            (1.0, year + 1.0)
+        let (next_month, next_year) = if month == 12 {
+            (1, year + 1)
         } else {
-            (month + 1.0, year)
+            (month + 1, year)
         };
 
         if DB_POOL

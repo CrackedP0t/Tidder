@@ -21,6 +21,7 @@ reqwest = "*"
 toml = "*"
 cache_control = {path = "../cache_control"}
 phf = "*"
+serde_json = "^1.0.39"
 
 [build-dependencies]
 phf = "*"

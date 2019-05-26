@@ -6,12 +6,17 @@ use lazy_static::lazy_static;
 use log::{error, LevelFilter};
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use regex::Regex;
-use reqwest::{header, StatusCode};
+use reqwest::{header, Response, StatusCode};
 use serde::Deserialize;
+use serde_json::{to_string_pretty, Value};
 use std::fmt;
 use std::io::{BufReader, Read};
+use std::string::ToString;
 use tokio_postgres::{to_sql_checked, types, NoTls};
-use url::percent_encoding::{utf8_percent_encode, QUERY_ENCODE_SET};
+use url::{
+    percent_encoding::{utf8_percent_encode, QUERY_ENCODE_SET},
+    Url,
+};
 
 pub use failure::{self, format_err, Error};
 
@@ -27,7 +32,7 @@ include!(concat!(env!("OUT_DIR"), "/codegen.rs"));
 macro_rules! string {
     ($s:expr) => {
         String::from($s)
-    }
+    };
 }
 
 // Log Error, returning empty
@@ -202,6 +207,15 @@ pub struct GetHashFail {
     pub error: Error,
 }
 
+impl GetHashFail {
+    pub fn new(link: &str, error: Error) -> Self {
+        GetHashFail {
+            link: String::from(link),
+            error,
+        }
+    }
+}
+
 impl fmt::Display for Hash {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.0.fmt(f)
@@ -262,7 +276,7 @@ pub const IMAGE_MIMES: [&str; 11] = [
 macro_rules! map_ghf {
     ($link:expr) => {
         |e| GetHashFail {
-            link: $link.clone(),
+            link: $link.to_string(),
             error: Error::from(e),
         }
     };
@@ -280,7 +294,6 @@ pub fn hash_from_memory(image: &[u8]) -> Result<Hash, Error> {
 }
 
 pub fn get_hash(link: &str) -> Result<(Hash, i64, bool), GetHashFail> {
-    let link = link.to_string();
     lazy_static! {
         static ref REQW_CLIENT: reqwest::Client = reqwest::Client::new();
         static ref DB_POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> =
@@ -292,6 +305,80 @@ pub fn get_hash(link: &str) -> Result<(Hash, i64, bool), GetHashFail> {
             ))
             .unwrap();
     }
+
+    let url = Url::parse(link).map_err(map_ghf!(link))?;
+
+    let link = if let Some(host) = url.host_str() {
+        if host == "imgur.com" {
+            let mut path_segs = url.path_segments().ok_or_else(|| GetHashFail {
+                link: link.to_string(),
+                error: format_err!("Cannot-be-a-base URL"),
+            })?;
+            let first = path_segs.next().ok_or_else(|| GetHashFail {
+                link: link.to_string(),
+                error: format_err!("Base URL"),
+            })?;
+
+            match first {
+                "a" | "gallery" => {
+                    let hash = path_segs
+                        .next()
+                        .ok_or_else(|| GetHashFail::new(link, format_err!("No album hash")))?;
+                    let mut resp = REQW_CLIENT
+                        .get(&format!("https://api.imgur.com/3/album/{}/images", hash))
+                        .header(
+                            "Authorization",
+                            format!("Client-ID {}", SECRETS.imgur.client_id),
+                        )
+                        .send()
+                        .and_then(Response::error_for_status)
+                        .map_err(map_ghf!(link))?;
+
+                    let info: Value = resp.json().map_err(map_ghf!(link))?;
+
+                    info.get("data")
+                        .and_then(|data| data.get(0))
+                        .and_then(|image| image.get("link"))
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                        .ok_or_else(|| {
+                            GetHashFail::new(
+                                link,
+                                format_err!("Couldn't extract image from Imgur album"),
+                            )
+                        })?
+                }
+                hash => {
+                    let mut resp = REQW_CLIENT
+                        .get(&format!("https://api.imgur.com/3/image/{}", hash))
+                        .header(
+                            "Authorization",
+                            format!("Client-ID {}", SECRETS.imgur.client_id),
+                        )
+                        .send()
+                        .and_then(Response::error_for_status)
+                        .map_err(map_ghf!(link))?;
+
+                    let info: Value = resp.json().map_err(map_ghf!(link))?;
+
+                    info.get("data")
+                        .and_then(|data| data.get("link"))
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                        .ok_or_else(|| {
+                            GetHashFail::new(
+                                link,
+                                format_err!("Couldn't extract image from Imgur page"),
+                            )
+                        })?
+                }
+            }
+        } else {
+            link.to_string()
+        }
+    } else {
+        link.to_string()
+    };
 
     let mut client = DB_POOL.get().map_err(map_ghf!(link))?;
     let mut trans = client.transaction().map_err(map_ghf!(link))?;
@@ -310,7 +397,7 @@ pub fn get_hash(link: &str) -> Result<(Hash, i64, bool), GetHashFail> {
         return Ok(exists);
     }
 
-    let mut this_link = link.clone();
+    let mut this_link = link.to_string();
 
     let (resp, _format) = loop {
         let resp = REQW_CLIENT
@@ -426,7 +513,7 @@ pub fn get_hash(link: &str) -> Result<(Hash, i64, bool), GetHashFail> {
     match rows.get(0) {
         Some(row) => Ok((hash, row.try_get("id").map_err(map_ghf!(this_link))?, false)),
         None => get_existing()?
-            .ok_or(format_err!("Conflict but no existing match"))
+            .ok_or_else(|| format_err!("Conflict but no existing match"))
             .map_err(map_ghf!(this_link)),
     }
 }
@@ -475,7 +562,14 @@ pub mod secrets {
     use std::io::Read;
 
     #[derive(Debug, Deserialize)]
-    pub struct Secrets {}
+    pub struct Imgur {
+        pub client_id: String,
+        pub client_secret: String,
+    }
+    #[derive(Debug, Deserialize)]
+    pub struct Secrets {
+        pub imgur: Imgur,
+    }
 
     pub fn load() -> Result<Secrets, Error> {
         let mut s = String::new();
@@ -485,4 +579,8 @@ pub mod secrets {
             .map_err(Error::from)?;
         toml::from_str::<Secrets>(&s).map_err(Error::from)
     }
+}
+
+lazy_static! {
+    static ref SECRETS: secrets::Secrets = secrets::load().unwrap();
 }

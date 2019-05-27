@@ -120,7 +120,7 @@ fn ingest_json<R: Read + Send>(json_stream: R, min_skip: Option<i64>, max_skip: 
                     save_post(&DB_POOL, &post, image_id);
                 }
                 Err(ghf) => {
-                    let msg = format!("{}", ghf);
+                    let msg = ghf.to_string();
                     let ie = ghf.error;
                     if let Ok(sf) = ie.downcast::<StatusFail>() {
                         if sf.status != StatusCode::NOT_FOUND {

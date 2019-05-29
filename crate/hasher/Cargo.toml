@@ -9,7 +9,6 @@ default = ["error_lines"]
 error_lines = []
 
 [dependencies]
-image = "*"
 reqwest = "*"
 serde_json = "*"
 postgres = {version = "0.16.0-rc.1", features = ["with-chrono-0_4"]}

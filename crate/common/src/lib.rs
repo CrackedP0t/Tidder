@@ -79,7 +79,6 @@ pub struct Submission {
     pub id_int: i64,
     pub id: String,
     pub author: Option<String>,
-    // #[serde(deserialize_with)]
     pub created_utc: i64,
     pub is_self: bool,
     pub over_18: bool,
@@ -90,41 +89,6 @@ pub struct Submission {
     pub title: String,
     pub url: String,
 }
-
-// impl Submission {
-//     pub fn de_id<'de, D>(de: D) -> Result<i64, D::Error>
-//     where
-//         D: Deserializer<'de>,
-//     {
-//         struct DeIdVisitor {}
-
-//         impl<'de> Visitor<'de> for DeIdVisitor {
-//             type Value = String;
-
-//             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-//                 write!(formatter, "a string containing a valid int")
-//             }
-
-//             fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
-//             where
-//                 E: de::Error,
-//             {
-//                 return Ok(s.to_string());
-//             }
-//         }
-
-//         let v = DeIdVisitor {};
-
-//         de.deserialize_str(v)
-//             .and_then(|s| i64::from_str_radix(&s, 36).map_err(|e| D::Error::custom(e)))
-//     }
-
-//     pub fn str_or_int<'de, D>(de: D) -> Result<i64, D::Error>
-//     where
-//         D: Deserializer<'de>,
-//     {
-
-// }
 
 #[derive(Deserialize, Debug)]
 pub struct Hit {
@@ -245,8 +209,7 @@ pub fn dhash(img: DynamicImage) -> Hash {
 
     for y in 0..8 {
         for x in 0..8 {
-            let bit = ((small_img.get_pixel(x, y).data[0] > small_img.get_pixel(x + 1, y).data[0])
-                as u64)
+            let bit = ((small_img.get_pixel(x, y)[0] > small_img.get_pixel(x + 1, y)[0]) as u64)
                 << (x + y * 8);
             hash |= bit;
         }
@@ -309,12 +272,18 @@ impl HashDest {
 
 pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), GetHashFail> {
     lazy_static! {
-        static ref REQW_CLIENT: reqwest::Client = reqwest::Client::new();
+        static ref REQW_CLIENT: reqwest::Client = reqwest::Client::builder()
+            .timeout(Some(std::time::Duration::from_secs(5)))
+            .build()
+            .unwrap();
         static ref DB_POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> =
             r2d2::Pool::new(PostgresConnectionManager::new(
-                "dbname=tidder host=/run/postgresql user=postgres"
-                    .parse()
-                    .unwrap(),
+                format!(
+                    "dbname=tidder host=/run/postgresql user={}",
+                    SECRETS.postgres.username
+                )
+                .parse()
+                .unwrap(),
                 NoTls,
             ))
             .unwrap();
@@ -418,7 +387,7 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Ge
         return Ok(exists);
     }
 
-    let resp = REQW_CLIENT
+    let mut resp = REQW_CLIENT
         .get(&utf8_percent_encode(&link, QUERY_ENCODE_SET).collect::<String>())
         .header(header::ACCEPT, IMAGE_MIMES.join(","))
         .header(
@@ -430,7 +399,6 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Ge
 
     let status = resp.status();
 
-    // TODO: When image can parse janky webp images
     let _format = if status.is_success() {
         let url = resp.url();
         if url
@@ -466,29 +434,27 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Ge
 
     let now = chrono::offset::Utc::now().naive_utc();
 
-    let headers = resp.headers().clone();
-
     let mut image = Vec::<u8>::with_capacity(
-        headers
+        resp.headers()
             .get(header::CONTENT_LENGTH)
             .and_then(|hv| hv.to_str().ok())
             .and_then(|s| s.parse::<usize>().ok())
             .unwrap_or(2048),
     );
 
+    BufReader::new(resp.by_ref())
+        .read_to_end(&mut image)
+        .map_err(map_ghf!(link))?;
+
+    let hash = hash_from_memory(&image).map_err(map_ghf!(link))?;
+
+    let headers = resp.headers();
+
     let cc: Option<CacheControl> = headers
         .get(header::CACHE_CONTROL)
         .and_then(|hv| hv.to_str().ok())
         .and_then(|s| cache_control::from_str(s).ok());
     let cc = cc.as_ref();
-
-    {
-        BufReader::new(resp)
-            .read_to_end(&mut image)
-            .map_err(map_ghf!(link))?;
-    }
-
-    let hash = hash_from_memory(&image).map_err(map_ghf!(link))?;
 
     let mut client = DB_POOL.get().map_err(map_ghf!(link))?;
     let mut trans = client.transaction().map_err(map_ghf!(link))?;
@@ -583,13 +549,18 @@ pub mod secrets {
         pub client_secret: String,
     }
     #[derive(Debug, Deserialize)]
+    pub struct Postgres {
+        pub username: String,
+    }
+    #[derive(Debug, Deserialize)]
     pub struct Secrets {
         pub imgur: Imgur,
+        pub postgres: Postgres,
     }
 
     pub fn load() -> Result<Secrets, Error> {
         let mut s = String::new();
-        std::fs::File::open("secrets/secrets.toml")
+        std::fs::File::open("../secrets/secrets.toml")
             .map_err(Error::from)?
             .read_to_string(&mut s)
             .map_err(Error::from)?;
@@ -598,5 +569,5 @@ pub mod secrets {
 }
 
 lazy_static! {
-    static ref SECRETS: secrets::Secrets = secrets::load().unwrap();
+    pub static ref SECRETS: secrets::Secrets = secrets::load().unwrap();
 }

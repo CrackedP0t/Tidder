@@ -18,9 +18,12 @@ use std::iter::Iterator;
 lazy_static! {
     static ref DB_POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> =
         r2d2::Pool::new(PostgresConnectionManager::new(
-            "dbname=tidder host=/run/postgresql user=postgres"
-                .parse()
-                .unwrap(),
+            format!(
+                "dbname=tidder host=/run/postgresql user={}",
+                SECRETS.postgres.username
+            )
+            .parse()
+            .unwrap(),
             NoTls,
         ))
         .unwrap();
@@ -172,6 +175,11 @@ fn main() -> Result<(), Error> {
         } else {
             (month + 1, year)
         };
+
+        let month = month as f64;
+        let year = year as f64;
+        let next_month = next_month as f64;
+        let next_year = next_year as f64;
 
         if DB_POOL
             .get()

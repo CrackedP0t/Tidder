@@ -5,7 +5,7 @@ authors = ["Elaina Martineau <elainamartineau@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-image = "*"
+image = { git = "https://github.com/image-rs/image" }
 tokio-postgres = {version = "0.4.0-rc.2", features = ["with-chrono-0_4"]}
 url = "^1.7.2"
 futures = "*"
@@ -26,4 +26,4 @@ serde_json = "^1.0.39"
 [build-dependencies]
 phf = "*"
 phf_codegen = "*"
-image = "*"
+image = { git = "https://github.com/image-rs/image" }

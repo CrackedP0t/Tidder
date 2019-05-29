@@ -10,9 +10,12 @@ use std::env;
 lazy_static! {
     static ref DB_POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> =
         r2d2::Pool::new(PostgresConnectionManager::new(
-            "dbname=tidder host=/run/postgresql user=postgres"
-                .parse()
-                .unwrap(),
+            format!(
+                "dbname=tidder host=/run/postgresql user={}",
+                SECRETS.postgres.username
+            )
+            .parse()
+            .unwrap(),
             NoTls,
         ))
         .unwrap();

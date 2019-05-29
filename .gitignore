@@ -1,4 +1,4 @@
-/target
+crate/target
 **/*.rs.bk
 
 secrets/

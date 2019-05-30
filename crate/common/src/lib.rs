@@ -452,7 +452,7 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Ge
     let cc: Option<CacheControl> = headers
         .get(header::CACHE_CONTROL)
         .and_then(|hv| hv.to_str().ok())
-        .and_then(|s| cache_control::from_str(s).ok());
+        .and_then(|s| cache_control::with_str(s).ok());
     let cc = cc.as_ref();
 
     let mut client = DB_POOL.get().map_err(map_ghf!(link))?;

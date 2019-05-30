@@ -9,7 +9,8 @@ fn main() {
 
     write!(
         &mut file,
-        "static IMAGE_MIME_MAP: phf::Map<&'static str, image::ImageFormat> =
+        "#[allow(clippy::unreadable_literal)]
+static IMAGE_MIME_MAP: phf::Map<&'static str, image::ImageFormat> =
 "
     )
     .unwrap();

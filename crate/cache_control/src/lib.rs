@@ -7,7 +7,7 @@ pub fn is_token_char(c: char) -> bool {
     !"\"(),/:;<=>?@[\\]{}".contains(c)
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum Error {
     Message(String),
     Unexpected(char, String),
@@ -208,7 +208,7 @@ impl<'de> Deserializer<'de> {
             n *= 10.into();
             n += (c
                 .to_digit(10)
-                .ok_or(Error::Unexpected(c, "0..9".to_string()))? as u8)
+                .ok_or_else(|| Error::Unexpected(c, "0..9".to_string()))? as u8)
                 .into();
             self.input = chars.as_str();
         }
@@ -216,7 +216,7 @@ impl<'de> Deserializer<'de> {
         Ok(n)
     }
 
-    pub fn from_str(input: &'de str) -> Self {
+    pub fn with_str(input: &'de str) -> Self {
         Deserializer { input }
     }
 }
@@ -297,11 +297,11 @@ pub struct CacheControl {
     pub s_maxage: Option<u64>,
 }
 
-pub fn from_str<'a, T>(s: &'a str) -> Result<T>
+pub fn with_str<'a, T>(s: &'a str) -> Result<T>
 where
     T: Deserialize<'a>,
 {
-    let mut deserializer = Deserializer::from_str(s);
+    let mut deserializer = Deserializer::with_str(s);
     let t = T::deserialize(&mut deserializer)?;
     if deserializer.input.is_empty() {
         Ok(t)

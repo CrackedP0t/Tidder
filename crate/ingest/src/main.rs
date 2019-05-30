@@ -176,10 +176,10 @@ fn main() -> Result<(), Error> {
             (month + 1, year)
         };
 
-        let month = month as f64;
-        let year = year as f64;
-        let next_month = next_month as f64;
-        let next_year = next_year as f64;
+        let month = f64::from(month);
+        let year = f64::from(year);
+        let next_month = f64::from(next_month);
+        let next_year = f64::from(next_year);
 
         if DB_POOL
             .get()

@@ -75,7 +75,6 @@ pub const DEFAULT_DISTANCE: i64 = 1;
 
 #[derive(Deserialize, Debug)]
 pub struct Submission {
-    // #[serde(default)]
     pub id_int: i64,
     pub id: String,
     pub author: Option<String>,

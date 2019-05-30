@@ -1,8 +1,7 @@
 use bytes::Buf;
 use common::*;
 use fallible_iterator::FallibleIterator;
-use http::{Response, StatusCode};
-use hyper::{self, Body, HeaderMap};
+use hyper::{self, Body, HeaderMap, Response, StatusCode};
 use lazy_static::{lazy_static, LazyStatic};
 use multipart::server::Multipart;
 use postgres::NoTls;
@@ -13,7 +12,7 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::str::FromStr;
 use std::vec::Vec;
-use tera::Tera;
+use tera::{Context, Tera};
 use url::Url;
 use warp::path::{full, FullPath};
 use warp::{
@@ -441,7 +440,8 @@ fn get_response(qs: SearchQuery) -> Response<Body> {
     let out = get_search(qs)
         .map_err(|e| e.to_string())
         .and_then(|search| {
-            TERA.render_value("search.html", &search)
+            Context::from_serialize(search)
+                .and_then(|context| TERA.render("search.html", context))
                 .map_err(|e| e.to_string())
         });
 
@@ -462,7 +462,8 @@ fn post_response(headers: HeaderMap, body: FullBody) -> Response<Body> {
     let out = post_search(headers, body)
         .map_err(|e| e.to_string())
         .and_then(|search| {
-            TERA.render_value("search.html", &search)
+            Context::from_serialize(search)
+                .and_then(|context| TERA.render("search.html", context))
                 .map_err(|e| e.to_string())
         });
 

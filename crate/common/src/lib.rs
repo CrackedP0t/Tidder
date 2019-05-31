@@ -28,14 +28,6 @@ lazy_static! {
 
 include!(concat!(env!("OUT_DIR"), "/codegen.rs"));
 
-// Make a String from a &str
-#[macro_export]
-macro_rules! string {
-    ($s:expr) => {
-        String::from($s)
-    };
-}
-
 // Log Error, returning empty
 #[macro_export]
 macro_rules! le {
@@ -322,7 +314,7 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Ge
                             .next()
                             .and_then(|el| {
                                 Some(
-                                    string!("https://i.imgur.com/")
+                                    "https://i.imgur.com/".to_string()
                                         + el.value().attr("id")?
                                         + ".jpg",
                                 )

@@ -134,11 +134,11 @@ struct Form {
 impl Default for Form {
     fn default() -> Form {
         Form {
-            link: string!(""),
-            distance: string!("1"),
-            nsfw: string!("allow"),
-            subreddits: string!(""),
-            authors: string!(""),
+            link: "".to_string(),
+            distance: "1".to_string(),
+            nsfw: "allow".to_string(),
+            subreddits: "".to_string(),
+            authors: "".to_string(),
         }
     }
 }

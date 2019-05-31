@@ -532,7 +532,13 @@ pub fn setup_logging() {
         .level_for("ingest", LevelFilter::Info)
         .level_for("common", LevelFilter::Info)
         .chain(std::io::stderr())
-        .chain(fern::log_file("output.log").unwrap())
+        .chain(fern::log_file(
+            format!(
+                "output_{}.log",
+                chrono::Local::now().format("%Y-%m-%d_%H:%M:%S")
+            )
+            .unwrap(),
+        ))
         .apply()
         .unwrap();
 }

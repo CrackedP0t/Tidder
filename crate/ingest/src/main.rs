@@ -8,7 +8,7 @@ use postgres::NoTls;
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use rayon::prelude::*;
 use regex::Regex;
-use reqwest::{Client, StatusCode};
+use reqwest::{Client, StatusCode, Url};
 use serde_json::from_value;
 use serde_json::{Deserializer, Value};
 use std::fs::File;
@@ -96,7 +96,12 @@ fn ingest_json<R: Read + Send>(json_stream: R, min_skip: Option<i64>, max_skip: 
         .filter_map(|post| {
             let post = to_submission(post).map_err(le!()).ok()??;
             if !post.is_self
-                && EXT_RE.is_match(&post.url)
+                && (EXT_RE.is_match(&post.url)
+                    || Url::parse(&post.url)
+                        .ok()?
+                        .domain()
+                        .map(|d| d.ends_with("imgur.com"))
+                        .unwrap_or(false))
                 && min_skip
                     .map(|min_skip| post.id_int < min_skip)
                     .unwrap_or(true)

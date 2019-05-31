@@ -7,8 +7,8 @@ use log::{error, LevelFilter};
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use regex::Regex;
 use reqwest::{header, Response, StatusCode};
+use scraper::{Html, Selector};
 use serde::Deserialize;
-use serde_json::Value;
 use std::fmt;
 use std::io::{BufReader, Read};
 use std::string::ToString;
@@ -286,6 +286,7 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Ge
                 NoTls,
             ))
             .unwrap();
+        static ref IMGUR_SEL: Selector = Selector::parse(".post-image-container").unwrap();
     }
 
     let url = Url::parse(link).map_err(map_ghf!(link))?;
@@ -303,26 +304,23 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Ge
 
             match first {
                 "a" | "gallery" => {
-                    let hash = path_segs
-                        .next()
-                        .ok_or_else(|| GetHashFail::new(link, format_err!("no album hash")))?;
                     let mut resp = REQW_CLIENT
-                        .get(&format!("https://api.imgur.com/3/album/{}/images", hash))
-                        .header(
-                            "Authorization",
-                            format!("Client-ID {}", SECRETS.imgur.client_id),
-                        )
+                        .get(link)
                         .send()
                         .and_then(Response::error_for_status)
                         .map_err(map_ghf!(link))?;
 
-                    let info: Value = resp.json().map_err(map_ghf!(link))?;
+                    let mut doc_string = String::new();
 
-                    info.get("data")
-                        .and_then(|data| data.get(0))
-                        .and_then(|image| image.get("link"))
-                        .and_then(Value::as_str)
-                        .map(ToString::to_string)
+                    resp.read_to_string(&mut doc_string)
+                        .map_err(map_ghf!(link))?;
+
+                    Html::parse_document(&doc_string)
+                        .select(&IMGUR_SEL)
+                        .next()
+                        .and_then(|el| {
+                            Some(string!("https://i.imgur.com/") + el.value().attr("id")? + ".jpg")
+                        })
                         .ok_or_else(|| {
                             GetHashFail::new(
                                 link,
@@ -330,30 +328,7 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Ge
                             )
                         })?
                 }
-                hash => {
-                    let mut resp = REQW_CLIENT
-                        .get(&format!("https://api.imgur.com/3/image/{}", hash))
-                        .header(
-                            "Authorization",
-                            format!("Client-ID {}", SECRETS.imgur.client_id),
-                        )
-                        .send()
-                        .and_then(Response::error_for_status)
-                        .map_err(map_ghf!(link))?;
-
-                    let info: Value = resp.json().map_err(map_ghf!(link))?;
-
-                    info.get("data")
-                        .and_then(|data| data.get("link"))
-                        .and_then(Value::as_str)
-                        .map(ToString::to_string)
-                        .ok_or_else(|| {
-                            GetHashFail::new(
-                                link,
-                                format_err!("couldn't extract image from Imgur page"),
-                            )
-                        })?
-                }
+                hash => format!("https://i.imgur.com/{}.jpg", hash),
             }
         } else {
             link.to_string()

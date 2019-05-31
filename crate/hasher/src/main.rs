@@ -53,10 +53,9 @@ fn download_search(search: PushShiftSearch) -> Result<(), ()> {
                     }
                     save_post(&DB_POOL, &post, image_id);
                 }
-                Err(ghf) => {
-                    let msg = format!("{}", ghf);
-                    let ie = ghf.error;
-                    if let Ok(sf) = ie.downcast::<StatusFail>() {
+                Err(e) => {
+                    let msg = e.to_string();
+                    if let Ok(sf) = e.downcast::<StatusFail>() {
                         if sf.status != StatusCode::NOT_FOUND {
                             warn!("{}", msg);
                         }

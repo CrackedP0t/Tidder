@@ -156,22 +156,6 @@ pub struct StatusFail {
     pub status: StatusCode,
 }
 
-#[derive(Debug, Fail)]
-#[fail(display = "Getting {} failed: {}", link, error)]
-pub struct GetHashFail {
-    pub link: String,
-    pub error: Error,
-}
-
-impl GetHashFail {
-    pub fn new(link: &str, error: Error) -> Self {
-        GetHashFail {
-            link: String::from(link),
-            error,
-        }
-    }
-}
-
 impl fmt::Display for Hash {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.0.fmt(f)
@@ -228,15 +212,6 @@ pub const IMAGE_MIMES: [&str; 11] = [
     "image/vnd.radiance",
 ];
 
-macro_rules! map_ghf {
-    ($link:expr) => {
-        |e| GetHashFail {
-            link: $link.to_string(),
-            error: Error::from(e),
-        }
-    };
-}
-
 pub fn hash_from_memory(image: &[u8]) -> Result<Hash, Error> {
     Ok(dhash(
         // match format {
@@ -262,7 +237,7 @@ impl HashDest {
     }
 }
 
-pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), GetHashFail> {
+pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Error> {
     lazy_static! {
         static ref REQW_CLIENT: reqwest::Client = reqwest::Client::builder()
             .timeout(Some(std::time::Duration::from_secs(5)))
@@ -282,18 +257,14 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Ge
         static ref IMGUR_SEL: Selector = Selector::parse(".post-image-container").unwrap();
     }
 
-    let url = Url::parse(link).map_err(map_ghf!(link))?;
+    let url = Url::parse(link).map_err(Error::from)?;
 
     let link = if let Some(host) = url.host_str() {
         if host == "imgur.com" && !EXT_RE.is_match(&link) {
-            let mut path_segs = url.path_segments().ok_or_else(|| GetHashFail {
-                link: link.to_string(),
-                error: format_err!("cannot-be-a-base URL"),
-            })?;
-            let first = path_segs.next().ok_or_else(|| GetHashFail {
-                link: link.to_string(),
-                error: format_err!("base URL"),
-            })?;
+            let mut path_segs = url
+                .path_segments()
+                .ok_or_else(|| format_err!("cannot-be-a-base URL"))?;
+            let first = path_segs.next().ok_or_else(|| format_err!("base URL"))?;
 
             match first {
                 "a" | "gallery" => {
@@ -301,12 +272,11 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Ge
                         .get(link)
                         .send()
                         .and_then(Response::error_for_status)
-                        .map_err(map_ghf!(link))?;
+                        .map_err(Error::from)?;
 
                     let mut doc_string = String::new();
 
-                    resp.read_to_string(&mut doc_string)
-                        .map_err(map_ghf!(link))?;
+                    resp.read_to_string(&mut doc_string).map_err(Error::from)?;
 
                     Cow::Owned(
                         Html::parse_document(&doc_string)
@@ -320,10 +290,7 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Ge
                                 )
                             })
                             .ok_or_else(|| {
-                                GetHashFail::new(
-                                    link,
-                                    format_err!("couldn't extract image from Imgur album"),
-                                )
+                                format_err!("couldn't extract image from Imgur album")
                             })?,
                     )
                 }
@@ -336,8 +303,8 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Ge
         Cow::Borrowed(link)
     };
 
-    let mut client = DB_POOL.get().map_err(map_ghf!(link))?;
-    let mut trans = client.transaction().map_err(map_ghf!(link))?;
+    let mut client = DB_POOL.get().map_err(Error::from)?;
+    let mut trans = client.transaction().map_err(Error::from)?;
 
     let mut get_existing = || {
         trans
@@ -349,7 +316,7 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Ge
                 .as_str(),
                 &[&link],
             )
-            .map_err(map_ghf!(link))
+            .map_err(Error::from)
             .map(|rows| {
                 rows.get(0)
                     .map(|row| (Hash(row.get::<_, i64>("hash") as u64), row.get("id"), true))
@@ -368,7 +335,7 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Ge
             "Mozilla/5.0 (X11; Linux x86_64; rv:66.0) Gecko/20100101 Firefox/66.0",
         )
         .send()
-        .map_err(map_ghf!(link))?;
+        .map_err(Error::from)?;
 
     let status = resp.status();
 
@@ -380,29 +347,20 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Ge
             .unwrap_or(false)
             && url.path() == "/removed.png"
         {
-            return Err(GetHashFail {
-                link: link.to_string(),
-                error: format_err!("removed from Imgur"),
-            });
+            return Err(format_err!("removed from Imgur"));
         }
         resp.headers()
             .get(header::CONTENT_TYPE)
             .map(|ctype| {
-                let val = ctype.to_str().map_err(map_ghf!(link))?;
+                let val = ctype.to_str().map_err(Error::from)?;
                 match IMAGE_MIME_MAP.get(val) {
                     Some(format) => Ok(*format),
-                    None => Err(GetHashFail {
-                        link: link.to_string(),
-                        error: format_err!("got unsupported MIME type {}", val),
-                    }),
+                    None => Err(format_err!("got unsupported MIME type {}", val)),
                 }
             })
             .transpose()?
     } else {
-        return Err(GetHashFail {
-            link: link.to_string(),
-            error: Error::from(StatusFail { status }),
-        });
+        return Err(Error::from(StatusFail { status }));
     };
 
     let now = chrono::offset::Utc::now().naive_utc();
@@ -417,9 +375,9 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Ge
 
     BufReader::new(resp.by_ref())
         .read_to_end(&mut image)
-        .map_err(map_ghf!(link))?;
+        .map_err(Error::from)?;
 
-    let hash = hash_from_memory(&image).map_err(map_ghf!(link))?;
+    let hash = hash_from_memory(&image).map_err(Error::from)?;
 
     let headers = resp.headers();
 
@@ -429,8 +387,8 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Ge
         .and_then(|s| cache_control::with_str(s).ok());
     let cc = cc.as_ref();
 
-    let mut client = DB_POOL.get().map_err(map_ghf!(link))?;
-    let mut trans = client.transaction().map_err(map_ghf!(link))?;
+    let mut client = DB_POOL.get().map_err(Error::from)?;
+    let mut trans = client.transaction().map_err(Error::from)?;
     let rows = trans
         .query(
             format!(
@@ -461,15 +419,15 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Ge
                 &now,
             ],
         )
-        .map_err(map_ghf!(link))?;
+        .map_err(Error::from)?;
 
-    trans.commit().map_err(map_ghf!(link))?;
+    trans.commit().map_err(Error::from)?;
 
     match rows.get(0) {
-        Some(row) => Ok((hash, row.try_get("id").map_err(map_ghf!(link))?, false)),
+        Some(row) => Ok((hash, row.try_get("id").map_err(Error::from)?, false)),
         None => get_existing()?
             .ok_or_else(|| format_err!("conflict but no existing match"))
-            .map_err(map_ghf!(link)),
+            .map_err(Error::from),
     }
 }
 

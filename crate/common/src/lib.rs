@@ -9,6 +9,7 @@ use regex::Regex;
 use reqwest::{header, Response, StatusCode};
 use scraper::{Html, Selector};
 use serde::Deserialize;
+use std::borrow::Cow;
 use std::fmt;
 use std::io::{BufReader, Read};
 use std::string::ToString;
@@ -315,26 +316,32 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Ge
                     resp.read_to_string(&mut doc_string)
                         .map_err(map_ghf!(link))?;
 
-                    Html::parse_document(&doc_string)
-                        .select(&IMGUR_SEL)
-                        .next()
-                        .and_then(|el| {
-                            Some(string!("https://i.imgur.com/") + el.value().attr("id")? + ".jpg")
-                        })
-                        .ok_or_else(|| {
-                            GetHashFail::new(
-                                link,
-                                format_err!("couldn't extract image from Imgur album"),
-                            )
-                        })?
+                    Cow::Owned(
+                        Html::parse_document(&doc_string)
+                            .select(&IMGUR_SEL)
+                            .next()
+                            .and_then(|el| {
+                                Some(
+                                    string!("https://i.imgur.com/")
+                                        + el.value().attr("id")?
+                                        + ".jpg",
+                                )
+                            })
+                            .ok_or_else(|| {
+                                GetHashFail::new(
+                                    link,
+                                    format_err!("couldn't extract image from Imgur album"),
+                                )
+                            })?,
+                    )
                 }
-                hash => format!("https://i.imgur.com/{}.jpg", hash),
+                hash => Cow::Owned(format!("https://i.imgur.com/{}.jpg", hash)),
             }
         } else {
-            link.to_string()
+            Cow::Borrowed(link)
         }
     } else {
-        link.to_string()
+        Cow::Borrowed(link)
     };
 
     let mut client = DB_POOL.get().map_err(map_ghf!(link))?;

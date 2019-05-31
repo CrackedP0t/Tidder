@@ -131,13 +131,8 @@ fn ingest_json<R: Read + Send>(json_stream: R, min_skip: Option<i64>, max_skip: 
                     save_post(&DB_POOL, &post, image_id);
                 }
                 Err(e) => {
-                    let msg = e.to_string();
-                    if let Ok(sf) = e.downcast::<StatusFail>() {
-                        if sf.status != StatusCode::NOT_FOUND {
-                            warn!("{} failed: {}", post.url, msg);
-                        }
-                    } else {
-                        warn!("{} failed: {}", post.url, msg);
+                    if e.downcast_ref::<StatusFail>().map(|sf| sf.status != StatusCode::NOT_FOUND).unwrap_or(true) {
+                        warn!("{} failed: {}", post.url, e);
                     }
                 }
             }

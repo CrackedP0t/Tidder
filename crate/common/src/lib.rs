@@ -291,7 +291,7 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Ge
     let url = Url::parse(link).map_err(map_ghf!(link))?;
 
     let link = if let Some(host) = url.host_str() {
-        if host == "imgur.com" {
+        if host == "imgur.com" && !EXT_RE.is_match(&link) {
             let mut path_segs = url.path_segments().ok_or_else(|| GetHashFail {
                 link: link.to_string(),
                 error: format_err!("cannot-be-a-base URL"),

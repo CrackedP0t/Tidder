@@ -61,9 +61,13 @@ fn ingest_json<R: Read + Send>(json_stream: R, min_skip: Option<i64>, max_skip: 
 
     let check_json = Check::new(json_iter);
 
-    let to_submission = |mut post: Value| -> Result<Submission, Error> {
+    let to_submission = |mut post: Value| -> Result<Option<Submission>, Error> {
+        let promo = post["promoted"].take();
+        if !promo.is_null() && from_value(promo).map_err(Error::from)? {
+            return Ok(None);
+        }
         let id: String = from_value(post["id"].take()).map_err(Error::from)?;
-        Ok(Submission {
+        Ok(Some(Submission {
             id_int: i64::from_str_radix(&id, 36)
                 .map_err(|e| format_err!("Couldn't parse number from ID '{}': {}", &id, e))?,
             id,
@@ -85,21 +89,20 @@ fn ingest_json<R: Read + Send>(json_stream: R, min_skip: Option<i64>, max_skip: 
             subreddit: from_value(post["subreddit"].take()).map_err(Error::from)?,
             title: from_value(post["title"].take()).map_err(Error::from)?,
             url: from_value(post["url"].take()).map_err(Error::from)?,
-        })
+        }))
     };
 
     check_json
         .filter_map(|post| {
-            let post = to_submission(post).map_err(le!()).ok()?;
-
+            let post = to_submission(post).map_err(le!()).ok()??;
             if !post.is_self
                 && EXT_RE.is_match(&post.url)
                 && min_skip
-                    .map(|min_skip| post.id_int < min_skip)
-                    .unwrap_or(true)
+                .map(|min_skip| post.id_int < min_skip)
+                .unwrap_or(true)
                 && max_skip
-                    .map(|max_skip| post.id_int > max_skip)
-                    .unwrap_or(true)
+                .map(|max_skip| post.id_int > max_skip)
+                .unwrap_or(true)
             {
                 Some(post)
             } else {

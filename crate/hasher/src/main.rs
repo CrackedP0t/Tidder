@@ -3,7 +3,6 @@ use lazy_static::lazy_static;
 use log::{error, info, warn};
 use postgres::{self, NoTls};
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
-use reqwest::StatusCode;
 use serde_json::json;
 use std::env;
 
@@ -53,15 +52,8 @@ fn download_search(search: PushShiftSearch) -> Result<(), ()> {
                     }
                     save_post(&DB_POOL, &post, image_id);
                 }
-                Err(e) => {
-                    let msg = e.to_string();
-                    if let Ok(sf) = e.downcast::<StatusFail>() {
-                        if sf.status != StatusCode::NOT_FOUND {
-                            warn!("{}", msg);
-                        }
-                    } else {
-                        warn!("{}", msg);
-                    }
+                Err(ue) => {
+                    warn!("{} failed: {}", post.url, ue.error);
                 }
             }
         });

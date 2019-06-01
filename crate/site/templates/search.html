@@ -215,7 +215,7 @@
              }
             </script>
             {% if error %}
-                <p>Error: {{ error }}</p>
+                <p>Error: {{ error.user_msg }}</p>
             {% elif findings is not null %}
                 <p>
                     {{ findings.matches | length }} {{ findings.matches | length | plural(singular="match", plural="matches") }} for {{ " " }}

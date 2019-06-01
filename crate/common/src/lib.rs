@@ -1,16 +1,15 @@
 use cache_control::CacheControl;
 use chrono::{DateTime, NaiveDateTime};
-use failure::Fail;
 use image::{imageops, load_from_memory, DynamicImage};
 use lazy_static::lazy_static;
-use log::{error, LevelFilter};
+use log::LevelFilter;
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use regex::Regex;
-use reqwest::{header, Response, StatusCode};
+use reqwest::{header, Response, StatusCode as SC};
 use scraper::{Html, Selector};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize, Serializer};
 use std::borrow::Cow;
-use std::fmt;
+use std::fmt::{self, Debug, Display, Formatter};
 use std::io::{BufReader, Read};
 use std::string::ToString;
 use tokio_postgres::{to_sql_checked, types, NoTls};
@@ -20,6 +19,7 @@ use url::{
 };
 
 pub use failure::{self, format_err, Error};
+pub use log::error;
 
 lazy_static! {
     pub static ref EXT_RE: Regex =
@@ -44,24 +44,87 @@ macro_rules! lei {
     };
 }
 
-// Log error, returning Error::From
-#[macro_export]
-macro_rules! lef {
-    () => {
-        |e| {
-            error!("{}", e);
-            Error::from(e)
-        }
-    };
+#[derive(Debug, Serialize)]
+pub struct UserError {
+    pub user_msg: String,
+    #[serde(serialize_with = "UserError::serialize_status_code")]
+    pub status_code: SC,
+    #[serde(skip)]
+    pub error: Error,
 }
 
-// Log custom error, returning Format_Err!
+impl UserError {
+    #[allow(clippy::trivially_copy_pass_by_ref)]
+    pub fn serialize_status_code<S>(sc: &SC, ser: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        ser.serialize_u16(sc.as_u16())
+    }
+    pub fn new<M: ToString, E: Into<Error>>(user_msg: M, error: E) -> Self {
+        Self {
+            status_code: SC::OK,
+            user_msg: user_msg.to_string(),
+            error: error.into(),
+        }
+    }
+    pub fn new_sc<M: ToString, E: Into<Error>>(user_msg: M, status_code: SC, error: E) -> Self {
+        Self {
+            status_code,
+            user_msg: user_msg.to_string(),
+            error: error.into(),
+        }
+    }
+    pub fn new_msg<M: Display + Debug + Send + Sync + 'static>(user_msg: M) -> Self {
+        Self {
+            status_code: SC::OK,
+            user_msg: user_msg.to_string(),
+            error: failure::err_msg(user_msg),
+        }
+    }
+    pub fn new_msg_sc<M: Display + Debug + Send + Sync + 'static>(
+        user_msg: M,
+        status_code: SC,
+    ) -> Self {
+        Self {
+            status_code,
+            user_msg: user_msg.to_string(),
+            error: failure::err_msg(user_msg),
+        }
+    }
+    pub fn from_std<E: std::error::Error + Send + Sync + 'static>(error: E) -> Self {
+        Self {
+            status_code: SC::INTERNAL_SERVER_ERROR,
+            user_msg: "internal error".to_string(),
+            error: error.into(),
+        }
+    }
+}
+
+impl From<Error> for UserError {
+    fn from(error: Error) -> Self {
+        Self {
+            status_code: SC::INTERNAL_SERVER_ERROR,
+            user_msg: "internal error".to_string(),
+            error,
+        }
+    }
+}
+
+impl Display for UserError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        Display::fmt(&self.error, f)
+    }
+}
+
 #[macro_export]
-macro_rules! lfe {
-    ($fs:expr $(,$args:expr)*) => {{
-        error!($fs, $($args),*);
-        format_err!($fs, $($args),*)
-    }};
+macro_rules! map_ue {
+    ($user_msg:expr) => {
+        |e| UserError::new($user_msg, Error::from(e))
+    };
+    ($user_msg:expr, $sc:expr) => {
+        |e| UserError::new_sc($user_msg, $sc, Error::from(e))
+    };
 }
 
 pub const DEFAULT_DISTANCE: i64 = 1;
@@ -150,15 +213,9 @@ pub fn save_post(
 #[derive(Debug)]
 pub struct Hash(u64);
 
-#[derive(Debug, Fail)]
-#[fail(display = "Got error status {}", status)]
-pub struct StatusFail {
-    pub status: StatusCode,
-}
-
-impl fmt::Display for Hash {
+impl Display for Hash {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.0.fmt(f)
+        Display::fmt(&self.0, f)
     }
 }
 
@@ -212,14 +269,14 @@ pub const IMAGE_MIMES: [&str; 11] = [
     "image/vnd.radiance",
 ];
 
-pub fn hash_from_memory(image: &[u8]) -> Result<Hash, Error> {
+pub fn hash_from_memory(image: &[u8]) -> Result<Hash, UserError> {
     Ok(dhash(
         // match format {
         //     Some(format) => load_from_memory_with_format(&file, format),
         // None =>
         load_from_memory(&image)
             // }
-            .map_err(Error::from)?,
+            .map_err(map_ue!("invalid image"))?,
     ))
 }
 
@@ -237,7 +294,7 @@ impl HashDest {
     }
 }
 
-pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Error> {
+pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), UserError> {
     lazy_static! {
         static ref REQW_CLIENT: reqwest::Client = reqwest::Client::builder()
             .timeout(Some(std::time::Duration::from_secs(5)))
@@ -257,14 +314,25 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Er
         static ref IMGUR_SEL: Selector = Selector::parse(".post-image-container").unwrap();
     }
 
-    let url = Url::parse(link).map_err(Error::from)?;
+    let error_for_status_ue = |e: reqwest::Error| {
+        let msg = match e.status() {
+            None => Cow::Borrowed("recieved error status from image host"),
+            Some(sc) => Cow::Owned(format!("recieved error status from image host: {}", sc)),
+        };
+
+        UserError::new(msg, e)
+    };
+
+    let url = Url::parse(link).map_err(map_ue!("invalid URL", SC::BAD_REQUEST))?;
 
     let link = if let Some(host) = url.host_str() {
         if host == "imgur.com" && !EXT_RE.is_match(&link) {
             let mut path_segs = url
                 .path_segments()
-                .ok_or_else(|| format_err!("cannot-be-a-base URL"))?;
-            let first = path_segs.next().ok_or_else(|| format_err!("base URL"))?;
+                .ok_or_else(|| UserError::new_msg_sc("cannot-be-a-base URL", SC::BAD_REQUEST))?;
+            let first = path_segs
+                .next()
+                .ok_or_else(|| UserError::new_msg_sc("base URL", SC::BAD_REQUEST))?;
 
             match first {
                 "a" | "gallery" => {
@@ -272,7 +340,7 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Er
                         .get(link)
                         .send()
                         .and_then(Response::error_for_status)
-                        .map_err(Error::from)?;
+                        .map_err(error_for_status_ue)?;
 
                     let mut doc_string = String::new();
 
@@ -290,7 +358,7 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Er
                                 )
                             })
                             .ok_or_else(|| {
-                                format_err!("couldn't extract image from Imgur album")
+                                UserError::new_msg("couldn't extract image from Imgur album")
                             })?,
                     )
                 }
@@ -335,33 +403,30 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Er
             "Mozilla/5.0 (X11; Linux x86_64; rv:66.0) Gecko/20100101 Firefox/66.0",
         )
         .send()
-        .map_err(Error::from)?;
+        .map_err(map_ue!("couldn't connect to image host"))?;
 
-    let status = resp.status();
+    resp.error_for_status_ref().map_err(error_for_status_ue)?;
 
-    let _format = if status.is_success() {
-        let url = resp.url();
-        if url
-            .host_str()
-            .map(|host| host == "i.imgur.com")
-            .unwrap_or(false)
-            && url.path() == "/removed.png"
-        {
-            return Err(format_err!("removed from Imgur"));
-        }
-        resp.headers()
-            .get(header::CONTENT_TYPE)
-            .map(|ctype| {
-                let val = ctype.to_str().map_err(Error::from)?;
-                match IMAGE_MIME_MAP.get(val) {
-                    Some(format) => Ok(*format),
-                    None => Err(format_err!("got unsupported MIME type {}", val)),
-                }
-            })
-            .transpose()?
-    } else {
-        return Err(Error::from(StatusFail { status }));
-    };
+    let url = resp.url();
+    if url
+        .host_str()
+        .map(|host| host == "i.imgur.com")
+        .unwrap_or(false)
+        && url.path() == "/removed.png"
+    {
+        return Err(UserError::new_msg("removed from Imgur"));
+    }
+
+    // resp.headers()
+    //     .get(header::CONTENT_TYPE)
+    //     .map(|ctype| {
+    //         let val = ctype.to_str().map_err(Error::from)?;
+    //         match IMAGE_MIME_MAP.get(val) {
+    //             Some(format) => Ok(*format),
+    //             None => Err(format_err!("got unsupported MIME type {}", val)),
+    //         }
+    //     })
+    //     .transpose()?
 
     let now = chrono::offset::Utc::now().naive_utc();
 
@@ -377,7 +442,7 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Er
         .read_to_end(&mut image)
         .map_err(Error::from)?;
 
-    let hash = hash_from_memory(&image).map_err(Error::from)?;
+    let hash = hash_from_memory(&image)?;
 
     let headers = resp.headers();
 
@@ -426,8 +491,7 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Er
     match rows.get(0) {
         Some(row) => Ok((hash, row.try_get("id").map_err(Error::from)?, false)),
         None => get_existing()?
-            .ok_or_else(|| format_err!("conflict but no existing match"))
-            .map_err(Error::from),
+            .ok_or_else(|| UserError::from(format_err!("conflict but no existing match"))),
     }
 }
 

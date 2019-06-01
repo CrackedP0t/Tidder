@@ -1,7 +1,7 @@
 use bytes::Buf;
 use common::*;
 use fallible_iterator::FallibleIterator;
-use hyper::{self, Body, HeaderMap, Response, StatusCode};
+use hyper::{self, Body, HeaderMap, Response, StatusCode as SC};
 use lazy_static::{lazy_static, LazyStatic};
 use multipart::server::Multipart;
 use postgres::NoTls;
@@ -148,7 +148,7 @@ struct Search {
     form: Form,
     default_form: Form,
     findings: Option<Findings>,
-    error: Option<String>,
+    error: Option<UserError>,
     upload: bool,
 }
 
@@ -173,14 +173,19 @@ struct Params {
 }
 
 impl Params {
-    pub fn from_form(form: &Form) -> Result<Params, Error> {
+    pub fn from_form(form: &Form) -> Result<Params, UserError> {
         Ok(Params {
             distance: if form.distance.is_empty() {
                 1
             } else {
-                form.distance.parse().map_err(Error::from)?
+                form.distance
+                    .parse()
+                    .map_err(map_ue!("invalid distance parameter", SC::BAD_REQUEST))?
             },
-            nsfw: form.nsfw.parse().map_err(Error::from)?,
+            nsfw: form
+                .nsfw
+                .parse()
+                .map_err(map_ue!("invalid nsfw parameter", SC::BAD_REQUEST))?,
             subreddits: form
                 .subreddits
                 .split_whitespace()
@@ -201,7 +206,7 @@ fn reply_not_found(path: FullPath) -> impl Reply {
             "<h1>Error 404: Not Found</h1><h2>{}</h2>",
             path.as_str()
         )),
-        StatusCode::NOT_FOUND,
+        SC::NOT_FOUND,
     )
 }
 
@@ -231,95 +236,98 @@ lazy_static! {
     };
 }
 
-fn make_findings(hash: Hash, params: Params) -> Result<Findings, Error> {
+fn make_findings(hash: Hash, params: Params) -> Result<Findings, UserError> {
     macro_rules! tosql {
         ($v:expr) => {
             (&$v as &dyn postgres::types::ToSql)
         };
     }
 
-    let matches = POOL.get().map_err(Error::from).and_then(|mut conn| {
-        let (s_query, a_query, args) = if params.subreddits.is_empty() && params.authors.is_empty()
-        {
-            ("", "", vec![tosql!(hash), tosql!(params.distance)])
-        } else if params.authors.is_empty() {
-            (
-                "AND LOWER(subreddit) = ANY($3)",
-                "",
-                vec![
-                    tosql!(hash),
-                    tosql!(params.distance),
-                    tosql!(params.subreddits),
-                ],
+    let matches = POOL
+        .get()
+        .map_err(UserError::from_std)
+        .and_then(|mut conn| {
+            let (s_query, a_query, args) =
+                if params.subreddits.is_empty() && params.authors.is_empty() {
+                    ("", "", vec![tosql!(hash), tosql!(params.distance)])
+                } else if params.authors.is_empty() {
+                    (
+                        "AND LOWER(subreddit) = ANY($3)",
+                        "",
+                        vec![
+                            tosql!(hash),
+                            tosql!(params.distance),
+                            tosql!(params.subreddits),
+                        ],
+                    )
+                } else if params.subreddits.is_empty() {
+                    (
+                        "",
+                        "AND LOWER(author) = ANY($3)",
+                        vec![
+                            tosql!(hash),
+                            tosql!(params.distance),
+                            tosql!(params.authors),
+                        ],
+                    )
+                } else {
+                    (
+                        "AND LOWER(subreddit) = ANY($3)",
+                        "AND LOWER(author) = ANY($4)",
+                        vec![
+                            tosql!(hash),
+                            tosql!(params.distance),
+                            tosql!(params.subreddits),
+                            tosql!(params.authors),
+                        ],
+                    )
+                };
+            conn.query_iter(
+                format_args!(
+                    "SELECT hash <-> $1 as distance, posts.link, permalink, \
+                     score, author, created_utc, subreddit, title \
+                     FROM posts INNER JOIN images \
+                     ON hash <@ ($1, $2) \
+                     AND image_id = images.id \
+                     {} \
+                     {} \
+                     {} \
+                     ORDER BY distance ASC, created_utc ASC",
+                    match params.nsfw {
+                        NSFWOption::Only => "AND nsfw = true",
+                        NSFWOption::Allow => "",
+                        NSFWOption::Never => "AND nsfw = false",
+                    },
+                    s_query,
+                    a_query
+                )
+                .to_string()
+                .as_str(),
+                &args,
             )
-        } else if params.subreddits.is_empty() {
-            (
-                "",
-                "AND LOWER(author) = ANY($3)",
-                vec![
-                    tosql!(hash),
-                    tosql!(params.distance),
-                    tosql!(params.authors),
-                ],
-            )
-        } else {
-            (
-                "AND LOWER(subreddit) = ANY($3)",
-                "AND LOWER(author) = ANY($4)",
-                vec![
-                    tosql!(hash),
-                    tosql!(params.distance),
-                    tosql!(params.subreddits),
-                    tosql!(params.authors),
-                ],
-            )
-        };
-        conn.query_iter(
-            format_args!(
-                "SELECT hash <-> $1 as distance, posts.link, permalink, \
-                 score, author, created_utc, subreddit, title \
-                 FROM posts INNER JOIN images \
-                 ON hash <@ ($1, $2) \
-                 AND image_id = images.id \
-                 {} \
-                 {} \
-                 {} \
-                 ORDER BY distance ASC, created_utc ASC",
-                match params.nsfw {
-                    NSFWOption::Only => "AND nsfw = true",
-                    NSFWOption::Allow => "",
-                    NSFWOption::Never => "AND nsfw = false",
-                },
-                s_query,
-                a_query
-            )
-            .to_string()
-            .as_str(),
-            &args,
-        )
-        .map_err(Error::from)
-        .and_then(|rows| {
-            rows.map(move |row| {
-                Ok(Match {
-                    permalink: format!("https://reddit.com{}", row.get::<_, &str>("permalink")),
-                    distance: row.get("distance"),
-                    score: row.get("score"),
-                    author: row.get("author"),
-                    link: row.get("link"),
-                    created_utc: row.get("created_utc"),
-                    subreddit: row.get("subreddit"),
-                    title: row.get("title"),
+            .map_err(UserError::from_std)
+            .and_then(|rows| {
+                rows.map(move |row| {
+                    Ok(Match {
+                        permalink: format!("https://reddit.com{}", row.get::<_, &str>("permalink")),
+                        distance: row.get("distance"),
+                        score: row.get("score"),
+                        author: row.get("author"),
+                        link: row.get("link"),
+                        created_utc: row.get("created_utc"),
+                        subreddit: row.get("subreddit"),
+                        title: row.get("title"),
+                    })
                 })
+                .collect()
+                .map_err(UserError::from_std)
             })
-            .collect()
-            .map_err(Error::from)
-        })
-    });
+        });
 
     matches.map(|matches| Findings { matches })
 }
 
-fn get_search(qs: SearchQuery) -> Result<Search, Error> {
+fn get_search(qs: SearchQuery) -> Search {
     let imagelink = qs.imagelink.clone();
 
     let default_form = Form::default();
@@ -334,11 +342,15 @@ fn get_search(qs: SearchQuery) -> Result<Search, Error> {
     let findings = imagelink
         .and_then(|link| {
             if &link != "" {
-                Some(Url::parse(&link).map_err(Error::from).and_then(|_| {
-                    let params = Params::from_form(&form)?;
-                    let (hash, _image_id, _exists) = get_hash(&link, HashDest::ImageCache)?;
-                    make_findings(hash, params)
-                }))
+                Some(
+                    Url::parse(&link)
+                        .map_err(map_ue!("invalid URL"))
+                        .and_then(|_| {
+                            let params = Params::from_form(&form)?;
+                            let (hash, _image_id, _exists) = get_hash(&link, HashDest::ImageCache)?;
+                            make_findings(hash, params)
+                        }),
+                )
             } else {
                 None
             }
@@ -350,16 +362,16 @@ fn get_search(qs: SearchQuery) -> Result<Search, Error> {
         Err(error) => (None, Some(error)),
     };
 
-    Ok(Search {
+    Search {
         form: form.clone(),
-        error: error.map(|e| e.to_string()),
+        error,
         findings,
         upload: false,
         ..Default::default()
-    })
+    }
 }
 
-fn post_search(headers: HeaderMap, body: FullBody) -> Result<Search, Error> {
+fn post_search(headers: HeaderMap, body: FullBody) -> Search {
     #[allow(clippy::ptr_arg)]
     fn utf8_to_string(utf8: &Vec<u8>) -> String {
         String::from_utf8_lossy(utf8.as_slice()).to_string()
@@ -371,20 +383,29 @@ fn post_search(headers: HeaderMap, body: FullBody) -> Result<Search, Error> {
 
     let output = headers
         .get("Content-Type")
-        .ok_or_else(|| format_err!("No Content-Type header supplied"))
+        .ok_or_else(|| UserError::new_msg_sc("no Content-Type header supplied", SC::BAD_REQUEST))
         .and_then(|header_value| {
             let boundary = BOUNDARY_RE
-                .captures(header_value.to_str().map_err(Error::from)?)
+                .captures(
+                    header_value
+                        .to_str()
+                        .map_err(map_ue!("invalid header", SC::BAD_REQUEST))?,
+                )
                 .and_then(|captures| captures.get(1))
                 .map(|capture| capture.as_str())
-                .ok_or_else(|| format_err!("No boundary in Content-Type"))?;
+                .ok_or_else(|| {
+                    UserError::new_msg_sc("no boundary in Content-Type", SC::BAD_REQUEST)
+                })?;
 
             let mut mp = Multipart::with_body(body.reader(), boundary);
             let mut map: HashMap<String, Vec<u8>> = HashMap::new();
 
             while let Ok(Some(mut field)) = mp.read_entry() {
                 let mut data = Vec::new();
-                field.data.read_to_end(&mut data).map_err(Error::from)?;
+                field
+                    .data
+                    .read_to_end(&mut data)
+                    .map_err(map_ue!("request too large", SC::PAYLOAD_TOO_LARGE))?;
                 map.insert(field.headers.name.to_string(), data);
             }
 
@@ -427,56 +448,51 @@ fn post_search(headers: HeaderMap, body: FullBody) -> Result<Search, Error> {
         Err(error) => (Form::default(), None, Some(error)),
     };
 
-    Ok(Search {
+    Search {
         form,
-        error: error.map(|e| e.to_string()),
+        error,
         findings,
         upload: true,
         ..Default::default()
-    })
+    }
 }
 
 fn get_response(qs: SearchQuery) -> Response<Body> {
-    let out = get_search(qs)
-        .map_err(|e| e.to_string())
-        .and_then(|search| {
-            Context::from_serialize(search)
-                .and_then(|context| TERA.render("search.html", context))
-                .map_err(|e| e.to_string())
-        });
+    let search = get_search(qs);
+    let out = Context::from_serialize(&search)
+        .and_then(|context| TERA.render("search.html", context))
+        .map_err(le!());
 
-    let error = out.is_err();
-
-    let out = out.unwrap_or_else(|e| {
-        format_args!("<h1>Error 500: Internal Server Error</h1><h2>{}</h2>", e).to_string()
-    });
+    let (page, status) = match out {
+        Ok(page) => (page,
+                     search.error.map(|ue| ue.status_code).unwrap_or(SC::OK)),
+        Err(_) => ("<h1>Error 500: Internal Server Error</h1>".to_string(), SC::INTERNAL_SERVER_ERROR)
+    };
 
     Response::builder()
-        .status(if error { 500 } else { 200 })
+        .status(status)
         .header("Content-Type", "text/html")
-        .body(Body::from(out))
+        .body(Body::from(page))
         .unwrap()
 }
 
 fn post_response(headers: HeaderMap, body: FullBody) -> Response<Body> {
-    let out = post_search(headers, body)
-        .map_err(|e| e.to_string())
-        .and_then(|search| {
-            Context::from_serialize(search)
-                .and_then(|context| TERA.render("search.html", context))
-                .map_err(|e| e.to_string())
-        });
+    let search = post_search(headers, body);
 
-    let error = out.is_err();
+    let out = Context::from_serialize(&search)
+        .and_then(|context| TERA.render("search.html", context))
+        .map_err(le!());
 
-    let out = out.unwrap_or_else(|e| {
-        format_args!("<h1>Error 500: Internal Server Error</h1><h2>{}</h2>", e).to_string()
-    });
+    let (page, status) = match out {
+        Ok(page) => (page,
+                     search.error.map(|ue| ue.status_code).unwrap_or(SC::OK)),
+        Err(_) => ("<h1>Error 500: Internal Server Error</h1>".to_string(), SC::INTERNAL_SERVER_ERROR)
+    };
 
     Response::builder()
-        .status(if error { 500 } else { 200 })
+        .status(status)
         .header("Content-Type", "text/html")
-        .body(Body::from(out))
+        .body(Body::from(page))
         .unwrap()
 }
 

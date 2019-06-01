@@ -8,7 +8,7 @@ use postgres::NoTls;
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use rayon::prelude::*;
 use regex::Regex;
-use reqwest::{Client, StatusCode, Url};
+use reqwest::{Client, Url};
 use serde_json::from_value;
 use serde_json::{Deserializer, Value};
 use std::fs::File;
@@ -130,10 +130,8 @@ fn ingest_json<R: Read + Send>(json_stream: R, min_skip: Option<i64>, max_skip: 
                     }
                     save_post(&DB_POOL, &post, image_id);
                 }
-                Err(e) => {
-                    if e.downcast_ref::<StatusFail>().map(|sf| sf.status != StatusCode::NOT_FOUND).unwrap_or(true) {
-                        warn!("{} failed: {}", post.url, e);
-                    }
+                Err(ue) => {
+                    warn!("{} failed: {}", post.url, ue.error);
                 }
             }
         });

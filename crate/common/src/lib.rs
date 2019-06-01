@@ -26,8 +26,6 @@ lazy_static! {
         Regex::new(r"\W(?:png|jpe?g|gif|webp|p[bgpn]m|tiff?|bmp|ico|hdr)\b").unwrap();
 }
 
-include!(concat!(env!("OUT_DIR"), "/codegen.rs"));
-
 // Log Error, returning empty
 #[macro_export]
 macro_rules! le {

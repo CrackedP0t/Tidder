@@ -5,7 +5,10 @@ use lazy_static::lazy_static;
 use log::LevelFilter;
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use regex::Regex;
-use reqwest::{header, Response, StatusCode as SC};
+use reqwest::{
+    header::{self, HeaderMap},
+    Response, StatusCode as SC,
+};
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize, Serializer};
 use std::borrow::Cow;
@@ -292,22 +295,46 @@ impl HashDest {
     }
 }
 
-pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), UserError> {
+lazy_static! {
+    static ref DB_POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> =
+        r2d2::Pool::new(PostgresConnectionManager::new(
+            format!(
+                "dbname=tidder host=/run/postgresql user={}",
+                SECRETS.postgres.username
+            )
+            .parse()
+            .unwrap(),
+            NoTls,
+        ))
+        .unwrap();
+}
+
+pub enum GetKind {
+    Cache(i64),
+    Request(HeaderMap),
+}
+
+fn get_existing(link: &str) -> Result<Option<(Hash, i64)>, UserError> {
+    let mut client = DB_POOL.get().map_err(Error::from)?;
+    let mut trans = client.transaction().map_err(Error::from)?;
+
+    trans
+        .query(
+            "SELECT hash, id FROM images WHERE link=$1",
+            &[&link],
+        )
+        .map_err(UserError::from_std)
+        .map(|rows| {
+            rows.get(0)
+                .map(|row| (Hash(row.get::<_, i64>("hash") as u64), row.get("id")))
+        })
+}
+
+pub fn get_hash(link: &str) -> Result<(Hash, GetKind), UserError> {
     lazy_static! {
         static ref REQW_CLIENT: reqwest::Client = reqwest::Client::builder()
             .timeout(Some(std::time::Duration::from_secs(5)))
             .build()
-            .unwrap();
-        static ref DB_POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> =
-            r2d2::Pool::new(PostgresConnectionManager::new(
-                format!(
-                    "dbname=tidder host=/run/postgresql user={}",
-                    SECRETS.postgres.username
-                )
-                .parse()
-                .unwrap(),
-                NoTls,
-            ))
             .unwrap();
         static ref IMGUR_SEL: Selector = Selector::parse(".post-image-container").unwrap();
     }
@@ -337,7 +364,17 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Us
                     let mut resp = REQW_CLIENT
                         .get(link)
                         .send()
-                        .and_then(Response::error_for_status)
+                        .and_then(|resp| {
+                            if resp.status() == SC::NOT_FOUND && link.contains("imgur.com/gallery/")
+                            {
+                                REQW_CLIENT
+                                    .get(&link.replacen("/gallery/", "/a/", 1))
+                                    .send()
+                                    .and_then(Response::error_for_status)
+                            } else {
+                                resp.error_for_status()
+                            }
+                        })
                         .map_err(error_for_status_ue)?;
 
                     let mut doc_string = String::new();
@@ -369,28 +406,8 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Us
         Cow::Borrowed(link)
     };
 
-    let mut client = DB_POOL.get().map_err(Error::from)?;
-    let mut trans = client.transaction().map_err(Error::from)?;
-
-    let mut get_existing = || {
-        trans
-            .query(
-                format!(
-                    "SELECT hash, id FROM {} WHERE link=$1",
-                    hash_dest.table_name()
-                )
-                .as_str(),
-                &[&link],
-            )
-            .map_err(Error::from)
-            .map(|rows| {
-                rows.get(0)
-                    .map(|row| (Hash(row.get::<_, i64>("hash") as u64), row.get("id"), true))
-            })
-    };
-
-    if let Some(exists) = get_existing()? {
-        return Ok(exists);
+    if let Some(exists) = get_existing(&link)? {
+        return Ok((exists.0, GetKind::Cache(exists.1)));
     }
 
     let mut resp = REQW_CLIENT
@@ -415,19 +432,6 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Us
         return Err(UserError::new_msg("removed from Imgur"));
     }
 
-    // resp.headers()
-    //     .get(header::CONTENT_TYPE)
-    //     .map(|ctype| {
-    //         let val = ctype.to_str().map_err(Error::from)?;
-    //         match IMAGE_MIME_MAP.get(val) {
-    //             Some(format) => Ok(*format),
-    //             None => Err(format_err!("got unsupported MIME type {}", val)),
-    //         }
-    //     })
-    //     .transpose()?
-
-    let now = chrono::offset::Utc::now().naive_utc();
-
     let mut image = Vec::<u8>::with_capacity(
         resp.headers()
             .get(header::CONTENT_LENGTH)
@@ -440,56 +444,63 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), Us
         .read_to_end(&mut image)
         .map_err(Error::from)?;
 
-    let hash = hash_from_memory(&image)?;
+    Ok((hash_from_memory(&image)?, GetKind::Request(resp.headers().to_owned())))
+}
 
-    let headers = resp.headers();
+pub fn save_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), UserError> {
+    let (hash, get_kind) = get_hash(link)?;
 
-    let cc: Option<CacheControl> = headers
-        .get(header::CACHE_CONTROL)
-        .and_then(|hv| hv.to_str().ok())
-        .and_then(|s| cache_control::with_str(s).ok());
-    let cc = cc.as_ref();
+    match get_kind {
+        GetKind::Cache(id) => Ok((hash, id, true)),
+        GetKind::Request(headers) => {
+            let now = chrono::offset::Utc::now().naive_utc();
+            let cc: Option<CacheControl> = headers
+                .get(header::CACHE_CONTROL)
+                .and_then(|hv| hv.to_str().ok())
+                .and_then(|s| cache_control::with_str(s).ok());
+            let cc = cc.as_ref();
 
-    let mut client = DB_POOL.get().map_err(Error::from)?;
-    let mut trans = client.transaction().map_err(Error::from)?;
-    let rows = trans
-        .query(
-            format!(
-                "INSERT INTO {} (link, hash, no_store, no_cache, expires, \
-                 etag, must_revalidate, retrieved_on) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
-                 ON CONFLICT DO NOTHING \
-                 RETURNING id",
-                hash_dest.table_name()
-            )
-            .as_str(),
-            &[
-                &link,
-                &hash,
-                &cc.map(|cc| cc.no_store),
-                &cc.map(|cc| cc.no_cache),
-                &cc.and_then(|cc| cc.max_age)
-                    .map(|n| NaiveDateTime::from_timestamp(n as i64, 0))
-                    .or_else(|| {
-                        headers
-                            .get(header::EXPIRES)
-                            .and_then(|hv| hv.to_str().ok())
-                            .and_then(|s| DateTime::parse_from_rfc2822(s).ok())
-                            .map(|dt| dt.naive_utc())
-                    }),
-                &headers.get(header::ETAG).and_then(|hv| hv.to_str().ok()),
-                &cc.map(|cc| cc.must_revalidate),
-                &now,
-            ],
-        )
-        .map_err(Error::from)?;
+            let mut client = DB_POOL.get().map_err(Error::from)?;
+            let mut trans = client.transaction().map_err(Error::from)?;
+            let rows = trans
+                .query(
+                    format!(
+                        "INSERT INTO {} (link, hash, no_store, no_cache, expires, \
+                         etag, must_revalidate, retrieved_on) \
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+                         ON CONFLICT DO NOTHING \
+                         RETURNING id",
+                        hash_dest.table_name()
+                    )
+                    .as_str(),
+                    &[
+                        &link,
+                        &hash,
+                        &cc.map(|cc| cc.no_store),
+                        &cc.map(|cc| cc.no_cache),
+                        &cc.and_then(|cc| cc.max_age)
+                            .map(|n| NaiveDateTime::from_timestamp(n as i64, 0))
+                            .or_else(|| {
+                                headers
+                                    .get(header::EXPIRES)
+                                    .and_then(|hv| hv.to_str().ok())
+                                    .and_then(|s| DateTime::parse_from_rfc2822(s).ok())
+                                    .map(|dt| dt.naive_utc())
+                            }),
+                        &headers.get(header::ETAG).and_then(|hv| hv.to_str().ok()),
+                        &cc.map(|cc| cc.must_revalidate),
+                        &now,
+                    ],
+                )
+                .map_err(Error::from)?;
+            trans.commit().map_err(Error::from)?;
 
-    trans.commit().map_err(Error::from)?;
-
-    match rows.get(0) {
-        Some(row) => Ok((hash, row.try_get("id").map_err(Error::from)?, false)),
-        None => get_existing()?
-            .ok_or_else(|| UserError::from(format_err!("conflict but no existing match"))),
+            match rows.get(0) {
+                Some(row) => Ok((hash, row.try_get("id").map_err(Error::from)?, false)),
+                None => get_existing(link)?.map(|ex| (ex.0, ex.1, true))
+                    .ok_or_else(|| UserError::from(format_err!("conflict but no existing match"))),
+            }
+        }
     }
 }
 
@@ -522,6 +533,7 @@ pub fn setup_logging() {
         })
         .level(LevelFilter::Warn)
         .level_for("site", LevelFilter::Info)
+        .level_for("watcher", LevelFilter::Info)
         .level_for("hasher", LevelFilter::Info)
         .level_for("ingest", LevelFilter::Info)
         .level_for("common", LevelFilter::Info)

@@ -121,7 +121,7 @@ fn ingest_json<R: Read + Send>(json_stream: R, min_skip: Option<i64>, max_skip: 
                 .replace("&amp;", "&")
                 .replace("&lt;", "<")
                 .replace("&gt;", ">");
-            match get_hash(&post.url, HashDest::Images) {
+            match save_hash(&post.url, HashDest::Images) {
                 Ok((_hash, image_id, exists)) => {
                     if exists {
                         info!("{} already exists", post.url);

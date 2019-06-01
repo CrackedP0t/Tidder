@@ -5,5 +5,5 @@ authors = ["Elaina Martineau <elainamartineau@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-serde = { version = "1.0.91", features = ["derive"] }
+serde = { version = "1.0.92", features = ["derive"] }
 regex = "1.1.6"

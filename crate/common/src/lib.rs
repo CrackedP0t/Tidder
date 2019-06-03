@@ -119,12 +119,22 @@ impl Display for UserError {
 }
 
 #[macro_export]
-macro_rules! map_ue {
-    ($user_msg:expr) => {
-        |e| UserError::new($user_msg, Error::from(e))
+macro_rules! ue {
+    ($msg:expr) => {
+        UserError::new_msg($msg)
     };
-    ($user_msg:expr, $sc:expr) => {
-        |e| UserError::new_sc($user_msg, $sc, Error::from(e))
+    ($msg:expr, $sc:expr) => {
+        UserError::new_msg_sc($msg, $sc)
+    };
+}
+
+#[macro_export]
+macro_rules! map_ue {
+    ($msg:expr) => {
+        |e| UserError::new($msg, Error::from(e))
+    };
+    ($msg:expr, $sc:expr) => {
+        |e| UserError::new_sc($msg, $sc, Error::from(e))
     };
 }
 
@@ -319,10 +329,7 @@ fn get_existing(link: &str) -> Result<Option<(Hash, i64)>, UserError> {
     let mut trans = client.transaction().map_err(Error::from)?;
 
     trans
-        .query(
-            "SELECT hash, id FROM images WHERE link=$1",
-            &[&link],
-        )
+        .query("SELECT hash, id FROM images WHERE link=$1", &[&link])
         .map_err(UserError::from_std)
         .map(|rows| {
             rows.get(0)
@@ -337,27 +344,39 @@ pub fn get_hash(link: &str) -> Result<(Hash, GetKind), UserError> {
             .build()
             .unwrap();
         static ref IMGUR_SEL: Selector = Selector::parse(".post-image-container").unwrap();
+        static ref IMGUR_GIFV_RE: Regex = Regex::new(r"([^.]+)\.gifv$").unwrap();
     }
 
-    let error_for_status_ue = |e: reqwest::Error| {
+    fn error_for_status_ue(e: reqwest::Error) -> UserError {
         let msg = match e.status() {
             None => Cow::Borrowed("recieved error status from image host"),
             Some(sc) => Cow::Owned(format!("recieved error status from image host: {}", sc)),
         };
 
         UserError::new(msg, e)
-    };
+    }
 
-    let url = Url::parse(link).map_err(map_ue!("invalid URL", SC::BAD_REQUEST))?;
+    let url = Url::parse(link).map_err(map_ue!("not a valid URL", SC::BAD_REQUEST))?;
 
-    let link = if let Some(host) = url.host_str() {
-        if host == "imgur.com" && !EXT_RE.is_match(&link) {
+    let scheme = url.scheme();
+    if scheme != "http" && scheme != "https" {
+        return Err(ue!("unsupported scheme in URL"));
+    }
+
+    let host = url
+        .host_str()
+        .ok_or_else(|| ue!("no host in URL", SC::BAD_REQUEST))?;
+
+    let path = url.path();
+
+    let link = if host == "imgur.com" {
+        if !EXT_RE.is_match(&link) {
             let mut path_segs = url
                 .path_segments()
-                .ok_or_else(|| UserError::new_msg_sc("cannot-be-a-base URL", SC::BAD_REQUEST))?;
+                .ok_or_else(|| ue!("cannot-be-a-base URL", SC::BAD_REQUEST))?;
             let first = path_segs
                 .next()
-                .ok_or_else(|| UserError::new_msg_sc("base URL", SC::BAD_REQUEST))?;
+                .ok_or_else(|| ue!("no first path segment in URL", SC::BAD_REQUEST))?;
 
             match first {
                 "a" | "gallery" => {
@@ -368,7 +387,7 @@ pub fn get_hash(link: &str) -> Result<(Hash, GetKind), UserError> {
                             if resp.status() == SC::NOT_FOUND && link.contains("imgur.com/gallery/")
                             {
                                 REQW_CLIENT
-                                    .get(&link.replacen("/gallery/", "/a/", 1))
+                                    .get(&link.replace("/gallery/", "/a/"))
                                     .send()
                                     .and_then(Response::error_for_status)
                             } else {
@@ -402,6 +421,8 @@ pub fn get_hash(link: &str) -> Result<(Hash, GetKind), UserError> {
         } else {
             Cow::Borrowed(link)
         }
+    } else if host == "i.imgur.com" && IMGUR_GIFV_RE.is_match(path) {
+        IMGUR_GIFV_RE.replace(path, "https://i.imgur.com/$1.gif")
     } else {
         Cow::Borrowed(link)
     };
@@ -444,7 +465,10 @@ pub fn get_hash(link: &str) -> Result<(Hash, GetKind), UserError> {
         .read_to_end(&mut image)
         .map_err(Error::from)?;
 
-    Ok((hash_from_memory(&image)?, GetKind::Request(resp.headers().to_owned())))
+    Ok((
+        hash_from_memory(&image)?,
+        GetKind::Request(resp.headers().to_owned()),
+    ))
 }
 
 pub fn save_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), UserError> {
@@ -497,7 +521,8 @@ pub fn save_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), U
 
             match rows.get(0) {
                 Some(row) => Ok((hash, row.try_get("id").map_err(Error::from)?, false)),
-                None => get_existing(link)?.map(|ex| (ex.0, ex.1, true))
+                None => get_existing(link)?
+                    .map(|ex| (ex.0, ex.1, true))
                     .ok_or_else(|| UserError::from(format_err!("conflict but no existing match"))),
             }
         }

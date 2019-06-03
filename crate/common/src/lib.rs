@@ -22,7 +22,7 @@ use url::{
 };
 
 pub use failure::{self, format_err, Error};
-pub use log::error;
+pub use log::{warn, error};
 
 lazy_static! {
     pub static ref EXT_RE: Regex =
@@ -291,13 +291,14 @@ pub fn hash_from_memory(image: &[u8]) -> Result<Hash, UserError> {
     ))
 }
 
+#[derive(Copy, Debug, Clone)]
 pub enum HashDest {
     Images,
     ImageCache,
 }
 
 impl HashDest {
-    pub fn table_name(&self) -> &'static str {
+    pub fn table_name(self) -> &'static str {
         match self {
             HashDest::Images => "images",
             HashDest::ImageCache => "image_cache",
@@ -324,12 +325,12 @@ pub enum GetKind {
     Request(HeaderMap),
 }
 
-fn get_existing(link: &str) -> Result<Option<(Hash, i64)>, UserError> {
+fn get_existing(link: &str, hash_dest: HashDest) -> Result<Option<(Hash, i64)>, UserError> {
     let mut client = DB_POOL.get().map_err(Error::from)?;
     let mut trans = client.transaction().map_err(Error::from)?;
 
     trans
-        .query("SELECT hash, id FROM images WHERE link=$1", &[&link])
+        .query(format!("SELECT hash, id FROM {} WHERE link=$1", hash_dest.table_name()).as_str(), &[&link])
         .map_err(UserError::from_std)
         .map(|rows| {
             rows.get(0)
@@ -337,7 +338,7 @@ fn get_existing(link: &str) -> Result<Option<(Hash, i64)>, UserError> {
         })
 }
 
-pub fn get_hash(link: &str) -> Result<(Hash, GetKind), UserError> {
+pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, Cow<str>, GetKind), UserError> {
     lazy_static! {
         static ref REQW_CLIENT: reqwest::Client = reqwest::Client::builder()
             .timeout(Some(std::time::Duration::from_secs(5)))
@@ -369,7 +370,7 @@ pub fn get_hash(link: &str) -> Result<(Hash, GetKind), UserError> {
 
     let path = url.path();
 
-    let link = if host == "imgur.com" {
+    let link: Cow<str> = if host == "imgur.com" {
         if !EXT_RE.is_match(&link) {
             let mut path_segs = url
                 .path_segments()
@@ -422,13 +423,13 @@ pub fn get_hash(link: &str) -> Result<(Hash, GetKind), UserError> {
             Cow::Borrowed(link)
         }
     } else if host == "i.imgur.com" && IMGUR_GIFV_RE.is_match(path) {
-        IMGUR_GIFV_RE.replace(path, "https://i.imgur.com/$1.gif")
+        Cow::Owned(IMGUR_GIFV_RE.replace(path, "https://i.imgur.com/$1.gif").to_string())
     } else {
         Cow::Borrowed(link)
     };
 
-    if let Some(exists) = get_existing(&link)? {
-        return Ok((exists.0, GetKind::Cache(exists.1)));
+    if let Some(exists) = get_existing(&link, hash_dest)? {
+        return Ok((exists.0, link, GetKind::Cache(exists.1)));
     }
 
     let mut resp = REQW_CLIENT
@@ -467,12 +468,13 @@ pub fn get_hash(link: &str) -> Result<(Hash, GetKind), UserError> {
 
     Ok((
         hash_from_memory(&image)?,
+        link,
         GetKind::Request(resp.headers().to_owned()),
     ))
 }
 
 pub fn save_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), UserError> {
-    let (hash, get_kind) = get_hash(link)?;
+    let (hash, link, get_kind) = get_hash(link, hash_dest)?;
 
     match get_kind {
         GetKind::Cache(id) => Ok((hash, id, true)),
@@ -521,9 +523,9 @@ pub fn save_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), U
 
             match rows.get(0) {
                 Some(row) => Ok((hash, row.try_get("id").map_err(Error::from)?, false)),
-                None => get_existing(link)?
+                None => get_existing(&link, hash_dest)?
                     .map(|ex| (ex.0, ex.1, true))
-                    .ok_or_else(|| UserError::from(format_err!("conflict but no existing match"))),
+                    .ok_or_else(|| ue!("conflict but no existing match")),
             }
         }
     }

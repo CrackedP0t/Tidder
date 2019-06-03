@@ -465,7 +465,10 @@ fn get_response(qs: SearchQuery) -> Response<Body> {
 
     let (page, status) = match out {
         Ok(page) => (page,
-                     search.error.map(|ue| ue.status_code).unwrap_or(SC::OK)),
+                     search.error.map(|ue| {
+                         warn!("{}", ue.error);
+                         ue.status_code
+                     }).unwrap_or(SC::OK)),
         Err(_) => ("<h1>Error 500: Internal Server Error</h1>".to_string(), SC::INTERNAL_SERVER_ERROR)
     };
 

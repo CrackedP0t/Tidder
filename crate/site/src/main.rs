@@ -512,7 +512,7 @@ fn run_server() {
         .or(warp::path("search").and(search))
         .or(full().map(reply_not_found));
 
-    warp::serve(router).run(([127, 0, 0, 1], 7878));
+    warp::serve(router).run((std::env::args().nth(1).unwrap_or_else(|| "127.0.0.1".to_string()).parse::<std::net::IpAddr>().unwrap(), 7878))
 }
 
 pub fn main() {

@@ -444,6 +444,13 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, Cow<str>, GetK
 
     resp.error_for_status_ref().map_err(error_for_status_ue)?;
 
+    if let Some(ct) = resp.headers().get(header::CONTENT_TYPE) {
+        let ct = ct.to_str().map_err(map_ue!("non-ASCII Content-Type header", SC::BAD_REQUEST))?;
+        if !IMAGE_MIMES.contains(&ct) {
+            return Err(ue!(format!("unsupported Content-Type: {}", ct)));
+        }
+    }
+
     let url = resp.url();
     if url
         .host_str()

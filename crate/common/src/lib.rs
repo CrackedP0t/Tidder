@@ -22,7 +22,7 @@ use url::{
 };
 
 pub use failure::{self, format_err, Error};
-pub use log::{warn, error};
+pub use log::{error, warn};
 
 lazy_static! {
     pub static ref EXT_RE: Regex =
@@ -330,7 +330,14 @@ fn get_existing(link: &str, hash_dest: HashDest) -> Result<Option<(Hash, i64)>, 
     let mut trans = client.transaction().map_err(Error::from)?;
 
     trans
-        .query(format!("SELECT hash, id FROM {} WHERE link=$1", hash_dest.table_name()).as_str(), &[&link])
+        .query(
+            format!(
+                "SELECT hash, id FROM {} WHERE link=$1",
+                hash_dest.table_name()
+            )
+            .as_str(),
+            &[&link],
+        )
         .map_err(UserError::from_std)
         .map(|rows| {
             rows.get(0)
@@ -423,7 +430,11 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, Cow<str>, GetK
             Cow::Borrowed(link)
         }
     } else if host == "i.imgur.com" && IMGUR_GIFV_RE.is_match(path) {
-        Cow::Owned(IMGUR_GIFV_RE.replace(path, "https://i.imgur.com/$1.gif").to_string())
+        Cow::Owned(
+            IMGUR_GIFV_RE
+                .replace(path, "https://i.imgur.com/$1.gif")
+                .to_string(),
+        )
     } else {
         Cow::Borrowed(link)
     };
@@ -445,7 +456,9 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, Cow<str>, GetK
     resp.error_for_status_ref().map_err(error_for_status_ue)?;
 
     if let Some(ct) = resp.headers().get(header::CONTENT_TYPE) {
-        let ct = ct.to_str().map_err(map_ue!("non-ASCII Content-Type header", SC::BAD_REQUEST))?;
+        let ct = ct
+            .to_str()
+            .map_err(map_ue!("non-ASCII Content-Type header", SC::BAD_REQUEST))?;
         if !IMAGE_MIMES.contains(&ct) {
             return Err(ue!(format!("unsupported Content-Type: {}", ct)));
         }

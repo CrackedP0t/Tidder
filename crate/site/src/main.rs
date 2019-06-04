@@ -347,7 +347,8 @@ fn get_search(qs: SearchQuery) -> Search {
                         .map_err(map_ue!("invalid URL"))
                         .and_then(|_| {
                             let params = Params::from_form(&form)?;
-                            let (hash, _image_id, _exists) = save_hash(&link, HashDest::ImageCache)?;
+                            let (hash, _image_id, _exists) =
+                                save_hash(&link, HashDest::ImageCache)?;
                             make_findings(hash, params)
                         }),
                 )
@@ -464,12 +465,20 @@ fn get_response(qs: SearchQuery) -> Response<Body> {
         .map_err(le!());
 
     let (page, status) = match out {
-        Ok(page) => (page,
-                     search.error.map(|ue| {
-                         warn!("{}", ue.error);
-                         ue.status_code
-                     }).unwrap_or(SC::OK)),
-        Err(_) => ("<h1>Error 500: Internal Server Error</h1>".to_string(), SC::INTERNAL_SERVER_ERROR)
+        Ok(page) => (
+            page,
+            search
+                .error
+                .map(|ue| {
+                    warn!("{}", ue.error);
+                    ue.status_code
+                })
+                .unwrap_or(SC::OK),
+        ),
+        Err(_) => (
+            "<h1>Error 500: Internal Server Error</h1>".to_string(),
+            SC::INTERNAL_SERVER_ERROR,
+        ),
     };
 
     Response::builder()
@@ -487,9 +496,14 @@ fn post_response(headers: HeaderMap, body: FullBody) -> Response<Body> {
         .map_err(le!());
 
     let (page, status) = match out {
-        Ok(page) => (page,
-                     search.error.map(|ue| ue.status_code).unwrap_or(SC::OK)),
-        Err(_) => ("<h1>Error 500: Internal Server Error</h1>".to_string(), SC::INTERNAL_SERVER_ERROR)
+        Ok(page) => (
+            page,
+            search.error.map(|ue| ue.status_code).unwrap_or(SC::OK),
+        ),
+        Err(_) => (
+            "<h1>Error 500: Internal Server Error</h1>".to_string(),
+            SC::INTERNAL_SERVER_ERROR,
+        ),
     };
 
     Response::builder()
@@ -515,7 +529,14 @@ fn run_server() {
         .or(warp::path("search").and(search))
         .or(full().map(reply_not_found));
 
-    warp::serve(router).run((std::env::args().nth(1).unwrap_or_else(|| "127.0.0.1".to_string()).parse::<std::net::IpAddr>().unwrap(), 7878))
+    warp::serve(router).run((
+        std::env::args()
+            .nth(1)
+            .unwrap_or_else(|| "127.0.0.1".to_string())
+            .parse::<std::net::IpAddr>()
+            .unwrap(),
+        7878,
+    ))
 }
 
 pub fn main() {

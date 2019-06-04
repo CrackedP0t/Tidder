@@ -291,7 +291,7 @@ pub fn hash_from_memory(image: &[u8]) -> Result<Hash, UserError> {
     ))
 }
 
-#[derive(Copy, Debug, Clone)]
+#[derive(Copy, Debug, Clone, Eq, PartialEq)]
 pub enum HashDest {
     Images,
     ImageCache,
@@ -321,31 +321,31 @@ lazy_static! {
 }
 
 pub enum GetKind {
-    Cache(i64),
+    Cache(HashDest, i64),
     Request(HeaderMap),
 }
 
-fn get_existing(link: &str, hash_dest: HashDest) -> Result<Option<(Hash, i64)>, UserError> {
+fn get_existing(link: &str) -> Result<Option<(Hash, HashDest, i64)>, UserError> {
     let mut client = DB_POOL.get().map_err(Error::from)?;
     let mut trans = client.transaction().map_err(Error::from)?;
 
     trans
         .query(
-            format!(
-                "SELECT hash, id FROM {} WHERE link=$1",
-                hash_dest.table_name()
-            )
-            .as_str(),
+            "SELECT hash, id, 'images' as table_name FROM images WHERE link = $1 UNION SELECT hash, id, 'image_cache' as table_name FROM image_cache WHERE link = $1",
             &[&link],
         )
         .map_err(UserError::from_std)
         .map(|rows| {
             rows.get(0)
-                .map(|row| (Hash(row.get::<_, i64>("hash") as u64), row.get("id")))
+                .map(|row| (Hash(row.get::<_, i64>("hash") as u64), match row.get("table_name") {
+                    "images" => HashDest::Images,
+                    "image_cache" => HashDest::ImageCache,
+                    _ => unreachable!()
+                }, row.get("id")))
         })
 }
 
-pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, Cow<str>, GetKind), UserError> {
+pub fn get_hash(link: &str) -> Result<(Hash, Cow<str>, GetKind), UserError> {
     lazy_static! {
         static ref REQW_CLIENT: reqwest::Client = reqwest::Client::builder()
             .timeout(Some(std::time::Duration::from_secs(5)))
@@ -439,8 +439,8 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, Cow<str>, GetK
         Cow::Borrowed(link)
     };
 
-    if let Some(exists) = get_existing(&link, hash_dest)? {
-        return Ok((exists.0, link, GetKind::Cache(exists.1)));
+    if let Some((hash, hash_dest, id)) = get_existing(&link)? {
+        return Ok((hash, link, GetKind::Cache(hash_dest, id)));
     }
 
     let mut resp = REQW_CLIENT
@@ -493,11 +493,43 @@ pub fn get_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, Cow<str>, GetK
     ))
 }
 
-pub fn save_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), UserError> {
-    let (hash, link, get_kind) = get_hash(link, hash_dest)?;
+pub fn save_hash(
+    link: &str,
+    hash_dest: HashDest,
+) -> Result<(Hash, HashDest, i64, bool), UserError> {
+    let (hash, link, get_kind) = get_hash(link)?;
+
+    let poss_move_row = |hash: Hash,
+                         found_hash_dest: HashDest,
+                         id: i64|
+     -> Result<(Hash, HashDest, i64, bool), UserError> {
+        if hash_dest == found_hash_dest || hash_dest == HashDest::ImageCache {
+            Ok((hash, hash_dest, id, true))
+        } else {
+            let mut client = DB_POOL.get().map_err(Error::from)?;
+            let mut trans = client.transaction().map_err(Error::from)?;
+            let rows = trans
+                .query("INSERT INTO images (link, hash, no_store, no_cache, expires, etag, must_revalidate, retrieved_on) VALUES (SELECT link, hash, no_store, no_cache, expires, etag, must_revalidate, retrieved_on FROM image_cache WHERE id = $1) RETURNING id", &[&id])
+                .map_err(Error::from)?;
+            trans.commit().map_err(Error::from)?;
+
+            let mut trans = client.transaction().map_err(Error::from)?;
+            trans
+                .query("DELETE FROM image_cache WHERE id = $1", &[&id])
+                .map_err(Error::from)?;
+            trans.commit().map_err(Error::from)?;
+
+            let id = rows
+                .get(0)
+                .and_then(|row| row.get("id"))
+                .unwrap_or_else(|| unreachable!());
+
+            Ok((hash, HashDest::Images, id, true))
+        }
+    };
 
     match get_kind {
-        GetKind::Cache(id) => Ok((hash, id, true)),
+        GetKind::Cache(hash_dest, id) => poss_move_row(hash, hash_dest, id),
         GetKind::Request(headers) => {
             let now = chrono::offset::Utc::now().naive_utc();
             let cc: Option<CacheControl> = headers
@@ -542,10 +574,15 @@ pub fn save_hash(link: &str, hash_dest: HashDest) -> Result<(Hash, i64, bool), U
             trans.commit().map_err(Error::from)?;
 
             match rows.get(0) {
-                Some(row) => Ok((hash, row.try_get("id").map_err(Error::from)?, false)),
-                None => get_existing(&link, hash_dest)?
-                    .map(|ex| (ex.0, ex.1, true))
-                    .ok_or_else(|| ue!("conflict but no existing match")),
+                Some(row) => Ok((
+                    hash,
+                    hash_dest,
+                    row.try_get("id").map_err(Error::from)?,
+                    false,
+                )),
+                None => get_existing(&link)?
+                    .map(|(hash, hash_dest, id)| poss_move_row(hash, hash_dest, id))
+                    .ok_or_else(|| ue!("conflict but no existing match"))?,
             }
         }
     }

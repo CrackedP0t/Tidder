@@ -44,7 +44,7 @@ fn download_search(search: PushShiftSearch) -> Result<(), ()> {
                 .replace("&lt;", "<")
                 .replace("&gt;", ">");
             match save_hash(&post.url, HashDest::Images) {
-                Ok((_hash, image_id, exists)) => {
+                Ok((_hash, _hash_dest, image_id, exists)) => {
                     if exists {
                         info!("{} already exists", post.url);
                     } else {

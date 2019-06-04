@@ -11,8 +11,8 @@ use regex::Regex;
 use reqwest::{Client, Url};
 use serde_json::from_value;
 use serde_json::{Deserializer, Value};
-use std::fs::File;
-use std::io::{BufReader, Read};
+use std::fs::{remove_file, File, OpenOptions};
+use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::iter::Iterator;
 
 lazy_static! {
@@ -122,7 +122,7 @@ fn ingest_json<R: Read + Send>(json_stream: R, min_skip: Option<i64>, max_skip: 
                 .replace("&lt;", "<")
                 .replace("&gt;", ">");
             match save_hash(&post.url, HashDest::Images) {
-                Ok((_hash, image_id, exists)) => {
+                Ok((_hash, _hash_dest, image_id, exists)) => {
                     if exists {
                         info!("{} already exists", post.url);
                     } else {
@@ -221,8 +221,9 @@ fn main() -> Result<(), Error> {
                 .query_iter(
                     "SELECT reddit_id_int FROM posts \
                      WHERE EXTRACT(MONTH FROM created_utc) = $1 \
+                     AND EXTRACT(YEAR FROM created_utc) = $2 \
                      ORDER BY reddit_id_int DESC LIMIT 1",
-                    &[&month],
+                    &[&month, &year],
                 )
                 .and_then(|mut q_i| q_i.next())
                 .map(|row_opt| row_opt.map(|row| row.get("reddit_id_int")))
@@ -231,13 +232,38 @@ fn main() -> Result<(), Error> {
             (min_skip, max_skip)
         };
 
-        let input: BufReader<Box<Read + Send>> = BufReader::new(
+        let (input, arch_path): (Box<Read + Send>, _) =
             if path.starts_with("http://") || path.starts_with("https://") {
-                Box::new(REQW_CLIENT.get(&path).send().map_err(Error::from)?)
+                let arch_path = std::env::var("HOME").map_err(Error::from)?
+                    + "/archives/"
+                    + Url::parse(&path)
+                        .map_err(Error::from)?
+                        .path_segments()
+                        .ok_or_else(|| format_err!("cannot-be-a-base-url"))?
+                        .next_back()
+                        .ok_or_else(|| format_err!("no last path segment"))?;
+
+                let mut arch_file = OpenOptions::new()
+                    .create_new(true)
+                    .read(true)
+                    .write(true)
+                    .open(&arch_path)
+                    .map_err(Error::from)?;
+
+                io::copy(
+                    &mut BufReader::new(REQW_CLIENT.get(&path).send().map_err(Error::from)?),
+                    &mut arch_file,
+                )
+                .map_err(Error::from)?;
+
+                arch_file.seek(SeekFrom::Start(0)).map_err(Error::from)?;
+
+                (Box::new(arch_file), Some(arch_path))
             } else {
-                Box::new(File::open(&path).map_err(Error::from)?)
-            },
-        );
+                (Box::new(File::open(&path).map_err(Error::from)?), None)
+            };
+
+        let input = BufReader::new(input);
 
         if path.ends_with("bz2") {
             ingest_json(bzip2::bufread::BzDecoder::new(input), min_skip, max_skip);
@@ -252,6 +278,10 @@ fn main() -> Result<(), Error> {
         } else {
             error!("Unknown file extension in {}", path);
             continue;
+        }
+
+        if let Some(arch_path) = arch_path {
+            remove_file(arch_path).map_err(Error::from)?;
         }
 
         info!("Done ingesting {}", &path);

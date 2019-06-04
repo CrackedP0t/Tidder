@@ -284,7 +284,7 @@ fn make_findings(hash: Hash, params: Params) -> Result<Findings, UserError> {
                 };
             conn.query_iter(
                 format_args!(
-                    "SELECT hash <-> $1 as distance, posts.link, permalink, \
+                    "SELECT hash <-> $1 as distance, images.link, permalink, \
                      score, author, created_utc, subreddit, title \
                      FROM posts INNER JOIN images \
                      ON hash <@ ($1, $2) \
@@ -347,7 +347,7 @@ fn get_search(qs: SearchQuery) -> Search {
                         .map_err(map_ue!("invalid URL"))
                         .and_then(|_| {
                             let params = Params::from_form(&form)?;
-                            let (hash, _image_id, _exists) =
+                            let (hash, _hash_dest, _image_id, _exists) =
                                 save_hash(&link, HashDest::ImageCache)?;
                             make_findings(hash, params)
                         }),

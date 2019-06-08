@@ -372,7 +372,11 @@ pub fn follow_imgur(link: &str) -> Result<Option<String>, UserError> {
     let path = url.path();
 
     Ok(
-        if host == "imgur.com" || host == "m.imgur.com" || host == "i.imgur.com" {
+        if host == "imgur.com"
+            || host == "m.imgur.com"
+            || host == "i.imgur.com"
+            || host == "www.imgur.com"
+        {
             if IMGUR_GIFV_RE.is_match(path) {
                 Some(
                     IMGUR_GIFV_RE

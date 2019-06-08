@@ -22,7 +22,7 @@ use url::{
 };
 
 pub use failure::{self, format_err, Error};
-pub use log::{error, warn};
+pub use log::{error, info, warn};
 
 lazy_static! {
     pub static ref EXT_RE: Regex =
@@ -307,17 +307,10 @@ impl HashDest {
 }
 
 lazy_static! {
-    static ref DB_POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> =
-        r2d2::Pool::new(PostgresConnectionManager::new(
-            format!(
-                "dbname=tidder host=/run/postgresql user={}",
-                SECRETS.postgres.username
-            )
-            .parse()
-            .unwrap(),
-            NoTls,
-        ))
-        .unwrap();
+    static ref DB_POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> = r2d2::Pool::new(
+        PostgresConnectionManager::new(SECRETS.postgres.connect.parse().unwrap(), NoTls)
+    )
+    .unwrap();
 }
 
 pub enum GetKind {
@@ -345,25 +338,86 @@ fn get_existing(link: &str) -> Result<Option<(Hash, HashDest, i64)>, UserError> 
         })
 }
 
-pub fn get_hash(link: &str) -> Result<(Hash, Cow<str>, GetKind), UserError> {
+lazy_static! {
+    static ref REQW_CLIENT: reqwest::Client = reqwest::Client::builder()
+        .timeout(Some(std::time::Duration::from_secs(10)))
+        .build()
+        .unwrap();
+}
+
+fn error_for_status_ue(e: reqwest::Error) -> UserError {
+    let msg = match e.status() {
+        None => Cow::Borrowed("recieved error status from image host"),
+        Some(sc) => Cow::Owned(format!("recieved error status from image host: {}", sc)),
+    };
+
+    UserError::new(msg, e)
+}
+
+pub fn follow_imgur(link: &str) -> Result<Option<String>, UserError> {
     lazy_static! {
-        static ref REQW_CLIENT: reqwest::Client = reqwest::Client::builder()
-            .timeout(Some(std::time::Duration::from_secs(5)))
-            .build()
-            .unwrap();
-        static ref IMGUR_SEL: Selector = Selector::parse(".post-image-container").unwrap();
+        static ref IMGUR_SEL: Selector = Selector::parse("meta[property='og:image']").unwrap();
         static ref IMGUR_GIFV_RE: Regex = Regex::new(r"([^.]+)\.gifv$").unwrap();
     }
 
-    fn error_for_status_ue(e: reqwest::Error) -> UserError {
-        let msg = match e.status() {
-            None => Cow::Borrowed("recieved error status from image host"),
-            Some(sc) => Cow::Owned(format!("recieved error status from image host: {}", sc)),
-        };
+    let url = Url::parse(link).map_err(map_ue!("not a valid URL", SC::BAD_REQUEST))?;
 
-        UserError::new(msg, e)
-    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| ue!("no host in URL", SC::BAD_REQUEST))?;
+    let path = url.path();
 
+    Ok(if host == "imgur.com" {
+        if !EXT_RE.is_match(&link) {
+            let mut resp = REQW_CLIENT
+                .get(link)
+                .send()
+                .and_then(|resp| {
+                    if resp.status() == SC::NOT_FOUND && link.contains("imgur.com/gallery/") {
+                        REQW_CLIENT
+                            .get(&link.replace("/gallery/", "/a/"))
+                            .send()
+                            .and_then(Response::error_for_status)
+                    } else {
+                        resp.error_for_status()
+                    }
+                })
+                .map_err(error_for_status_ue)?;
+
+            let mut doc_string = String::new();
+
+            resp.read_to_string(&mut doc_string).map_err(Error::from)?;
+
+            Some(
+                Html::parse_document(&doc_string)
+                    .select(&IMGUR_SEL)
+                    .next()
+                    .and_then(|el| {
+                        let content = el.value().attr("content")?;
+                        Some(
+                            content
+                                .split_at(content.find('?').unwrap_or_else(|| content.len()))
+                                .0
+                                .to_string(),
+                        )
+                    })
+                    .ok_or_else(|| UserError::new_msg("couldn't extract image from Imgur album"))?,
+            )
+        } else {
+            None
+        }
+    } else if host == "i.imgur.com" && IMGUR_GIFV_RE.is_match(path) {
+        Some(
+            IMGUR_GIFV_RE
+                .replace(path, "https://i.imgur.com/$1.gif")
+                .to_string(),
+        )
+    } else {
+        None
+    })
+}
+
+pub fn get_hash(link: &str) -> Result<(Hash, Cow<str>, GetKind), UserError> {
     let url = Url::parse(link).map_err(map_ue!("not a valid URL", SC::BAD_REQUEST))?;
 
     let scheme = url.scheme();
@@ -371,73 +425,9 @@ pub fn get_hash(link: &str) -> Result<(Hash, Cow<str>, GetKind), UserError> {
         return Err(ue!("unsupported scheme in URL"));
     }
 
-    let host = url
-        .host_str()
-        .ok_or_else(|| ue!("no host in URL", SC::BAD_REQUEST))?;
-
-    let path = url.path();
-
-    let link: Cow<str> = if host == "imgur.com" {
-        if !EXT_RE.is_match(&link) {
-            let mut path_segs = url
-                .path_segments()
-                .ok_or_else(|| ue!("cannot-be-a-base URL", SC::BAD_REQUEST))?;
-            let first = path_segs
-                .next()
-                .ok_or_else(|| ue!("no first path segment in URL", SC::BAD_REQUEST))?;
-
-            match first {
-                "a" | "gallery" => {
-                    let mut resp = REQW_CLIENT
-                        .get(link)
-                        .send()
-                        .and_then(|resp| {
-                            if resp.status() == SC::NOT_FOUND && link.contains("imgur.com/gallery/")
-                            {
-                                REQW_CLIENT
-                                    .get(&link.replace("/gallery/", "/a/"))
-                                    .send()
-                                    .and_then(Response::error_for_status)
-                            } else {
-                                resp.error_for_status()
-                            }
-                        })
-                        .map_err(error_for_status_ue)?;
-
-                    let mut doc_string = String::new();
-
-                    resp.read_to_string(&mut doc_string).map_err(Error::from)?;
-
-                    Cow::Owned(
-                        Html::parse_document(&doc_string)
-                            .select(&IMGUR_SEL)
-                            .next()
-                            .and_then(|el| {
-                                Some(
-                                    "https://i.imgur.com/".to_string()
-                                        + el.value().attr("id")?
-                                        + ".jpg",
-                                )
-                            })
-                            .ok_or_else(|| {
-                                UserError::new_msg("couldn't extract image from Imgur album")
-                            })?,
-                    )
-                }
-                hash => Cow::Owned(format!("https://i.imgur.com/{}.jpg", hash)),
-            }
-        } else {
-            Cow::Borrowed(link)
-        }
-    } else if host == "i.imgur.com" && IMGUR_GIFV_RE.is_match(path) {
-        Cow::Owned(
-            IMGUR_GIFV_RE
-                .replace(path, "https://i.imgur.com/$1.gif")
-                .to_string(),
-        )
-    } else {
-        Cow::Borrowed(link)
-    };
+    let link = follow_imgur(link)?
+        .map(Cow::Owned)
+        .unwrap_or_else(|| Cow::Borrowed(link));
 
     if let Some((hash, hash_dest, id)) = get_existing(&link)? {
         return Ok((hash, link, GetKind::Cache(hash_dest, id)));
@@ -645,7 +635,7 @@ pub mod secrets {
     }
     #[derive(Debug, Deserialize)]
     pub struct Postgres {
-        pub username: String,
+        pub connect: String,
     }
     #[derive(Debug, Deserialize)]
     pub struct Secrets {

@@ -16,17 +16,10 @@ use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::iter::Iterator;
 
 lazy_static! {
-    static ref DB_POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> =
-        r2d2::Pool::new(PostgresConnectionManager::new(
-            format!(
-                "dbname=tidder host=/run/postgresql user={}",
-                SECRETS.postgres.username
-            )
-            .parse()
-            .unwrap(),
-            NoTls,
-        ))
-        .unwrap();
+    static ref DB_POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> = r2d2::Pool::new(
+        PostgresConnectionManager::new(SECRETS.postgres.connect.parse().unwrap(), NoTls)
+    )
+    .unwrap();
 }
 
 struct Check<I> {
@@ -150,37 +143,36 @@ fn main() -> Result<(), Error> {
             (version: crate_version!())
             (author: crate_authors!(","))
             (about: crate_description!())
-            (@arg NO_SKIP: -S --("no-skip") "Don't skip past files or posts we already have")
+            (@arg NO_SKIP_MONTHS: -M --("no-skip-months") "Don't skip past months we already have")
+            (@arg NO_SKIP_IDS: -I --("no-skip-ids") "Don't skip past IDs we already have")
             (@arg PATHS: +required +multiple "The URLs or paths of the files to ingest")
-
     )
     .get_matches();
 
     for path in matches.values_of_lossy("PATHS").unwrap() {
         info!("Ingesting {}", &path);
 
-        let (min_skip, max_skip) = if matches.is_present("NO_SKIP") {
-            (None, None)
-        } else {
-            let month: i32 = MONTH_RE
-                .captures(&path)
-                .and_then(|caps| caps.get(1))
-                .ok_or_else(|| format_err!("couldn't find month in {}", path))
-                .and_then(|m| m.as_str().parse().map_err(Error::from))?;
+        let month: i32 = MONTH_RE
+            .captures(&path)
+            .and_then(|caps| caps.get(1))
+            .ok_or_else(|| format_err!("couldn't find month in {}", path))
+            .and_then(|m| m.as_str().parse().map_err(Error::from))?;
 
-            let year: i32 = YEAR_RE
-                .find(&path)
-                .ok_or_else(|| format_err!("couldn't find year in {}", path))
-                .and_then(|m| m.as_str().parse().map_err(Error::from))?;
+        let year: i32 = YEAR_RE
+            .find(&path)
+            .ok_or_else(|| format_err!("couldn't find year in {}", path))
+            .and_then(|m| m.as_str().parse().map_err(Error::from))?;
 
+        let month_f = f64::from(month);
+        let year_f = f64::from(year);
+
+        if !matches.is_present("NO_SKIP_MONTHS") {
             let (next_month, next_year) = if month == 12 {
                 (1, year + 1)
             } else {
                 (month + 1, year)
             };
 
-            let month = f64::from(month);
-            let year = f64::from(year);
             let next_month = f64::from(next_month);
             let next_year = f64::from(next_year);
 
@@ -200,7 +192,11 @@ fn main() -> Result<(), Error> {
                 info!("Already have {}-{}", year, month);
                 continue;
             }
+        }
 
+        let (min_skip, max_skip) = if matches.is_present("NO_SKIP_IDS") {
+            (None, None)
+        } else {
             let min_skip: Option<i64> = DB_POOL
                 .get()
                 .map_err(Error::from)?
@@ -209,7 +205,7 @@ fn main() -> Result<(), Error> {
                      WHERE EXTRACT(MONTH FROM created_utc) = $1 \
                      AND EXTRACT(YEAR FROM created_utc) = $2 \
                      ORDER BY reddit_id_int ASC LIMIT 1",
-                    &[&month, &year],
+                    &[&month_f, &year_f],
                 )
                 .and_then(|mut q_i| q_i.next())
                 .map(|row_opt| row_opt.map(|row| row.get("reddit_id_int")))
@@ -223,7 +219,7 @@ fn main() -> Result<(), Error> {
                      WHERE EXTRACT(MONTH FROM created_utc) = $1 \
                      AND EXTRACT(YEAR FROM created_utc) = $2 \
                      ORDER BY reddit_id_int DESC LIMIT 1",
-                    &[&month, &year],
+                    &[&month_f, &year_f],
                 )
                 .and_then(|mut q_i| q_i.next())
                 .map(|row_opt| row_opt.map(|row| row.get("reddit_id_int")))

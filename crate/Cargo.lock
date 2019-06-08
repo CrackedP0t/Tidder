@@ -760,6 +760,8 @@ name = "hasher"
 version = "0.0.1"
 dependencies = [
  "common 0.0.1",
+ "fallible-iterator 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "postgres 0.16.0-rc.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

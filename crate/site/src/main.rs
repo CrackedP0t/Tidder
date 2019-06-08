@@ -211,17 +211,10 @@ fn reply_not_found(path: FullPath) -> impl Reply {
 }
 
 lazy_static! {
-    static ref POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> =
-        r2d2::Pool::new(PostgresConnectionManager::new(
-            format!(
-                "dbname=tidder host=/run/postgresql user={}",
-                SECRETS.postgres.username
-            )
-            .parse()
-            .unwrap(),
-            NoTls,
-        ))
-        .unwrap();
+    static ref POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> = r2d2::Pool::new(
+        PostgresConnectionManager::new(SECRETS.postgres.connect.parse().unwrap(), NoTls)
+    )
+    .unwrap();
     static ref TERA: Tera = match Tera::new("site/templates/*") {
         Ok(mut t) => {
             t.register_filter("tern", utils::tern);

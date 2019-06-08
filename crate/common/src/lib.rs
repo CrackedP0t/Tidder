@@ -357,7 +357,11 @@ fn error_for_status_ue(e: reqwest::Error) -> UserError {
 pub fn follow_imgur(link: &str) -> Result<Option<String>, UserError> {
     lazy_static! {
         static ref IMGUR_SEL: Selector = Selector::parse("meta[property='og:image']").unwrap();
-        static ref IMGUR_GIFV_RE: Regex = Regex::new(r"([^.]+)\.gifv$").unwrap();
+        static ref IMGUR_GIFV_RE: Regex = Regex::new(r"([^.]+)\.(?:gifv|webm)$").unwrap();
+    }
+
+    if EXT_RE.is_match(&link) {
+        return Ok(None);
     }
 
     let url = Url::parse(link).map_err(map_ue!("not a valid URL", SC::BAD_REQUEST))?;
@@ -367,54 +371,56 @@ pub fn follow_imgur(link: &str) -> Result<Option<String>, UserError> {
         .ok_or_else(|| ue!("no host in URL", SC::BAD_REQUEST))?;
     let path = url.path();
 
-    Ok(if host == "imgur.com" {
-        if !EXT_RE.is_match(&link) {
-            let mut resp = REQW_CLIENT
-                .get(link)
-                .send()
-                .and_then(|resp| {
-                    if resp.status() == SC::NOT_FOUND && link.contains("imgur.com/gallery/") {
-                        REQW_CLIENT
-                            .get(&link.replace("/gallery/", "/a/"))
-                            .send()
-                            .and_then(Response::error_for_status)
-                    } else {
-                        resp.error_for_status()
-                    }
-                })
-                .map_err(error_for_status_ue)?;
-
-            let mut doc_string = String::new();
-
-            resp.read_to_string(&mut doc_string).map_err(Error::from)?;
-
-            Some(
-                Html::parse_document(&doc_string)
-                    .select(&IMGUR_SEL)
-                    .next()
-                    .and_then(|el| {
-                        let content = el.value().attr("content")?;
-                        Some(
-                            content
-                                .split_at(content.find('?').unwrap_or_else(|| content.len()))
-                                .0
-                                .to_string(),
-                        )
+    Ok(
+        if host == "imgur.com" || host == "m.imgur.com" || host == "i.imgur.com" {
+            if IMGUR_GIFV_RE.is_match(path) {
+                Some(
+                    IMGUR_GIFV_RE
+                        .replace(path, "https://i.imgur.com/$1.gif")
+                        .to_string(),
+                )
+            } else {
+                let mut resp = REQW_CLIENT
+                    .get(link)
+                    .send()
+                    .and_then(|resp| {
+                        if resp.status() == SC::NOT_FOUND && link.contains("imgur.com/gallery/") {
+                            REQW_CLIENT
+                                .get(&link.replace("/gallery/", "/a/"))
+                                .send()
+                                .and_then(Response::error_for_status)
+                        } else {
+                            resp.error_for_status()
+                        }
                     })
-                    .ok_or_else(|| UserError::new_msg("couldn't extract image from Imgur album"))?,
-            )
+                    .map_err(error_for_status_ue)?;
+
+                let mut doc_string = String::new();
+
+                resp.read_to_string(&mut doc_string).map_err(Error::from)?;
+
+                Some(
+                    Html::parse_document(&doc_string)
+                        .select(&IMGUR_SEL)
+                        .next()
+                        .and_then(|el| {
+                            let content = el.value().attr("content")?;
+                            Some(
+                                content
+                                    .split_at(content.find('?').unwrap_or_else(|| content.len()))
+                                    .0
+                                    .to_string(),
+                            )
+                        })
+                        .ok_or_else(|| {
+                            UserError::new_msg("couldn't extract image from Imgur album")
+                        })?,
+                )
+            }
         } else {
             None
-        }
-    } else if host == "i.imgur.com" && IMGUR_GIFV_RE.is_match(path) {
-        Some(
-            IMGUR_GIFV_RE
-                .replace(path, "https://i.imgur.com/$1.gif")
-                .to_string(),
-        )
-    } else {
-        None
-    })
+        },
+    )
 }
 
 pub fn get_hash(link: &str) -> Result<(Hash, Cow<str>, GetKind), UserError> {

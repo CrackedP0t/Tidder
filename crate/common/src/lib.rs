@@ -358,6 +358,7 @@ pub fn follow_imgur(link: &str) -> Result<Option<String>, UserError> {
     lazy_static! {
         static ref IMGUR_SEL: Selector = Selector::parse("meta[property='og:image']").unwrap();
         static ref IMGUR_GIFV_RE: Regex = Regex::new(r"([^.]+)\.(?:gifv|webm)$").unwrap();
+        static ref IMGUR_EMPTY_RE: Regex = Regex::new(r"^\.[[:alnum:]]+\b").unwrap();
     }
 
     if EXT_RE.is_match(&link) {
@@ -398,21 +399,21 @@ pub fn follow_imgur(link: &str) -> Result<Option<String>, UserError> {
 
             resp.read_to_string(&mut doc_string).map_err(Error::from)?;
 
-            Some(
-                Html::parse_document(&doc_string)
-                    .select(&IMGUR_SEL)
-                    .next()
-                    .and_then(|el| {
-                        let content = el.value().attr("content")?;
-                        Some(
-                            content
-                                .split_at(content.find('?').unwrap_or_else(|| content.len()))
-                                .0
-                                .to_string(),
-                        )
-                    })
-                    .ok_or_else(|| UserError::new_msg("couldn't extract image from Imgur album"))?,
-            )
+            let doc = Html::parse_document(&doc_string);
+            let og_image = doc
+                .select(&IMGUR_SEL)
+                .next()
+                .and_then(|el| el.value().attr("content"))
+                .ok_or_else(|| ue!("couldn't extract image from Imgur album"))?;
+
+            let mut image_url =
+                Url::parse(og_image).map_err(map_ue!("invalid image URL from Imgur"))?;
+            image_url.set_query(None); // Maybe take advantage of Imgur's downscaling?
+            if IMGUR_EMPTY_RE.is_match(image_url.path()) {
+                return Err(ue!("empty Imgur album"));
+            }
+
+            Some(image_url.into_string())
         }
     } else {
         None

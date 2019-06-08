@@ -358,7 +358,7 @@ pub fn follow_imgur(link: &str) -> Result<Option<String>, UserError> {
     lazy_static! {
         static ref IMGUR_SEL: Selector = Selector::parse("meta[property='og:image']").unwrap();
         static ref IMGUR_GIFV_RE: Regex = Regex::new(r"([^.]+)\.(?:gifv|webm)$").unwrap();
-        static ref IMGUR_EMPTY_RE: Regex = Regex::new(r"^\.[[:alnum:]]+\b").unwrap();
+        static ref IMGUR_EMPTY_RE: Regex = Regex::new(r"^/\.[[:alnum:]]+\b").unwrap();
     }
 
     if EXT_RE.is_match(&link) {

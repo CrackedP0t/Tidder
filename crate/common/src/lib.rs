@@ -421,6 +421,9 @@ pub fn follow_imgur(link: &str) -> Result<Option<String>, UserError> {
 }
 
 pub fn get_hash(link: &str) -> Result<(Hash, Cow<str>, GetKind), UserError> {
+    if link.len() > 2000 {
+        return Err(ue!("URL too long", SC::BAD_REQUEST));
+    }
     let url = Url::parse(link).map_err(map_ue!("not a valid URL", SC::BAD_REQUEST))?;
 
     let scheme = url.scheme();

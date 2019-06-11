@@ -47,7 +47,12 @@ where
     }
 }
 
-fn ingest_json<R: Read + Send>(json_stream: R, min_skip: Option<i64>, max_skip: Option<i64>) {
+fn ingest_json<R: Read + Send>(
+    title: &str,
+    json_stream: R,
+    min_skip: Option<i64>,
+    max_skip: Option<i64>,
+) {
     let json_iter = Deserializer::from_reader(json_stream).into_iter::<Value>();
 
     info!("Starting ingestion!");
@@ -117,14 +122,14 @@ fn ingest_json<R: Read + Send>(json_stream: R, min_skip: Option<i64>, max_skip: 
             match save_hash(&post.url, HashDest::Images) {
                 Ok((_hash, _hash_dest, image_id, exists)) => {
                     if exists {
-                        info!("{} already exists", post.url);
+                        info!("{}: {} already exists", title, post.url);
                     } else {
-                        info!("{} successfully hashed", post.url);
+                        info!("{}: {} successfully hashed", title, post.url);
                     }
                     save_post(&DB_POOL, &post, image_id);
                 }
                 Err(ue) => {
-                    warn!("{} failed: {}", post.url, ue.error);
+                    warn!("{}: {} failed: {}", title, post.url, ue.error);
                 }
             }
         });
@@ -189,7 +194,7 @@ fn main() -> Result<(), Error> {
                 .map(|row_opt| row_opt.map(|row| row.get::<usize, bool>(0)).unwrap())
                 .map_err(Error::from)?
             {
-                info!("Already have {}-{}", year, month);
+                info!("Already have {:02}-{}", year, month);
                 continue;
             }
         }
@@ -261,12 +266,25 @@ fn main() -> Result<(), Error> {
 
         let input = BufReader::new(input);
 
+        let title = format!("{:02}-{}", month, year);
+
         if path.ends_with("bz2") {
-            ingest_json(bzip2::bufread::BzDecoder::new(input), min_skip, max_skip);
+            ingest_json(
+                &title,
+                bzip2::bufread::BzDecoder::new(input),
+                min_skip,
+                max_skip,
+            );
         } else if path.ends_with("xz") {
-            ingest_json(xz2::bufread::XzDecoder::new(input), min_skip, max_skip);
+            ingest_json(
+                &title,
+                xz2::bufread::XzDecoder::new(input),
+                min_skip,
+                max_skip,
+            );
         } else if path.ends_with("zst") {
             ingest_json(
+                &title,
                 zstd::stream::read::Decoder::new(input).map_err(Error::from)?,
                 min_skip,
                 max_skip,

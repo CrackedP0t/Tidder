@@ -102,7 +102,7 @@ fn ingest_json<R: Read + Send>(
                         .domain()
                         .map(|d| is_host_special(d))
                     .unwrap_or(false))
-                && !already_have.get(&post.id_int).is_some()
+                && !already_have.remove(&post.id_int)
                 && min_skip
                     .map(|min_skip| post.id_int < min_skip)
                     .unwrap_or(true)

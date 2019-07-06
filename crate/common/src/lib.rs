@@ -376,6 +376,7 @@ pub fn follow_link(link: &str) -> Result<Option<String>, UserError> {
         return Ok(None);
     }
 
+    // if host.rsplit('.').take(2).map(|s| &s).eq(&["imgur", "com"]) {
     if IMGUR_HOST_RE.is_match(host) {
         follow_imgur(&url).map(Some)
     } else if GFYCAT_HOST_RE.is_match(host) {
@@ -504,15 +505,6 @@ pub fn get_hash(link: &str) -> Result<(Hash, Cow<str>, GetKind), UserError> {
 
     resp.error_for_status_ref().map_err(error_for_status_ue)?;
 
-    if let Some(ct) = resp.headers().get(header::CONTENT_TYPE) {
-        let ct = ct
-            .to_str()
-            .map_err(map_ue!("non-ASCII Content-Type header"))?;
-        if !IMAGE_MIMES.contains(&ct) {
-            return Err(ue!(format!("unsupported Content-Type: {}", ct)));
-        }
-    }
-
     let url = resp.url();
     if url
         .host_str()
@@ -521,6 +513,15 @@ pub fn get_hash(link: &str) -> Result<(Hash, Cow<str>, GetKind), UserError> {
         && url.path() == "/removed.png"
     {
         return Err(ue!("removed from Imgur"));
+    }
+
+    if let Some(ct) = resp.headers().get(header::CONTENT_TYPE) {
+        let ct = ct
+            .to_str()
+            .map_err(map_ue!("non-ASCII Content-Type header"))?;
+        if !IMAGE_MIMES.contains(&ct) {
+            return Err(ue!(format!("unsupported Content-Type: {}", ct)));
+        }
     }
 
     let mut image = Vec::<u8>::with_capacity(

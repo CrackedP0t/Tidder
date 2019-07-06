@@ -376,7 +376,6 @@ pub fn follow_link(link: &str) -> Result<Option<String>, UserError> {
         return Ok(None);
     }
 
-    // if host.rsplit('.').take(2).map(|s| &s).eq(&["imgur", "com"]) {
     if IMGUR_HOST_RE.is_match(host) {
         follow_imgur(&url).map(Some)
     } else if GFYCAT_HOST_RE.is_match(host) {
@@ -482,7 +481,7 @@ pub fn get_hash(link: &str) -> Result<(Hash, Cow<str>, GetKind), UserError> {
 
     let scheme = url.scheme();
     if scheme != "http" && scheme != "https" {
-        return Err(ue!("unsupported scheme in URL"));
+        return Err(ue!("unsupported scheme in URL", SC::BAD_REQUEST));
     }
 
     let link = follow_link(link)?
@@ -508,7 +507,7 @@ pub fn get_hash(link: &str) -> Result<(Hash, Cow<str>, GetKind), UserError> {
     if let Some(ct) = resp.headers().get(header::CONTENT_TYPE) {
         let ct = ct
             .to_str()
-            .map_err(map_ue!("non-ASCII Content-Type header", SC::BAD_REQUEST))?;
+            .map_err(map_ue!("non-ASCII Content-Type header"))?;
         if !IMAGE_MIMES.contains(&ct) {
             return Err(ue!(format!("unsupported Content-Type: {}", ct)));
         }
@@ -521,7 +520,7 @@ pub fn get_hash(link: &str) -> Result<(Hash, Cow<str>, GetKind), UserError> {
         .unwrap_or(false)
         && url.path() == "/removed.png"
     {
-        return Err(UserError::new_msg("removed from Imgur"));
+        return Err(ue!("removed from Imgur"));
     }
 
     let mut image = Vec::<u8>::with_capacity(

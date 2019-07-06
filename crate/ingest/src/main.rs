@@ -11,6 +11,7 @@ use regex::Regex;
 use reqwest::{Client, Url};
 use serde_json::from_value;
 use serde_json::{Deserializer, Value};
+use std::collections::BTreeSet;
 use std::fs::{remove_file, File, OpenOptions};
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::iter::Iterator;
@@ -49,6 +50,7 @@ where
 
 fn ingest_json<R: Read + Send>(
     title: &str,
+    already_have: BTreeSet<i64>,
     json_stream: R,
     min_skip: Option<i64>,
     max_skip: Option<i64>,
@@ -99,7 +101,8 @@ fn ingest_json<R: Read + Send>(
                         .ok()?
                         .domain()
                         .map(|d| is_host_special(d))
-                        .unwrap_or(false))
+                    .unwrap_or(false))
+                && !already_have.get(&post.id_int).is_some()
                 && min_skip
                     .map(|min_skip| post.id_int < min_skip)
                     .unwrap_or(true)
@@ -264,6 +267,25 @@ fn main() -> Result<(), Error> {
                 (Box::new(File::open(&path).map_err(Error::from)?), None)
             };
 
+        let mut already_have = BTreeSet::new();
+
+        DB_POOL
+            .get()
+            .map_err(Error::from)?
+            .query_iter(
+                "SELECT reddit_id_int FROM posts \
+                 WHERE EXTRACT(month FROM created_utc) = $1 \
+                 AND EXTRACT(year FROM created_utc) = $2",
+                &[&month_f, &year_f],
+            )
+            .map_err(Error::from)?
+            .for_each(|row| {
+                already_have.insert(row.get(0));
+                Ok(())
+            }).map_err(Error::from)?;
+
+        info!("Already have {} posts", already_have.len());
+
         let input = BufReader::new(input);
 
         let title = format!("{:02}-{}", month, year);
@@ -271,6 +293,7 @@ fn main() -> Result<(), Error> {
         if path.ends_with("bz2") {
             ingest_json(
                 &title,
+                already_have,
                 bzip2::bufread::BzDecoder::new(input),
                 min_skip,
                 max_skip,
@@ -278,6 +301,7 @@ fn main() -> Result<(), Error> {
         } else if path.ends_with("xz") {
             ingest_json(
                 &title,
+                already_have,
                 xz2::bufread::XzDecoder::new(input),
                 min_skip,
                 max_skip,
@@ -285,6 +309,7 @@ fn main() -> Result<(), Error> {
         } else if path.ends_with("zst") {
             ingest_json(
                 &title,
+                already_have,
                 zstd::stream::read::Decoder::new(input).map_err(Error::from)?,
                 min_skip,
                 max_skip,

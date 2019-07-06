@@ -354,12 +354,27 @@ fn error_for_status_ue(e: reqwest::Error) -> UserError {
     UserError::new(msg, e)
 }
 
-pub fn follow_link(link: &str) -> Result<Option<String>, UserError> {
+pub fn is_host_imgur(host: &str) -> bool {
     lazy_static! {
         static ref IMGUR_HOST_RE: Regex = Regex::new(r"(?:^|\.)imgur.com$").unwrap();
+    }
+
+    IMGUR_HOST_RE.is_match(host)
+}
+
+pub fn is_host_gfycat(host: &str) -> bool {
+    lazy_static! {
         static ref GFYCAT_HOST_RE: Regex = Regex::new(r"(?:^|\.)gfycat.com$").unwrap();
     }
 
+    GFYCAT_HOST_RE.is_match(host)
+}
+
+pub fn is_host_special(host: &str) -> bool {
+    is_host_imgur(host) || is_host_gfycat(host)
+}
+
+pub fn follow_link(link: &str) -> Result<Option<String>, UserError> {
     if EXT_RE.is_match(&link) {
         return Ok(None);
     }
@@ -376,10 +391,9 @@ pub fn follow_link(link: &str) -> Result<Option<String>, UserError> {
         return Ok(None);
     }
 
-    // if host.rsplit('.').take(2).map(|s| &s).eq(&["imgur", "com"]) {
-    if IMGUR_HOST_RE.is_match(host) {
+    if is_host_imgur(host) {
         follow_imgur(&url).map(Some)
-    } else if GFYCAT_HOST_RE.is_match(host) {
+    } else if is_host_gfycat(host) {
         follow_gfycat(&url).map(Some)
     } else {
         Ok(None)

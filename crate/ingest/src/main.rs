@@ -98,7 +98,7 @@ fn ingest_json<R: Read + Send>(
                     || Url::parse(&post.url)
                         .ok()?
                         .domain()
-                        .map(|d| d.ends_with("imgur.com"))
+                        .map(|d| is_host_special(d))
                         .unwrap_or(false))
                 && min_skip
                     .map(|min_skip| post.id_int < min_skip)

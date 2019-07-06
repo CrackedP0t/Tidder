@@ -20,6 +20,7 @@ tokio-postgres = { version = "0.4.0-rc.2", features = ["with-chrono-0_4"] }
 toml = "0.5.1"
 url = "1.7.2"
 scraper = "0.10.0"
+oping = "0.3.3"
 
 [build-dependencies]
 image = { git = "https://github.com/image-rs/image" }

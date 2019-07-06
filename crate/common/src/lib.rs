@@ -354,11 +354,10 @@ fn error_for_status_ue(e: reqwest::Error) -> UserError {
     UserError::new(msg, e)
 }
 
-pub fn follow_imgur(link: &str) -> Result<Option<String>, UserError> {
+pub fn follow_link(link: &str) -> Result<Option<String>, UserError> {
     lazy_static! {
-        static ref IMGUR_SEL: Selector = Selector::parse("meta[property='og:image']").unwrap();
-        static ref IMGUR_GIFV_RE: Regex = Regex::new(r"([^.]+)\.(?:gifv|webm)$").unwrap();
-        static ref IMGUR_EMPTY_RE: Regex = Regex::new(r"^/\.[[:alnum:]]+\b").unwrap();
+        static ref IMGUR_HOST_RE: Regex = Regex::new(r"(?:^|\.)imgur.com$").unwrap();
+        static ref GFYCAT_HOST_RE: Regex = Regex::new(r"(?:^|\.)gfycat.com$").unwrap();
     }
 
     if EXT_RE.is_match(&link) {
@@ -370,54 +369,109 @@ pub fn follow_imgur(link: &str) -> Result<Option<String>, UserError> {
     let host = url
         .host_str()
         .ok_or_else(|| ue!("no host in URL", SC::BAD_REQUEST))?;
-    let path = url.path();
 
-    Ok(if host.ends_with("imgur.com") {
-        if IMGUR_GIFV_RE.is_match(path) {
-            Some(
-                IMGUR_GIFV_RE
-                    .replace(path, "https://i.imgur.com/$1.gif")
-                    .to_string(),
-            )
-        } else {
-            let mut resp = REQW_CLIENT
-                .get(link)
-                .send()
-                .and_then(|resp| {
-                    if resp.status() == SC::NOT_FOUND && link.contains("imgur.com/gallery/") {
-                        REQW_CLIENT
-                            .get(&link.replace("/gallery/", "/a/"))
-                            .send()
-                            .and_then(Response::error_for_status)
-                    } else {
-                        resp.error_for_status()
-                    }
-                })
-                .map_err(error_for_status_ue)?;
+    // Begin special-casing
 
-            let mut doc_string = String::new();
+    if url.path() == "/" {
+        return Ok(None);
+    }
 
-            resp.read_to_string(&mut doc_string).map_err(Error::from)?;
-
-            let doc = Html::parse_document(&doc_string);
-            let og_image = doc
-                .select(&IMGUR_SEL)
-                .next()
-                .and_then(|el| el.value().attr("content"))
-                .ok_or_else(|| ue!("couldn't extract image from Imgur album"))?;
-
-            let mut image_url =
-                Url::parse(og_image).map_err(map_ue!("invalid image URL from Imgur"))?;
-            image_url.set_query(None); // Maybe take advantage of Imgur's downscaling?
-            if IMGUR_EMPTY_RE.is_match(image_url.path()) {
-                return Err(ue!("empty Imgur album"));
-            }
-
-            Some(image_url.into_string())
-        }
+    // if host.rsplit('.').take(2).map(|s| &s).eq(&["imgur", "com"]) {
+    if IMGUR_HOST_RE.is_match(host) {
+        follow_imgur(&url).map(Some)
+    } else if GFYCAT_HOST_RE.is_match(host) {
+        follow_gfycat(&url).map(Some)
     } else {
-        None
-    })
+        Ok(None)
+    }
+}
+
+pub fn follow_gfycat(url: &Url) -> Result<String, UserError> {
+    lazy_static! {
+        static ref GFY_ID_SEL: Regex = Regex::new(r"^/([[:alpha:]]+)").unwrap();
+    }
+
+    #[derive(Deserialize)]
+    struct GfyItem {
+        #[serde(rename = "mobilePosterUrl")]
+        mobile_poster_url: String,
+    }
+
+    #[derive(Deserialize)]
+    struct Gfycats {
+        #[serde(rename = "gfyItem")]
+        gfy_item: GfyItem,
+    }
+
+    Ok(REQW_CLIENT
+        .get(&format!(
+            "https://api.gfycat.com/v1/gfycats/{}",
+            GFY_ID_SEL
+                .captures(url.path())
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str())
+                .ok_or(ue!("couldn't find Gfycat ID in link", SC::BAD_REQUEST))?
+        ))
+        .send()
+        .map_err(map_ue!("couldn't reach Gfycat API"))?
+        .error_for_status()
+        .map_err(error_for_status_ue)?
+        .json::<Gfycats>()
+        .map_err(map_ue!("invalid JSON from Gfycat API"))?
+        .gfy_item
+        .mobile_poster_url)
+}
+
+pub fn follow_imgur(url: &Url) -> Result<String, UserError> {
+    lazy_static! {
+        static ref IMGUR_SEL: Selector = Selector::parse("meta[property='og:image']").unwrap();
+        static ref IMGUR_GIFV_RE: Regex = Regex::new(r"([^.]+)\.(?:gifv|webm)$").unwrap();
+        static ref IMGUR_EMPTY_RE: Regex = Regex::new(r"^/\.[[:alnum:]]+\b").unwrap();
+    }
+
+    let path = url.path();
+    let link = url.as_str();
+
+    if IMGUR_GIFV_RE.is_match(path) {
+        Ok(IMGUR_GIFV_RE
+            .replace(path, "https://i.imgur.com/$1.gif")
+            .to_string())
+    } else {
+        let mut resp = REQW_CLIENT
+            .get(link)
+            .send()
+            .and_then(|resp| {
+                if resp.status() == SC::NOT_FOUND && link.contains("imgur.com/gallery/") {
+                    REQW_CLIENT
+                        .get(&link.replace("/gallery/", "/a/"))
+                        .send()
+                        .and_then(Response::error_for_status)
+                } else {
+                    resp.error_for_status()
+                }
+            })
+            .map_err(error_for_status_ue)?;
+
+        let mut doc_string = String::new();
+
+        resp.read_to_string(&mut doc_string).map_err(Error::from)?;
+
+        let doc = Html::parse_document(&doc_string);
+        let og_image = doc
+            .select(&IMGUR_SEL)
+            .next()
+            .and_then(|el| el.value().attr("content"))
+            .ok_or_else(|| ue!("couldn't extract image from Imgur album"))?;
+
+        let mut image_url =
+            Url::parse(og_image).map_err(map_ue!("invalid image URL from Imgur"))?;
+        image_url.set_query(None); // Maybe take advantage of Imgur's downscaling?
+        if IMGUR_EMPTY_RE.is_match(image_url.path()) {
+            return Err(ue!("empty Imgur album"));
+        }
+
+        Ok(image_url.into_string())
+    }
 }
 
 pub fn get_hash(link: &str) -> Result<(Hash, Cow<str>, GetKind), UserError> {
@@ -431,7 +485,7 @@ pub fn get_hash(link: &str) -> Result<(Hash, Cow<str>, GetKind), UserError> {
         return Err(ue!("unsupported scheme in URL"));
     }
 
-    let link = follow_imgur(link)?
+    let link = follow_link(link)?
         .map(Cow::Owned)
         .unwrap_or_else(|| Cow::Borrowed(link));
 

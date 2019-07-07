@@ -124,15 +124,24 @@ fn ingest_json<R: Read + Send>(
                 .replace("&gt;", ">");
             match save_hash(&post.url, HashDest::Images) {
                 Ok((_hash, _hash_dest, image_id, exists)) => {
-                    if exists {
-                        info!("{}: {} already exists", title, post.url);
-                    } else {
-                        info!("{}: {} successfully hashed", title, post.url);
+                    match save_post(&DB_POOL, &post, image_id) {
+                        Ok(post_exists) => if !post_exists {
+                            if exists {
+                                info!("{}: {}: {} already exists", title, post.id, post.url);
+                            } else {
+                                info!("{}: {}: {} successfully hashed", title, post.id, post.url);
+                            }
+                        } else {
+                            warn!("{}: post ID {} already recorded", title, post.id);
+                        }
+                        Err(ue) => {
+                            warn!("{}: saving post ID {} failed: {}", title, post.id, ue.error);
+                            std::process::exit(1);
+                        }
                     }
-                    save_post(&DB_POOL, &post, image_id);
                 }
                 Err(ue) => {
-                    warn!("{}: {} failed: {}", title, post.url, ue.error);
+                    warn!("{}: {}: {} failed: {}", title, post.id, post.url, ue.error);
                 }
             }
         });

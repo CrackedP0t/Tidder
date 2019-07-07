@@ -130,6 +130,9 @@ macro_rules! ue {
 
 #[macro_export]
 macro_rules! map_ue {
+    () => {
+        UserError::from_std
+    };
     ($msg:expr) => {
         |e| UserError::new($msg, Error::from(e))
     };
@@ -176,49 +179,45 @@ pub fn save_post(
     pool: &r2d2::Pool<PostgresConnectionManager<NoTls>>,
     post: &Submission,
     image_id: i64,
-) {
+) -> Result<bool, UserError> {
     lazy_static! {
-        static ref ID_RE: Regex = Regex::new(r"/comments/([^/]+)/").map_err(le!()).unwrap();
+        static ref ID_RE: Regex = Regex::new(r"/comments/([^/]+)/").unwrap();
     }
 
     let reddit_id = String::from(
-        match ID_RE.captures(&post.permalink).and_then(|cap| cap.get(1)) {
-            Some(reddit_id) => reddit_id.as_str(),
-            None => {
-                error!("Couldn't find ID in {}", post.permalink);
-                return;
-            }
-        },
+        ID_RE
+            .captures(&post.permalink)
+            .and_then(|cap| cap.get(1))
+            .ok_or_else(|| ue!("Couldn't find ID in permalink"))?
+            .as_str(),
     );
 
-    pool.get().map_err(le!())
-        .and_then(
-            |mut client|
-            client.transaction().map_err(le!())
-                .and_then(|mut trans| {
-                    trans.execute(
-                        "INSERT INTO posts (reddit_id, link, permalink, author, created_utc, score, subreddit, title, nsfw, spoiler, image_id, reddit_id_int) \
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
-                         ON CONFLICT DO NOTHING",
-                        &[
-                            &reddit_id,
-                            &post.url,
-                            &post.permalink,
-                            &post.author,
-                            &(NaiveDateTime::from_timestamp(post.created_utc, 0)),
-                            &post.score,
-                            &post.subreddit,
-                            &post.title,
-                            &post.over_18,
-                            &post.spoiler.unwrap_or(false),
-                            &image_id,
-                            &i64::from_str_radix(&reddit_id, 36).map_err(le!())?
-                        ],
-                    ).map_err(le!())?;
-                    trans.commit().map_err(le!())
-                }))
-        .map(|_| ())
-        .unwrap_or_else(|_| ());
+    let mut client = pool.get().map_err(map_ue!())?;
+    let mut trans = client.transaction().map_err(map_ue!())?;
+    let modified = trans
+        .execute(
+            "INSERT INTO posts (reddit_id, link, permalink, author, created_utc, score, subreddit, title, nsfw, spoiler, image_id, reddit_id_int) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
+             ON CONFLICT DO NOTHING",
+            &[
+                &reddit_id,
+                &post.url,
+                &post.permalink,
+                &post.author,
+                &(NaiveDateTime::from_timestamp(post.created_utc, 0)),
+                &post.score,
+                &post.subreddit,
+                &post.title,
+                &post.over_18,
+                &post.spoiler.unwrap_or(false),
+                &image_id,
+                &i64::from_str_radix(&reddit_id, 36).map_err(map_ue!())?
+            ],
+        ).map_err(map_ue!())?;
+
+    trans.commit().map_err(map_ue!())?;
+
+    Ok(modified == 0)
 }
 
 #[derive(Debug)]
@@ -424,7 +423,7 @@ pub fn follow_gfycat(url: &Url) -> Result<String, UserError> {
                 .captures(url.path())
                 .and_then(|c| c.get(1))
                 .map(|m| m.as_str())
-                .ok_or(ue!("couldn't find Gfycat ID in link", SC::BAD_REQUEST))?
+                .ok_or_else(|| ue!("couldn't find Gfycat ID in link", SC::BAD_REQUEST))?
         ))
         .send()
         .map_err(map_ue!("couldn't reach Gfycat API"))?
@@ -573,7 +572,8 @@ pub fn save_hash(
             let mut client = DB_POOL.get().map_err(Error::from)?;
             let mut trans = client.transaction().map_err(Error::from)?;
             let rows = trans
-                .query("INSERT INTO images (link, hash, no_store, no_cache, expires, etag, must_revalidate, retrieved_on) VALUES (SELECT link, hash, no_store, no_cache, expires, etag, must_revalidate, retrieved_on FROM image_cache WHERE id = $1) RETURNING id", &[&id])
+                .query("INSERT INTO images \
+                        (link, hash, no_store, no_cache, expires, etag, must_revalidate, retrieved_on) VALUES (SELECT link, hash, no_store, no_cache, expires, etag, must_revalidate, retrieved_on FROM image_cache WHERE id = $1) RETURNING id", &[&id])
                 .map_err(Error::from)?;
             trans.commit().map_err(Error::from)?;
 

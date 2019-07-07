@@ -13,6 +13,7 @@ use serde_json::from_value;
 use serde_json::{Deserializer, Value};
 use std::collections::BTreeSet;
 use std::fs::{remove_file, File, OpenOptions};
+use std::path::Path;
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::iter::Iterator;
 
@@ -101,7 +102,7 @@ fn ingest_json<R: Read + Send>(
                         .ok()?
                         .domain()
                         .map(|d| is_host_special(d))
-                    .unwrap_or(false))
+                        .unwrap_or(false))
                 && !already_have.remove(&post.id_int)
                 && min_skip
                     .map(|min_skip| post.id_int < min_skip)
@@ -125,24 +126,38 @@ fn ingest_json<R: Read + Send>(
             match save_hash(&post.url, HashDest::Images) {
                 Ok((_hash, _hash_dest, image_id, exists)) => {
                     match save_post(&DB_POOL, &post, image_id) {
-                        Ok(post_exists) => if !post_exists {
-                            if exists {
-                                info!("{}: {}: {} already exists", title, post.id, post.url);
+                        Ok(post_exists) => {
+                            if !post_exists {
+                                if exists {
+                                    info!("{}: {}: {} already exists", title, post.id, post.url);
+                                } else {
+                                    info!(
+                                        "{}: {}: {} successfully hashed",
+                                        title, post.id, post.url
+                                    );
+                                }
                             } else {
-                                info!("{}: {}: {} successfully hashed", title, post.id, post.url);
+                                warn!("{}: post ID {} already recorded", title, post.id);
                             }
-                        } else {
-                            warn!("{}: post ID {} already recorded", title, post.id);
                         }
-                        Err(ue) => {
-                            warn!("{}: saving post ID {} failed: {}", title, post.id, ue.error);
-                            std::process::exit(1);
-                        }
+                        Err(ue) => match ue.source {
+                            Source::Internal => {
+                                error!("{}: {}: {}", title, post.id, ue.error);
+                                std::process::exit(1);
+                            }
+                            _ => {
+                                warn!("{}: saving post ID {} failed: {}", title, post.id, ue.error)
+                            }
+                        },
                     }
                 }
-                Err(ue) => {
-                    warn!("{}: {}: {} failed: {}", title, post.id, post.url, ue.error);
-                }
+                Err(ue) => match ue.source {
+                    Source::Internal => {
+                        error!("{}: {}: {}", title, post.id, ue.error);
+                        std::process::exit(1);
+                    }
+                    _ => warn!("{}: {}: {} failed: {}", title, post.id, post.url, ue.error),
+                },
             }
         });
 }
@@ -256,25 +271,39 @@ fn main() -> Result<(), Error> {
                         .next_back()
                         .ok_or_else(|| format_err!("no last path segment"))?;
 
-                let mut arch_file = OpenOptions::new()
-                    .create_new(true)
-                    .read(true)
-                    .write(true)
-                    .open(&arch_path)
+                let arch_file = if Path::exists(Path::new(&arch_path)) {
+                    info!("Found existing archive file");
+
+                    OpenOptions::new()
+                        .read(true)
+                        .open(&arch_path)
+                        .map_err(Error::from)?
+                } else {
+                    info!("Downloading archive file");
+                    let mut arch_file = OpenOptions::new()
+                        .create_new(true)
+                        .read(true)
+                        .write(true)
+                        .open(&arch_path)
+                        .map_err(Error::from)?;
+
+                    io::copy(
+                        &mut BufReader::new(REQW_CLIENT.get(&path).send().map_err(Error::from)?),
+                        &mut arch_file,
+                    )
                     .map_err(Error::from)?;
 
-                io::copy(
-                    &mut BufReader::new(REQW_CLIENT.get(&path).send().map_err(Error::from)?),
-                    &mut arch_file,
-                )
-                .map_err(Error::from)?;
+                    arch_file.seek(SeekFrom::Start(0)).map_err(Error::from)?;
 
-                arch_file.seek(SeekFrom::Start(0)).map_err(Error::from)?;
+                    arch_file
+                };
 
                 (Box::new(arch_file), Some(arch_path))
             } else {
                 (Box::new(File::open(&path).map_err(Error::from)?), None)
             };
+
+        info!("Processing posts we already have");
 
         let mut already_have = BTreeSet::new();
 
@@ -291,7 +320,8 @@ fn main() -> Result<(), Error> {
             .for_each(|row| {
                 already_have.insert(row.get(0));
                 Ok(())
-            }).map_err(Error::from)?;
+            })
+            .map_err(Error::from)?;
 
         info!("Already have {} posts", already_have.len());
 

@@ -390,7 +390,7 @@ fn get_existing(link: &str) -> Result<Option<(Hash, HashDest, i64)>, UserError> 
             "SELECT hash, id, 'images' as table_name FROM images WHERE link = $1 UNION SELECT hash, id, 'image_cache' as table_name FROM image_cache WHERE link = $1",
             &[&link],
         )
-        .map_err(UserError::from_std)
+        .map_err(map_ue!())
         .map(|rows| {
             rows.get(0)
                 .map(|row| (Hash(row.get::<_, i64>("hash") as u64), match row.get("table_name") {

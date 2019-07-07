@@ -323,7 +323,8 @@ fn main() -> Result<(), Error> {
             })
             .map_err(Error::from)?;
 
-        info!("Already have {} posts", already_have.len());
+        let already_have_len = already_have.len();
+        info!("Already have {} post{}", already_have_len, if already_have_len == 1 {""} else {"s"});
 
         let input = BufReader::new(input);
 

@@ -382,8 +382,8 @@ pub enum GetKind {
 }
 
 fn get_existing(link: &str) -> Result<Option<(Hash, HashDest, i64)>, UserError> {
-    let mut client = DB_POOL.get().map_err(Error::from)?;
-    let mut trans = client.transaction().map_err(Error::from)?;
+    let mut client = DB_POOL.get().map_err(map_ue!())?;
+    let mut trans = client.transaction().map_err(map_ue!())?;
 
     trans
         .query(
@@ -403,7 +403,7 @@ fn get_existing(link: &str) -> Result<Option<(Hash, HashDest, i64)>, UserError> 
 
 lazy_static! {
     static ref REQW_CLIENT: reqwest::Client = reqwest::Client::builder()
-        .timeout(Some(std::time::Duration::from_secs(10)))
+        .timeout(Some(std::time::Duration::from_secs(15)))
         .build()
         .unwrap();
 }
@@ -504,12 +504,16 @@ pub fn follow_imgur(url: &Url) -> Result<String, UserError> {
         static ref IMGUR_SEL: Selector = Selector::parse("meta[property='og:image']").unwrap();
         static ref IMGUR_GIFV_RE: Regex = Regex::new(r"([^.]+)\.(?:gifv|webm)$").unwrap();
         static ref IMGUR_EMPTY_RE: Regex = Regex::new(r"^/\.[[:alnum:]]+\b").unwrap();
+        static ref IMGUR_EXT_RE: Regex =
+            Regex::new(r"[[:alnum:]]\.(?:jpg|png)[[:alnum:]]+").unwrap();
     }
 
     let path = url.path();
     let link = url.as_str();
 
-    if IMGUR_GIFV_RE.is_match(path) {
+    if IMGUR_EXT_RE.is_match(path) {
+        Ok(url.to_string())
+    } else if IMGUR_GIFV_RE.is_match(path) {
         Ok(IMGUR_GIFV_RE
             .replace(path, "https://i.imgur.com/$1.gif")
             .to_string())
@@ -531,7 +535,7 @@ pub fn follow_imgur(url: &Url) -> Result<String, UserError> {
 
         let mut doc_string = String::new();
 
-        resp.read_to_string(&mut doc_string).map_err(Error::from)?;
+        resp.read_to_string(&mut doc_string).map_err(map_ue!())?;
 
         let doc = Html::parse_document(&doc_string);
         let og_image = doc
@@ -611,7 +615,7 @@ pub fn get_hash(link: &str) -> Result<(Hash, Cow<str>, GetKind), UserError> {
 
     BufReader::new(resp.by_ref())
         .read_to_end(&mut image)
-        .map_err(Error::from)?;
+        .map_err(map_ue!())?;
 
     Ok((
         hash_from_memory(&image)?,
@@ -633,19 +637,19 @@ pub fn save_hash(
         if hash_dest == found_hash_dest || hash_dest == HashDest::ImageCache {
             Ok((hash, hash_dest, id, true))
         } else {
-            let mut client = DB_POOL.get().map_err(Error::from)?;
-            let mut trans = client.transaction().map_err(Error::from)?;
+            let mut client = DB_POOL.get().map_err(map_ue!())?;
+            let mut trans = client.transaction().map_err(map_ue!())?;
             let rows = trans
                 .query("INSERT INTO images \
                         (link, hash, no_store, no_cache, expires, etag, must_revalidate, retrieved_on) VALUES (SELECT link, hash, no_store, no_cache, expires, etag, must_revalidate, retrieved_on FROM image_cache WHERE id = $1) RETURNING id", &[&id])
-                .map_err(Error::from)?;
-            trans.commit().map_err(Error::from)?;
+                .map_err(map_ue!())?;
+            trans.commit().map_err(map_ue!())?;
 
-            let mut trans = client.transaction().map_err(Error::from)?;
+            let mut trans = client.transaction().map_err(map_ue!())?;
             trans
                 .query("DELETE FROM image_cache WHERE id = $1", &[&id])
-                .map_err(Error::from)?;
-            trans.commit().map_err(Error::from)?;
+                .map_err(map_ue!())?;
+            trans.commit().map_err(map_ue!())?;
 
             let id = rows
                 .get(0)
@@ -666,8 +670,8 @@ pub fn save_hash(
                 .and_then(|s| cache_control::with_str(s).ok());
             let cc = cc.as_ref();
 
-            let mut client = DB_POOL.get().map_err(Error::from)?;
-            let mut trans = client.transaction().map_err(Error::from)?;
+            let mut client = DB_POOL.get().map_err(map_ue!())?;
+            let mut trans = client.transaction().map_err(map_ue!())?;
             let rows = trans
                 .query(
                     format!(
@@ -698,14 +702,14 @@ pub fn save_hash(
                         &now,
                     ],
                 )
-                .map_err(Error::from)?;
-            trans.commit().map_err(Error::from)?;
+                .map_err(map_ue!())?;
+            trans.commit().map_err(map_ue!())?;
 
             match rows.get(0) {
                 Some(row) => Ok((
                     hash,
                     hash_dest,
-                    row.try_get("id").map_err(Error::from)?,
+                    row.try_get("id").map_err(map_ue!())?,
                     false,
                 )),
                 None => get_existing(&link)?

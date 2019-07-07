@@ -164,13 +164,19 @@ fn ingest_json<R: Read + Send>(
                         Err(ue) => match ue.source {
                             Source::Internal => {
                                 error!(
-                                    "{}: {}: {}{}{}",
+                                    "{}: {}: {}: {}{}{}{}",
                                     title,
                                     post.id,
+                                    post.url,
                                     ue.file.unwrap_or(""),
                                     ue.line
-                                        .map(|line| Cow::Owned(format!("#{} ", line)))
+                                        .map(|line| Cow::Owned(format!("#{}", line)))
                                         .unwrap_or(Cow::Borrowed("")),
+                                    if ue.file.is_some() || ue.line.is_some() {
+                                        ": "
+                                    } else {
+                                        ""
+                                    },
                                     ue.error
                                 );
                                 std::process::exit(1);
@@ -184,13 +190,19 @@ fn ingest_json<R: Read + Send>(
                 Err(ue) => match ue.source {
                     Source::Internal => {
                         error!(
-                            "{}: {}: {}{}{}",
+                            "{}: {}: {}: {}{}{}{}",
                             title,
                             post.id,
+                            post.url,
                             ue.file.unwrap_or(""),
                             ue.line
-                                .map(|line| Cow::Owned(format!("#{} ", line)))
+                                .map(|line| Cow::Owned(format!("#{}", line)))
                                 .unwrap_or(Cow::Borrowed("")),
+                            if ue.file.is_some() || ue.line.is_some() {
+                                ": "
+                            } else {
+                                ""
+                            },
                             ue.error
                         );
                         std::process::exit(1);

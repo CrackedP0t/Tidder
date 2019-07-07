@@ -130,7 +130,7 @@ fn ingest_json<R: Read + Send>(
                 Ok(url) => url,
                 Err(e) => {
                     warn!(
-                        "{}: {}: {} is an invalid URL: {}",
+                        "{}: {}: {} is invalid: {}",
                         title, post.id, post.url, e
                     );
                     return;

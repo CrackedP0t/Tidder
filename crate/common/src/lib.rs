@@ -510,19 +510,20 @@ pub fn follow_imgur(url: &Url) -> Result<String, UserError> {
 
     let path = url.path();
     let link = url.as_str();
+    let path_start = url.path_segments().and_then(|mut ps| ps.next()).ok_or(ue!("base Imgur URL", Source::User))?;
 
-    if IMGUR_EXT_RE.is_match(path) {
-        Ok(url.to_string())
-    } else if IMGUR_GIFV_RE.is_match(path) {
+    if IMGUR_GIFV_RE.is_match(path) {
         Ok(IMGUR_GIFV_RE
             .replace(path, "https://i.imgur.com/$1.gif")
             .to_string())
+    } else if IMGUR_EXT_RE.is_match(path) || path_start == "download" {
+        Ok(url.to_string())
     } else {
         let mut resp = REQW_CLIENT
             .get(link)
             .send()
             .and_then(|resp| {
-                if resp.status() == StatusCode::NOT_FOUND && link.contains("imgur.com/gallery/") {
+                if resp.status() == StatusCode::NOT_FOUND && path_start == "gallery" {
                     REQW_CLIENT
                         .get(&link.replace("/gallery/", "/a/"))
                         .send()

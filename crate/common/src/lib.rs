@@ -725,9 +725,8 @@ pub fn setup_logging() {
         .format(|out, message, record| {
             let level = record.level();
             out.finish(format_args!(
-                "{}[{}{}][{}] {}",
+                "{}[{}{}] {}",
                 chrono::Local::now().format("[%Y-%m-%d %H:%M:%S]"),
-                record.target(),
                 if level != LevelFilter::Info && level != LevelFilter::Warn {
                     match record.file() {
                         Some(file) => format!(

@@ -94,7 +94,7 @@ fn ingest_json<R: Read + Send>(
         }))
     };
 
-    let timeouts = std::sync::RwLock::new(std::collections::HashSet::<String>::new());
+    let blacklist = std::sync::RwLock::new(std::collections::HashSet::<String>::new());
 
     check_json
         .filter_map(|post| {
@@ -137,10 +137,10 @@ fn ingest_json<R: Read + Send>(
 
             if post_url
                 .domain()
-                .map(|domain| timeouts.read().unwrap().contains(domain))
+                .map(|domain| blacklist.read().unwrap().contains(domain))
                 .unwrap_or(false)
             {
-                warn!("{}: {}: {} has timed out before", title, post.id, post.url);
+                warn!("{}: {}: {} is blacklisted", title, post.id, post.url);
                 return;
             }
 
@@ -209,10 +209,15 @@ fn ingest_json<R: Read + Send>(
                     }
                     _ => {
                         if let Some(e) = ue.error.downcast_ref::<reqwest::Error>() {
-                            if e.is_timeout() {
+                            if e.is_timeout()
+                                || e.get_ref()
+                                    .and_then(|e| e.downcast_ref::<hyper::Error>())
+                                    .map(hyper::Error::is_connect)
+                                    .unwrap_or(false)
+                            {
                                 if let Ok(url) = Url::parse(&post.url) {
                                     if let Some(domain) = url.domain() {
-                                        timeouts.write().unwrap().insert(domain.to_string());
+                                        blacklist.write().unwrap().insert(domain.to_string());
                                     }
                                 }
                             }

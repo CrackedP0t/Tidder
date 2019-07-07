@@ -47,9 +47,9 @@ macro_rules! lei {
 
 pub mod user_error {
     use failure::Error;
+    use reqwest::StatusCode;
     use serde::Serialize;
     use std::fmt::{self, Debug, Display, Formatter};
-    use reqwest::StatusCode;
 
     #[derive(Debug, Serialize)]
     pub enum Source {
@@ -65,6 +65,10 @@ pub mod user_error {
         pub source: Source,
         #[serde(skip)]
         pub error: Error,
+        #[serde(skip)]
+        pub file: Option<&'static str>,
+        #[serde(skip)]
+        pub line: Option<u32>,
     }
 
     impl UserError {
@@ -80,6 +84,8 @@ pub mod user_error {
                 source: Source::External,
                 user_msg: user_msg.to_string(),
                 error: error.into(),
+                file: None,
+                line: None,
             }
         }
         pub fn new_source<M: ToString, E: Into<Error>>(
@@ -91,6 +97,8 @@ pub mod user_error {
                 source,
                 user_msg: user_msg.to_string(),
                 error: error.into(),
+                file: None,
+                line: None,
             }
         }
         pub fn new_msg<M: Display + Debug + Send + Sync + 'static>(user_msg: M) -> Self {
@@ -98,6 +106,8 @@ pub mod user_error {
                 source: Source::External,
                 user_msg: user_msg.to_string(),
                 error: failure::err_msg(user_msg),
+                file: None,
+                line: None,
             }
         }
         pub fn new_msg_source<M: Display + Debug + Send + Sync + 'static>(
@@ -108,6 +118,8 @@ pub mod user_error {
                 source,
                 user_msg: user_msg.to_string(),
                 error: failure::err_msg(user_msg),
+                file: None,
+                line: None,
             }
         }
         pub fn from_std<E: std::error::Error + Send + Sync + 'static>(error: E) -> Self {
@@ -115,6 +127,8 @@ pub mod user_error {
                 source: Source::Internal,
                 user_msg: "internal error".to_string(),
                 error: error.into(),
+                file: None,
+                line: None,
             }
         }
 
@@ -122,7 +136,7 @@ pub mod user_error {
             match self.source {
                 Source::Internal => StatusCode::INTERNAL_SERVER_ERROR,
                 Source::External => StatusCode::OK,
-                Source::User => StatusCode::BAD_REQUEST
+                Source::User => StatusCode::BAD_REQUEST,
             }
         }
     }
@@ -133,6 +147,8 @@ pub mod user_error {
                 source: Source::Internal,
                 user_msg: "internal error".to_string(),
                 error,
+                file: None,
+                line: None,
             }
         }
     }
@@ -146,23 +162,43 @@ pub mod user_error {
     #[macro_export]
     macro_rules! ue {
         ($msg:expr) => {
-            UserError::new_msg($msg)
+            UserError {
+                file: Some(file!()),
+                line: Some(line!()),
+                ..UserError::new_msg($msg)
+            }
         };
         ($msg:expr, $source:expr) => {
-            UserError::new_msg_source($msg, $source)
+            UserError {
+                file: Some(file!()),
+                line: Some(line!()),
+                ..UserError::new_msg_source($msg, $source)
+            }
         };
     }
 
     #[macro_export]
     macro_rules! map_ue {
         () => {
-            UserError::from_std
+            |e| UserError {
+                file: Some(file!()),
+                line: Some(line!()),
+                ..UserError::from_std(e)
+            }
         };
         ($msg:expr) => {
-            |e| UserError::new($msg, Error::from(e))
+            |e| UserError {
+                file: Some(file!()),
+                line: Some(line!()),
+                ..UserError::new($msg, Error::from(e))
+            }
         };
         ($msg:expr, $source:expr) => {
-            |e| UserError::new_source($msg, $source, Error::from(e))
+            |e| UserError {
+                file: Some(file!()),
+                line: Some(line!()),
+                ..UserError::new_source($msg, $source, Error::from(e))
+            }
         };
     }
 }

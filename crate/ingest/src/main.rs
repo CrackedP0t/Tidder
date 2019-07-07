@@ -11,6 +11,7 @@ use regex::Regex;
 use reqwest::{Client, Url};
 use serde_json::from_value;
 use serde_json::{Deserializer, Value};
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::fs::{remove_file, File, OpenOptions};
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
@@ -129,10 +130,7 @@ fn ingest_json<R: Read + Send>(
             let post_url = match Url::parse(&post.url) {
                 Ok(url) => url,
                 Err(e) => {
-                    warn!(
-                        "{}: {}: {} is invalid: {}",
-                        title, post.id, post.url, e
-                    );
+                    warn!("{}: {}: {} is invalid: {}", title, post.id, post.url, e);
                     return;
                 }
             };
@@ -165,7 +163,16 @@ fn ingest_json<R: Read + Send>(
                         }
                         Err(ue) => match ue.source {
                             Source::Internal => {
-                                error!("{}: {}: {}", title, post.id, ue.error);
+                                error!(
+                                    "{}: {}: {}{}{}",
+                                    title,
+                                    post.id,
+                                    ue.file.unwrap_or(""),
+                                    ue.line
+                                        .map(|line| Cow::Owned(format!("#{} ", line)))
+                                        .unwrap_or(Cow::Borrowed("")),
+                                    ue.error
+                                );
                                 std::process::exit(1);
                             }
                             _ => {
@@ -176,7 +183,16 @@ fn ingest_json<R: Read + Send>(
                 }
                 Err(ue) => match ue.source {
                     Source::Internal => {
-                        error!("{}: {}: {}", title, post.id, ue.error);
+                        error!(
+                            "{}: {}: {}{}{}",
+                            title,
+                            post.id,
+                            ue.file.unwrap_or(""),
+                            ue.line
+                                .map(|line| Cow::Owned(format!("#{} ", line)))
+                                .unwrap_or(Cow::Borrowed("")),
+                            ue.error
+                        );
                         std::process::exit(1);
                     }
                     _ => {

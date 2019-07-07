@@ -13,9 +13,9 @@ use serde_json::from_value;
 use serde_json::{Deserializer, Value};
 use std::collections::BTreeSet;
 use std::fs::{remove_file, File, OpenOptions};
-use std::path::Path;
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::iter::Iterator;
+use std::path::Path;
 
 lazy_static! {
     static ref DB_POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> = r2d2::Pool::new(
@@ -93,6 +93,8 @@ fn ingest_json<R: Read + Send>(
         }))
     };
 
+    let timeouts = std::sync::RwLock::new(std::collections::HashSet::<String>::new());
+
     check_json
         .filter_map(|post| {
             let post = to_submission(post).map_err(le!()).ok()??;
@@ -123,6 +125,27 @@ fn ingest_json<R: Read + Send>(
                 .replace("&amp;", "&")
                 .replace("&lt;", "<")
                 .replace("&gt;", ">");
+
+            let post_url = match Url::parse(&post.url) {
+                Ok(url) => url,
+                Err(e) => {
+                    warn!(
+                        "{}: {}: {} is an invalid URL: {}",
+                        title, post.id, post.url, e
+                    );
+                    return;
+                }
+            };
+
+            if post_url
+                .domain()
+                .map(|domain| timeouts.read().unwrap().contains(domain))
+                .unwrap_or(false)
+            {
+                warn!("{}: {}: {} has timed out before", title, post.id, post.url);
+                return;
+            }
+
             match save_hash(&post.url, HashDest::Images) {
                 Ok((_hash, _hash_dest, image_id, exists)) => {
                     match save_post(&DB_POOL, &post, image_id) {
@@ -156,7 +179,18 @@ fn ingest_json<R: Read + Send>(
                         error!("{}: {}: {}", title, post.id, ue.error);
                         std::process::exit(1);
                     }
-                    _ => warn!("{}: {}: {} failed: {}", title, post.id, post.url, ue.error),
+                    _ => {
+                        if let Some(e) = ue.error.downcast_ref::<reqwest::Error>() {
+                            if e.is_timeout() {
+                                if let Ok(url) = Url::parse(&post.url) {
+                                    if let Some(domain) = url.domain() {
+                                        timeouts.write().unwrap().insert(domain.to_string());
+                                    }
+                                }
+                            }
+                        }
+                        warn!("{}: {}: {} failed: {}", title, post.id, post.url, ue.error)
+                    }
                 },
             }
         });
@@ -324,7 +358,11 @@ fn main() -> Result<(), Error> {
             .map_err(Error::from)?;
 
         let already_have_len = already_have.len();
-        info!("Already have {} post{}", already_have_len, if already_have_len == 1 {""} else {"s"});
+        info!(
+            "Already have {} post{}",
+            already_have_len,
+            if already_have_len == 1 { "" } else { "s" }
+        );
 
         let input = BufReader::new(input);
 

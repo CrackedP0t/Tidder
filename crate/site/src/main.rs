@@ -1,7 +1,7 @@
 use bytes::Buf;
 use common::*;
 use fallible_iterator::FallibleIterator;
-use hyper::{self, Body, HeaderMap, Response, StatusCode as SC};
+use hyper::{self, Body, HeaderMap, Response, StatusCode};
 use lazy_static::{lazy_static, LazyStatic};
 use multipart::server::Multipart;
 use postgres::NoTls;
@@ -180,12 +180,12 @@ impl Params {
             } else {
                 form.distance
                     .parse()
-                    .map_err(map_ue!("invalid distance parameter", SC::BAD_REQUEST))?
+                    .map_err(map_ue!("invalid distance parameter", Source::User))?
             },
             nsfw: form
                 .nsfw
                 .parse()
-                .map_err(map_ue!("invalid nsfw parameter", SC::BAD_REQUEST))?,
+                .map_err(map_ue!("invalid nsfw parameter", Source::User))?,
             subreddits: form
                 .subreddits
                 .split_whitespace()
@@ -206,7 +206,7 @@ fn reply_not_found(path: FullPath) -> impl Reply {
             "<h1>Error 404: Not Found</h1><h2>{}</h2>",
             path.as_str()
         )),
-        SC::NOT_FOUND,
+        StatusCode::NOT_FOUND,
     )
 }
 
@@ -377,19 +377,17 @@ fn post_search(headers: HeaderMap, body: FullBody) -> Search {
 
     let output = headers
         .get("Content-Type")
-        .ok_or_else(|| UserError::new_msg_sc("no Content-Type header supplied", SC::BAD_REQUEST))
+        .ok_or_else(|| ue!("no Content-Type header supplied", Source::User))
         .and_then(|header_value| {
             let boundary = BOUNDARY_RE
                 .captures(
                     header_value
                         .to_str()
-                        .map_err(map_ue!("invalid header", SC::BAD_REQUEST))?,
+                        .map_err(map_ue!("invalid header", Source::User))?,
                 )
                 .and_then(|captures| captures.get(1))
                 .map(|capture| capture.as_str())
-                .ok_or_else(|| {
-                    UserError::new_msg_sc("no boundary in Content-Type", SC::BAD_REQUEST)
-                })?;
+                .ok_or_else(|| ue!("no boundary in Content-Type", Source::User))?;
 
             let mut mp = Multipart::with_body(body.reader(), boundary);
             let mut map: HashMap<String, Vec<u8>> = HashMap::new();
@@ -399,7 +397,7 @@ fn post_search(headers: HeaderMap, body: FullBody) -> Search {
                 field
                     .data
                     .read_to_end(&mut data)
-                    .map_err(map_ue!("request too large", SC::PAYLOAD_TOO_LARGE))?;
+                    .map_err(map_ue!("request too large", Source::User))?;
                 map.insert(field.headers.name.to_string(), data);
             }
 
@@ -464,13 +462,13 @@ fn get_response(qs: SearchQuery) -> Response<Body> {
                 .error
                 .map(|ue| {
                     warn!("{}", ue.error);
-                    ue.status_code
+                    ue.status_code()
                 })
-                .unwrap_or(SC::OK),
+                .unwrap_or(StatusCode::OK),
         ),
         Err(_) => (
             "<h1>Error 500: Internal Server Error</h1>".to_string(),
-            SC::INTERNAL_SERVER_ERROR,
+            StatusCode::INTERNAL_SERVER_ERROR,
         ),
     };
 
@@ -491,11 +489,14 @@ fn post_response(headers: HeaderMap, body: FullBody) -> Response<Body> {
     let (page, status) = match out {
         Ok(page) => (
             page,
-            search.error.map(|ue| ue.status_code).unwrap_or(SC::OK),
+            search
+                .error
+                .map(|ue| ue.status_code())
+                .unwrap_or(StatusCode::OK),
         ),
         Err(_) => (
             "<h1>Error 500: Internal Server Error</h1>".to_string(),
-            SC::INTERNAL_SERVER_ERROR,
+            StatusCode::INTERNAL_SERVER_ERROR,
         ),
     };
 

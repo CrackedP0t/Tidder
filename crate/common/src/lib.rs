@@ -7,12 +7,12 @@ use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use regex::Regex;
 use reqwest::{
     header::{self, HeaderMap},
-    Response, StatusCode as SC,
+    Response, StatusCode,
 };
 use scraper::{Html, Selector};
-use serde::{Deserialize, Serialize, Serializer};
+use serde::Deserialize;
 use std::borrow::Cow;
-use std::fmt::{self, Debug, Display, Formatter};
+use std::fmt::{self, Display};
 use std::io::{BufReader, Read};
 use std::string::ToString;
 use tokio_postgres::{to_sql_checked, types, NoTls};
@@ -45,101 +45,129 @@ macro_rules! lei {
     };
 }
 
-#[derive(Debug, Serialize)]
-pub struct UserError {
-    pub user_msg: String,
-    #[serde(serialize_with = "UserError::serialize_status_code")]
-    pub status_code: SC,
-    #[serde(skip)]
-    pub error: Error,
+pub mod user_error {
+    use failure::Error;
+    use serde::Serialize;
+    use std::fmt::{self, Debug, Display, Formatter};
+    use reqwest::StatusCode;
+
+    #[derive(Debug, Serialize)]
+    pub enum Source {
+        Internal,
+        External,
+        User,
+    }
+
+    #[derive(Debug, Serialize)]
+    pub struct UserError {
+        pub user_msg: String,
+        // #[serde(serialize_with = "UserError::serialize_status_code")]
+        pub source: Source,
+        #[serde(skip)]
+        pub error: Error,
+    }
+
+    impl UserError {
+        // #[allow(clippy::trivially_copy_pass_by_ref)]
+        // pub fn serialize_status_code<S>(sc: &SC, ser: S) -> Result<S::Ok, S::Error>
+        // where
+        //     S: Serializer,
+        // {
+        //     ser.serialize_u16(sc.as_u16())
+        // }
+        pub fn new<M: ToString, E: Into<Error>>(user_msg: M, error: E) -> Self {
+            Self {
+                source: Source::External,
+                user_msg: user_msg.to_string(),
+                error: error.into(),
+            }
+        }
+        pub fn new_source<M: ToString, E: Into<Error>>(
+            user_msg: M,
+            source: Source,
+            error: E,
+        ) -> Self {
+            Self {
+                source,
+                user_msg: user_msg.to_string(),
+                error: error.into(),
+            }
+        }
+        pub fn new_msg<M: Display + Debug + Send + Sync + 'static>(user_msg: M) -> Self {
+            Self {
+                source: Source::External,
+                user_msg: user_msg.to_string(),
+                error: failure::err_msg(user_msg),
+            }
+        }
+        pub fn new_msg_source<M: Display + Debug + Send + Sync + 'static>(
+            user_msg: M,
+            source: Source,
+        ) -> Self {
+            Self {
+                source,
+                user_msg: user_msg.to_string(),
+                error: failure::err_msg(user_msg),
+            }
+        }
+        pub fn from_std<E: std::error::Error + Send + Sync + 'static>(error: E) -> Self {
+            Self {
+                source: Source::Internal,
+                user_msg: "internal error".to_string(),
+                error: error.into(),
+            }
+        }
+
+        pub fn status_code(&self) -> StatusCode {
+            match self.source {
+                Source::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+                Source::External => StatusCode::OK,
+                Source::User => StatusCode::BAD_REQUEST
+            }
+        }
+    }
+
+    impl From<Error> for UserError {
+        fn from(error: Error) -> Self {
+            Self {
+                source: Source::Internal,
+                user_msg: "internal error".to_string(),
+                error,
+            }
+        }
+    }
+
+    impl Display for UserError {
+        fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+            Display::fmt(&self.error, f)
+        }
+    }
+
+    #[macro_export]
+    macro_rules! ue {
+        ($msg:expr) => {
+            UserError::new_msg($msg)
+        };
+        ($msg:expr, $source:expr) => {
+            UserError::new_msg_source($msg, $source)
+        };
+    }
+
+    #[macro_export]
+    macro_rules! map_ue {
+        () => {
+            UserError::from_std
+        };
+        ($msg:expr) => {
+            |e| UserError::new($msg, Error::from(e))
+        };
+        ($msg:expr, $source:expr) => {
+            |e| UserError::new_source($msg, $source, Error::from(e))
+        };
+    }
 }
 
-impl UserError {
-    #[allow(clippy::trivially_copy_pass_by_ref)]
-    pub fn serialize_status_code<S>(sc: &SC, ser: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        ser.serialize_u16(sc.as_u16())
-    }
-    pub fn new<M: ToString, E: Into<Error>>(user_msg: M, error: E) -> Self {
-        Self {
-            status_code: SC::OK,
-            user_msg: user_msg.to_string(),
-            error: error.into(),
-        }
-    }
-    pub fn new_sc<M: ToString, E: Into<Error>>(user_msg: M, status_code: SC, error: E) -> Self {
-        Self {
-            status_code,
-            user_msg: user_msg.to_string(),
-            error: error.into(),
-        }
-    }
-    pub fn new_msg<M: Display + Debug + Send + Sync + 'static>(user_msg: M) -> Self {
-        Self {
-            status_code: SC::OK,
-            user_msg: user_msg.to_string(),
-            error: failure::err_msg(user_msg),
-        }
-    }
-    pub fn new_msg_sc<M: Display + Debug + Send + Sync + 'static>(
-        user_msg: M,
-        status_code: SC,
-    ) -> Self {
-        Self {
-            status_code,
-            user_msg: user_msg.to_string(),
-            error: failure::err_msg(user_msg),
-        }
-    }
-    pub fn from_std<E: std::error::Error + Send + Sync + 'static>(error: E) -> Self {
-        Self {
-            status_code: SC::INTERNAL_SERVER_ERROR,
-            user_msg: "internal error".to_string(),
-            error: error.into(),
-        }
-    }
-}
-
-impl From<Error> for UserError {
-    fn from(error: Error) -> Self {
-        Self {
-            status_code: SC::INTERNAL_SERVER_ERROR,
-            user_msg: "internal error".to_string(),
-            error,
-        }
-    }
-}
-
-impl Display for UserError {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        Display::fmt(&self.error, f)
-    }
-}
-
-#[macro_export]
-macro_rules! ue {
-    ($msg:expr) => {
-        UserError::new_msg($msg)
-    };
-    ($msg:expr, $sc:expr) => {
-        UserError::new_msg_sc($msg, $sc)
-    };
-}
-
-#[macro_export]
-macro_rules! map_ue {
-    () => {
-        UserError::from_std
-    };
-    ($msg:expr) => {
-        |e| UserError::new($msg, Error::from(e))
-    };
-    ($msg:expr, $sc:expr) => {
-        |e| UserError::new_sc($msg, $sc, Error::from(e))
-    };
-}
+pub use user_error::*;
 
 pub const DEFAULT_DISTANCE: i64 = 1;
 
@@ -378,11 +406,11 @@ pub fn follow_link(link: &str) -> Result<Option<String>, UserError> {
         return Ok(None);
     }
 
-    let url = Url::parse(link).map_err(map_ue!("not a valid URL", SC::BAD_REQUEST))?;
+    let url = Url::parse(link).map_err(map_ue!("not a valid URL", Source::User))?;
 
     let host = url
         .host_str()
-        .ok_or_else(|| ue!("no host in URL", SC::BAD_REQUEST))?;
+        .ok_or_else(|| ue!("no host in URL", Source::User))?;
 
     // Begin special-casing
 
@@ -423,7 +451,7 @@ pub fn follow_gfycat(url: &Url) -> Result<String, UserError> {
                 .captures(url.path())
                 .and_then(|c| c.get(1))
                 .map(|m| m.as_str())
-                .ok_or_else(|| ue!("couldn't find Gfycat ID in link", SC::BAD_REQUEST))?
+                .ok_or_else(|| ue!("couldn't find Gfycat ID in link", Source::User))?
         ))
         .send()
         .map_err(map_ue!("couldn't reach Gfycat API"))?
@@ -454,7 +482,7 @@ pub fn follow_imgur(url: &Url) -> Result<String, UserError> {
             .get(link)
             .send()
             .and_then(|resp| {
-                if resp.status() == SC::NOT_FOUND && link.contains("imgur.com/gallery/") {
+                if resp.status() == StatusCode::NOT_FOUND && link.contains("imgur.com/gallery/") {
                     REQW_CLIENT
                         .get(&link.replace("/gallery/", "/a/"))
                         .send()
@@ -489,13 +517,13 @@ pub fn follow_imgur(url: &Url) -> Result<String, UserError> {
 
 pub fn get_hash(link: &str) -> Result<(Hash, Cow<str>, GetKind), UserError> {
     if link.len() > 2000 {
-        return Err(ue!("URL too long", SC::BAD_REQUEST));
+        return Err(ue!("URL too long", Source::User));
     }
-    let url = Url::parse(link).map_err(map_ue!("not a valid URL", SC::BAD_REQUEST))?;
+    let url = Url::parse(link).map_err(map_ue!("not a valid URL", Source::User))?;
 
     let scheme = url.scheme();
     if scheme != "http" && scheme != "https" {
-        return Err(ue!("unsupported scheme in URL", SC::BAD_REQUEST));
+        return Err(ue!("unsupported scheme in URL", Source::User));
     }
 
     let link = follow_link(link)?

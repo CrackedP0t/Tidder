@@ -403,7 +403,7 @@ fn get_existing(link: &str) -> Result<Option<(Hash, HashDest, i64)>, UserError> 
 
 lazy_static! {
     static ref REQW_CLIENT: reqwest::Client = reqwest::Client::builder()
-        .timeout(Some(std::time::Duration::from_secs(10)))
+        .timeout(Some(std::time::Duration::from_secs(15)))
         .build()
         .unwrap();
 }

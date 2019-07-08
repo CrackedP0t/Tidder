@@ -616,7 +616,7 @@ pub fn get_hash(link: &str) -> Result<(Hash, Cow<str>, GetKind), UserError> {
 
     BufReader::new(resp.by_ref())
         .read_to_end(&mut image)
-        .map_err(map_ue!())?;
+        .map_err(map_ue!("couldn't download image", Source::External))?;
 
     Ok((
         hash_from_memory(&image)?,

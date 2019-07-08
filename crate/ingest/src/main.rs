@@ -57,6 +57,8 @@ fn ingest_json<R: Read + Send>(
     min_skip: Option<i64>,
     max_skip: Option<i64>,
 ) {
+    let mut already_have = Some(already_have);
+
     let json_iter = Deserializer::from_reader(json_stream).into_iter::<Value>();
 
     info!("Starting ingestion!");
@@ -106,7 +108,16 @@ fn ingest_json<R: Read + Send>(
                         .domain()
                         .map(|d| is_host_special(d))
                         .unwrap_or(false))
-                && !already_have.remove(&post.id_int)
+                && match &mut already_have {
+                    Some(ref mut set) => {
+                        let had = set.remove(&post.id_int);
+                        if set.is_empty() {
+                            already_have = None;
+                        }
+                        !had
+                    },
+                    None => false
+                }
                 && min_skip
                     .map(|min_skip| post.id_int < min_skip)
                     .unwrap_or(true)

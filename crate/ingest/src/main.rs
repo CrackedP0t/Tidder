@@ -155,6 +155,8 @@ fn ingest_json<R: Read + Send>(
                 return;
             }
 
+            println!("{}", &post.url);
+
             match save_hash(&post.url, HashDest::Images) {
                 Ok((_hash, _hash_dest, image_id, exists)) => {
                     match save_post(&DB_POOL, &post, image_id) {

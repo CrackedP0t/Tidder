@@ -536,7 +536,7 @@ pub fn follow_imgur(url: &Url) -> Result<String, UserError> {
 
         let mut doc_string = String::new();
 
-        resp.read_to_string(&mut doc_string).map_err(map_ue!())?;
+        resp.read_to_string(&mut doc_string).map_err(map_ue!("invalid response", Source::External))?;
 
         let doc = Html::parse_document(&doc_string);
         let og_image = doc

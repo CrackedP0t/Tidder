@@ -329,9 +329,10 @@ pub fn distance(a: Hash, b: Hash) -> u32 {
     (a.0 ^ b.0).count_ones()
 }
 
-pub const IMAGE_MIMES: [&str; 11] = [
+pub const IMAGE_MIMES: [&str; 12] = [
     "image/png",
     "image/jpeg",
+    "image/jpg",
     "image/gif",
     "image/webp",
     "image/x-portable-anymap",

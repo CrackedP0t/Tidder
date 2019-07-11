@@ -411,7 +411,7 @@ lazy_static! {
 
 fn error_for_status_ue(e: reqwest::Error) -> UserError {
     let msg = match e.status() {
-        None => Cow::Borrowed("recieved error status from image host"),
+        None => Cow::Borrowed("couldn't download image"),
         Some(sc) => Cow::Owned(format!("recieved error status from image host: {}", sc)),
     };
 

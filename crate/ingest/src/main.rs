@@ -12,7 +12,7 @@ use reqwest::{Client, Url};
 use serde_json::from_value;
 use serde_json::{Deserializer, Value};
 use std::borrow::Cow;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs::{remove_file, File, OpenOptions};
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::iter::Iterator;
@@ -61,6 +61,7 @@ fn ingest_json<R: Read + Send>(
 
     let check_json = Check::new(json_iter);
 
+    // That's a lot of allocation...
     let to_submission = |mut post: Value| -> Result<Option<Submission>, Error> {
         let promo = post["promoted"].take();
         if !promo.is_null() && from_value(promo).map_err(Error::from)? {
@@ -92,7 +93,7 @@ fn ingest_json<R: Read + Send>(
         }))
     };
 
-    let blacklist = std::sync::RwLock::new(std::collections::HashSet::<String>::new());
+    let blacklist = std::sync::RwLock::new(HashSet::<String>::new());
 
     check_json
         .filter_map(|post| {
@@ -100,6 +101,7 @@ fn ingest_json<R: Read + Send>(
             if !post.is_self
                 && (EXT_RE.is_match(&post.url) || is_link_special(&post.url))
                 && match &mut already_have {
+                    None => true,
                     Some(ref mut set) => {
                         let had = set.remove(&post.id_int);
                         if set.is_empty() {
@@ -107,7 +109,6 @@ fn ingest_json<R: Read + Send>(
                         }
                         !had
                     }
-                    None => true,
                 }
             {
                 Some(post)

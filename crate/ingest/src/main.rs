@@ -52,7 +52,7 @@ where
 
 fn ingest_json<R: Read + Send>(
     title: &str,
-    mut already_have: BTreeSet<i64>,
+    already_have: BTreeSet<i64>,
     json_stream: R,
     min_skip: Option<i64>,
     max_skip: Option<i64>,

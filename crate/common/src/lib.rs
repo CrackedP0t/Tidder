@@ -438,12 +438,21 @@ pub fn is_host_special(host: &str) -> bool {
     is_host_imgur(host) || is_host_gfycat(host)
 }
 
-pub fn follow_link(link: &str) -> Result<Option<String>, UserError> {
-    if EXT_RE.is_match(&link) {
-        return Ok(None);
+pub fn follow_link(url: &Url) -> Result<Option<String>, UserError> {
+    lazy_static! {
+        static ref WIKIPEDIA_FILE_RE: Regex =
+            Regex::new(r"(?:^|\.)wikipedia.org/wiki/(File:.+)").unwrap();
     }
 
-    let url = Url::parse(link).map_err(map_ue!("not a valid URL", Source::User))?;
+    if EXT_RE.is_match(url.as_str()) {
+        if let Some(caps) = WIKIPEDIA_FILE_RE.captures(url.as_str()) {
+            if let Some(title) = caps.get(1) {
+                return follow_wikipedia(title.as_str()).map(Some);
+            }
+        }
+
+        return Ok(None);
+    }
 
     let host = url
         .host_str()
@@ -511,7 +520,10 @@ pub fn follow_imgur(url: &Url) -> Result<String, UserError> {
 
     let path = url.path();
     let link = url.as_str();
-    let path_start = url.path_segments().and_then(|mut ps| ps.next()).ok_or(ue!("base Imgur URL", Source::User))?;
+    let path_start = url
+        .path_segments()
+        .and_then(|mut ps| ps.next())
+        .ok_or(ue!("base Imgur URL", Source::User))?;
 
     if IMGUR_GIFV_RE.is_match(path) {
         Ok(IMGUR_GIFV_RE
@@ -537,7 +549,8 @@ pub fn follow_imgur(url: &Url) -> Result<String, UserError> {
 
         let mut doc_string = String::new();
 
-        resp.read_to_string(&mut doc_string).map_err(map_ue!("invalid response", Source::External))?;
+        resp.read_to_string(&mut doc_string)
+            .map_err(map_ue!("invalid response", Source::External))?;
 
         let doc = Html::parse_document(&doc_string);
         let og_image = doc
@@ -557,10 +570,64 @@ pub fn follow_imgur(url: &Url) -> Result<String, UserError> {
     }
 }
 
+pub fn follow_wikipedia(title: &str) -> Result<String, UserError> {
+    #[derive(Debug, Deserialize)]
+    struct ImageInfo {
+        url: String,
+    }
+    #[derive(Debug, Deserialize)]
+    struct Page {
+        imageinfo: Vec<ImageInfo>,
+    }
+    #[derive(Debug, Deserialize)]
+    struct Pages {
+        #[serde(rename = "-1")]
+        page: Page,
+    }
+    #[derive(Debug, Deserialize)]
+    struct Query {
+        pages: Pages,
+    }
+    #[derive(Debug, Deserialize)]
+    struct APIQuery {
+        query: Query,
+    }
+
+    let api_url = Url::parse_with_params(
+        "https://en.wikipedia.org/w/api.php",
+        &[
+            ("action", "query"),
+            ("format", "json"),
+            ("prop", "imageinfo"),
+            ("iiprop", "url"),
+            ("titles", title),
+        ],
+    )
+    .map_err(map_ue!("couldn't create Wikipedia API URL", Source::User))?;
+
+    let api_query: APIQuery = REQW_CLIENT
+        .get(api_url)
+        .send()
+        .map_err(map_ue!("failed to query Wikipedia API"))?
+        .json::<APIQuery>()
+        .map_err(map_ue!("Wikipedia API returned problematic JSON"))?;
+
+    Ok(api_query
+        .query
+        .pages
+        .page
+        .imageinfo
+        .into_iter()
+        .nth(0)
+        .ok_or(ue!("Wikipedia API returned no images", Source::User))?
+        .url)
+}
+
 pub fn get_hash(link: &str) -> Result<(Hash, Cow<str>, GetKind), UserError> {
     if link.len() > 2000 {
         return Err(ue!("URL too long", Source::User));
     }
+
     let url = Url::parse(link).map_err(map_ue!("not a valid URL", Source::User))?;
 
     let scheme = url.scheme();
@@ -568,7 +635,7 @@ pub fn get_hash(link: &str) -> Result<(Hash, Cow<str>, GetKind), UserError> {
         return Err(ue!("unsupported scheme in URL", Source::User));
     }
 
-    let link = follow_link(link)?
+    let link = follow_link(&url)?
         .map(Cow::Owned)
         .unwrap_or_else(|| Cow::Borrowed(link));
 

@@ -441,7 +441,7 @@ pub fn is_host_special(host: &str) -> bool {
 pub fn follow_link(url: &Url) -> Result<Option<String>, UserError> {
     lazy_static! {
         static ref WIKIPEDIA_FILE_RE: Regex =
-            Regex::new(r"(?:^|\.)wikipedia.org/wiki/(File:.+)").unwrap();
+            Regex::new(r"(?:^|\.)wikipedia.org/wiki/((?:Image|File):.+)").unwrap();
     }
 
     if EXT_RE.is_match(url.as_str()) {

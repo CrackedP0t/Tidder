@@ -8,7 +8,7 @@ use postgres::NoTls;
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use rayon::prelude::*;
 use regex::Regex;
-use reqwest::{Client, Url};
+use reqwest::{Client, Url, StatusCode};
 use serde_json::from_value;
 use serde_json::{Deserializer, Value};
 use std::borrow::Cow;
@@ -54,6 +54,7 @@ fn ingest_json<R: Read + Send>(
     title: &str,
     mut already_have: Option<BTreeSet<i64>>,
     json_stream: R,
+    verbose: bool,
 ) {
     let json_iter = Deserializer::from_reader(json_stream).into_iter::<Value>();
 
@@ -137,7 +138,9 @@ fn ingest_json<R: Read + Send>(
                 .map(|domain| blacklist.read().unwrap().contains(domain))
                 .unwrap_or(false)
             {
-                warn!("{}: {}: {} is blacklisted", title, post.id, post.url);
+                if verbose {
+                    warn!("{}: {}: {} is blacklisted", title, post.id, post.url);
+                }
                 return;
             }
 
@@ -146,13 +149,18 @@ fn ingest_json<R: Read + Send>(
                     match save_post(&DB_POOL, &post, image_id) {
                         Ok(post_exists) => {
                             if !post_exists {
-                                if exists {
-                                    info!("{}: {}: {} already exists", title, post.id, post.url);
-                                } else {
-                                    info!(
-                                        "{}: {}: {} successfully hashed",
-                                        title, post.id, post.url
-                                    );
+                                if verbose {
+                                    if exists {
+                                        info!(
+                                            "{}: {}: {} already exists",
+                                            title, post.id, post.url
+                                        );
+                                    } else {
+                                        info!(
+                                            "{}: {}: {} successfully hashed",
+                                            title, post.id, post.url
+                                        );
+                                    }
                                 }
                             } else {
                                 warn!("{}: post ID {} already recorded", title, post.id);
@@ -206,7 +214,11 @@ fn ingest_json<R: Read + Send>(
                     }
                     _ => {
                         if let Some(e) = ue.error.downcast_ref::<reqwest::Error>() {
-                            if e.is_timeout()
+                            if let Some(StatusCode::NOT_FOUND) = e.status() {
+                                if !verbose {
+                                    return;
+                                }
+                            } else if e.is_timeout()
                                 || e.get_ref()
                                     .and_then(|e| e.downcast_ref::<hyper::Error>())
                                     .map(hyper::Error::is_connect)
@@ -240,9 +252,12 @@ fn main() -> Result<(), Error> {
             (author: crate_authors!(","))
             (about: crate_description!())
             (@arg NO_SKIP_MONTHS: -M --("no-skip-months") "Don't skip past months we already have")
+            (@arg VERBOSE: -v --("verbose") "Verbose logging")
             (@arg PATHS: +required +multiple "The URLs or paths of the files to ingest")
     )
     .get_matches();
+
+    let verbose = matches.is_present("VERBOSE");
 
     for path in matches.values_of_lossy("PATHS").unwrap() {
         info!("Ingesting {}", &path);
@@ -370,17 +385,28 @@ fn main() -> Result<(), Error> {
         let title = format!("{:02}-{}", month, year);
 
         if path.ends_with("bz2") {
-            ingest_json(&title, already_have, bzip2::bufread::BzDecoder::new(input));
+            ingest_json(
+                &title,
+                already_have,
+                bzip2::bufread::BzDecoder::new(input),
+                verbose,
+            );
         } else if path.ends_with("xz") {
-            ingest_json(&title, already_have, xz2::bufread::XzDecoder::new(input));
+            ingest_json(
+                &title,
+                already_have,
+                xz2::bufread::XzDecoder::new(input),
+                verbose,
+            );
         } else if path.ends_with("zst") {
             ingest_json(
                 &title,
                 already_have,
                 zstd::stream::read::Decoder::new(input).map_err(Error::from)?,
+                verbose,
             );
         } else {
-            ingest_json(&title, already_have, input);
+            ingest_json(&title, already_have, input, verbose);
         }
 
         if let Some(arch_path) = arch_path {

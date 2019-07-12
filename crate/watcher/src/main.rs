@@ -43,7 +43,9 @@ fn download_search(search: PushShiftSearch) -> Result<(), ()> {
                     } else {
                         info!("{} successfully hashed", post.url);
                     }
-                    save_post(&DB_POOL, &post, image_id);
+                    if let Err(e) = save_post(&DB_POOL, &post, image_id) {
+                        warn!("saving {} failed: {}", post.url, e);
+                    }
                 }
                 Err(ue) => {
                     warn!("{} failed: {}", post.url, ue.error);

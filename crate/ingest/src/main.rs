@@ -97,11 +97,7 @@ fn ingest_json<R: Read + Send>(title: &str, already_have: BTreeSet<i64>, json_st
             let post = to_submission(post).map_err(le!()).ok()??;
             if !post.is_self
                 && (EXT_RE.is_match(&post.url)
-                    || Url::parse(&post.url)
-                        .ok()?
-                        .domain()
-                        .map(|d| is_host_special(d))
-                        .unwrap_or(false))
+                    || is_link_special(&post.url))
                 && match &mut already_have {
                     Some(ref mut set) => {
                         let had = set.remove(&post.id_int);

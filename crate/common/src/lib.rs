@@ -284,7 +284,7 @@ pub fn save_post(
     Ok(modified == 0)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct Hash(u64);
 
 impl Display for Hash {
@@ -418,55 +418,51 @@ fn error_for_status_ue(e: reqwest::Error) -> UserError {
     UserError::new(msg, e)
 }
 
-pub fn is_host_imgur(host: &str) -> bool {
+pub fn is_link_imgur(link: &str) -> bool {
     lazy_static! {
-        static ref IMGUR_HOST_RE: Regex = Regex::new(r"(?:^|\.)imgur.com$").unwrap();
+        static ref IMGUR_LINK_RE: Regex = Regex::new(r"^https?://(?:^|\.)imgur.com[:/]").unwrap();
     }
 
-    IMGUR_HOST_RE.is_match(host)
+    IMGUR_LINK_RE.is_match(link)
 }
 
-pub fn is_host_gfycat(host: &str) -> bool {
+pub fn is_link_gfycat(link: &str) -> bool {
     lazy_static! {
-        static ref GFYCAT_HOST_RE: Regex = Regex::new(r"(?:^|\.)gfycat.com$").unwrap();
+        static ref GFYCAT_LINK_RE: Regex = Regex::new(r"^https?://(?:^|\.)gfycat.com[:/]").unwrap();
     }
 
-    GFYCAT_HOST_RE.is_match(host)
+    GFYCAT_LINK_RE.is_match(link)
 }
 
-pub fn is_host_special(host: &str) -> bool {
-    is_host_imgur(host) || is_host_gfycat(host)
+lazy_static! {
+    static ref WIKIPEDIA_FILE_RE: Regex =
+        Regex::new(r"(?:^|\.)(?:wikipedia|wiktionary|wikiquote|wikibooks|wikisource|wikinews|wikiversity|wikispecies|mediawiki|wikidata|wikivoyage|wikimedia).org/wiki/((?:Image|File):[^#?]+)").unwrap();
+}
+
+pub fn is_wikipedia_file(link: &str) -> bool {
+    WIKIPEDIA_FILE_RE.is_match(link)
+}
+
+pub fn is_link_special(link: &str) -> bool {
+    is_link_imgur(link) || is_link_gfycat(link) || is_wikipedia_file(link)
 }
 
 pub fn follow_link(url: &Url) -> Result<Option<String>, UserError> {
-    lazy_static! {
-        static ref WIKIPEDIA_FILE_RE: Regex =
-            Regex::new(r"(?:^|\.)(?:wikipedia|wikimedia).org/wiki/((?:Image|File):.+)").unwrap();
+    if let Some(link) = follow_wikipedia(url)? {
+        return Ok(Some(link));
     }
 
     if EXT_RE.is_match(url.as_str()) {
-        if let Some(caps) = WIKIPEDIA_FILE_RE.captures(url.as_str()) {
-            if let Some(title) = caps.get(1) {
-                return follow_wikipedia(title.as_str()).map(Some);
-            }
-        }
-
         return Ok(None);
     }
-
-    let host = url
-        .host_str()
-        .ok_or_else(|| ue!("no host in URL", Source::User))?;
-
-    // Begin special-casing
 
     if url.path() == "/" {
         return Ok(None);
     }
 
-    if is_host_imgur(host) {
+    if is_link_imgur(url.as_str()) {
         follow_imgur(&url).map(Some)
-    } else if is_host_gfycat(host) {
+    } else if is_link_gfycat(url.as_str()) {
         follow_gfycat(&url).map(Some)
     } else {
         Ok(None)
@@ -570,9 +566,11 @@ pub fn follow_imgur(url: &Url) -> Result<String, UserError> {
     }
 }
 
-pub fn follow_wikipedia(title: &str) -> Result<String, UserError> {
+pub fn follow_wikipedia(url: &Url) -> Result<Option<String>, UserError> {
     #[derive(Debug, Deserialize)]
     struct ImageInfo {
+        mime: String,
+        thumburl: String,
         url: String,
     }
     #[derive(Debug, Deserialize)]
@@ -580,47 +578,61 @@ pub fn follow_wikipedia(title: &str) -> Result<String, UserError> {
         imageinfo: Vec<ImageInfo>,
     }
     #[derive(Debug, Deserialize)]
-    struct Pages {
-        #[serde(rename = "-1")]
-        page: Page,
-    }
-    #[derive(Debug, Deserialize)]
     struct Query {
-        pages: Pages,
+        pages: std::collections::HashMap<String, Page>,
     }
     #[derive(Debug, Deserialize)]
     struct APIQuery {
         query: Query,
     }
 
+    let title = if let Some(title) = WIKIPEDIA_FILE_RE
+        .captures(url.as_str())
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str())
+    {
+        title
+    } else {
+        return Ok(None);
+    };
+
     let api_url = Url::parse_with_params(
-        "https://en.wikipedia.org/w/api.php",
+        &format!("https://{}/w/api.php", url.domain().ok_or(ue!("no domain in Wikipedia URL"))?),
         &[
             ("action", "query"),
             ("format", "json"),
             ("prop", "imageinfo"),
-            ("iiprop", "url"),
+            ("iiprop", "url|mime"),
+            ("iiurlwidth", "500"),
             ("titles", title),
         ],
     )
     .map_err(map_ue!("couldn't create Wikipedia API URL", Source::User))?;
 
-    let api_query: APIQuery = REQW_CLIENT
+    let api_query = REQW_CLIENT
         .get(api_url)
         .send()
-        .map_err(map_ue!("failed to query Wikipedia API"))?
+        .map_err(map_ue!("couldn't query Wikipedia API"))?
         .json::<APIQuery>()
         .map_err(map_ue!("Wikipedia API returned problematic JSON"))?;
 
-    Ok(api_query
+    let imageinfo = api_query
         .query
         .pages
-        .page
+        .into_iter()
+        .next()
+        .ok_or(ue!("Wikipedia API returned no pages", Source::User))?
+        .1
         .imageinfo
         .into_iter()
         .nth(0)
-        .ok_or(ue!("Wikipedia API returned no images", Source::User))?
-        .url)
+        .ok_or(ue!("Wikipedia API returned no images", Source::User))?;
+
+    Ok(Some(if IMAGE_MIMES.contains(&imageinfo.mime.as_str()) {
+        imageinfo.url
+    } else {
+        imageinfo.thumburl
+    }))
 }
 
 pub fn get_hash(link: &str) -> Result<(Hash, Cow<str>, GetKind), UserError> {

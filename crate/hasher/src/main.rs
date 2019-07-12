@@ -1,8 +1,14 @@
 use common::*;
 
 fn main() {
-    for arg in std::env::args().skip(1) {
+    std::env::args().skip(1).fold(None, |last, arg| {
         let (hash, link, _get_kind) = get_hash(&arg).unwrap();
-        println!("{}: {}", link, hash);
-    }
+        let mut out = format!("{}: {}", link, hash);
+        if let Some(last) = last {
+            out = format!("{} ({})", out, distance(hash, last));
+        }
+        println!("{}", out);
+
+        Some(hash)
+    });
 }

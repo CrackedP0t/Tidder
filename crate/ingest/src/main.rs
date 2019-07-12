@@ -50,13 +50,7 @@ where
     }
 }
 
-fn ingest_json<R: Read + Send>(
-    title: &str,
-    already_have: BTreeSet<i64>,
-    json_stream: R,
-    min_skip: Option<i64>,
-    max_skip: Option<i64>,
-) {
+fn ingest_json<R: Read + Send>(title: &str, already_have: BTreeSet<i64>, json_stream: R) {
     let mut already_have = Some(already_have);
 
     let json_iter = Deserializer::from_reader(json_stream).into_iter::<Value>();
@@ -115,15 +109,9 @@ fn ingest_json<R: Read + Send>(
                             already_have = None;
                         }
                         !had
-                    },
-                    None => false
+                    }
+                    None => false,
                 }
-                && min_skip
-                    .map(|min_skip| post.id_int < min_skip)
-                    .unwrap_or(true)
-                && max_skip
-                    .map(|max_skip| post.id_int > max_skip)
-                    .unwrap_or(true)
             {
                 Some(post)
             } else {
@@ -254,7 +242,6 @@ fn main() -> Result<(), Error> {
             (author: crate_authors!(","))
             (about: crate_description!())
             (@arg NO_SKIP_MONTHS: -M --("no-skip-months") "Don't skip past months we already have")
-            (@arg NO_SKIP_IDS: -I --("no-skip-ids") "Don't skip past IDs we already have")
             (@arg PATHS: +required +multiple "The URLs or paths of the files to ingest")
     )
     .get_matches();
@@ -303,40 +290,6 @@ fn main() -> Result<(), Error> {
                 continue;
             }
         }
-
-        let (min_skip, max_skip) = if matches.is_present("NO_SKIP_IDS") {
-            (None, None)
-        } else {
-            let min_skip: Option<i64> = DB_POOL
-                .get()
-                .map_err(Error::from)?
-                .query_iter(
-                    "SELECT reddit_id_int FROM posts \
-                     WHERE EXTRACT(MONTH FROM created_utc) = $1 \
-                     AND EXTRACT(YEAR FROM created_utc) = $2 \
-                     ORDER BY reddit_id_int ASC LIMIT 1",
-                    &[&month_f, &year_f],
-                )
-                .and_then(|mut q_i| q_i.next())
-                .map(|row_opt| row_opt.map(|row| row.get("reddit_id_int")))
-                .map_err(Error::from)?;
-
-            let max_skip: Option<i64> = DB_POOL
-                .get()
-                .map_err(Error::from)?
-                .query_iter(
-                    "SELECT reddit_id_int FROM posts \
-                     WHERE EXTRACT(MONTH FROM created_utc) = $1 \
-                     AND EXTRACT(YEAR FROM created_utc) = $2 \
-                     ORDER BY reddit_id_int DESC LIMIT 1",
-                    &[&month_f, &year_f],
-                )
-                .and_then(|mut q_i| q_i.next())
-                .map(|row_opt| row_opt.map(|row| row.get("reddit_id_int")))
-                .map_err(Error::from)?;
-
-            (min_skip, max_skip)
-        };
 
         let (input, arch_path): (Box<Read + Send>, _) =
             if path.starts_with("http://") || path.starts_with("https://") {
@@ -413,32 +366,17 @@ fn main() -> Result<(), Error> {
         let title = format!("{:02}-{}", month, year);
 
         if path.ends_with("bz2") {
-            ingest_json(
-                &title,
-                already_have,
-                bzip2::bufread::BzDecoder::new(input),
-                min_skip,
-                max_skip,
-            );
+            ingest_json(&title, already_have, bzip2::bufread::BzDecoder::new(input));
         } else if path.ends_with("xz") {
-            ingest_json(
-                &title,
-                already_have,
-                xz2::bufread::XzDecoder::new(input),
-                min_skip,
-                max_skip,
-            );
+            ingest_json(&title, already_have, xz2::bufread::XzDecoder::new(input));
         } else if path.ends_with("zst") {
             ingest_json(
                 &title,
                 already_have,
                 zstd::stream::read::Decoder::new(input).map_err(Error::from)?,
-                min_skip,
-                max_skip,
             );
         } else {
-            error!("Unknown file extension in {}", path);
-            continue;
+            ingest_json(&title, already_have, input);
         }
 
         if let Some(arch_path) = arch_path {

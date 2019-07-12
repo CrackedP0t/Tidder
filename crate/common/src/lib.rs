@@ -503,7 +503,7 @@ pub fn follow_gfycat(url: &Url) -> Result<String, UserError> {
 pub fn follow_imgur(url: &Url) -> Result<String, UserError> {
     lazy_static! {
         static ref IMGUR_SEL: Selector = Selector::parse("meta[property='og:image']").unwrap();
-        static ref IMGUR_GIFV_RE: Regex = Regex::new(r"([^.]+)\.(?:gifv|webm)$").unwrap();
+        static ref IMGUR_GIFV_RE: Regex = Regex::new(r"([^.]+)\.(?:gifv|webm|mp4)$").unwrap();
         static ref IMGUR_EMPTY_RE: Regex = Regex::new(r"^/\.[[:alnum:]]+\b").unwrap();
         static ref IMGUR_EXT_RE: Regex =
             Regex::new(r"[[:alnum:]]\.(?:jpg|png)[[:alnum:]]+").unwrap();

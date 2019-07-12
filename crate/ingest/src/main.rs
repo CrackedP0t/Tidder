@@ -110,7 +110,7 @@ fn ingest_json<R: Read + Send>(title: &str, already_have: BTreeSet<i64>, json_st
                         }
                         !had
                     }
-                    None => false,
+                    None => true,
                 }
             {
                 Some(post)

@@ -50,9 +50,11 @@ where
     }
 }
 
-fn ingest_json<R: Read + Send>(title: &str, already_have: BTreeSet<i64>, json_stream: R) {
-    let mut already_have = Some(already_have);
-
+fn ingest_json<R: Read + Send>(
+    title: &str,
+    mut already_have: Option<BTreeSet<i64>>,
+    json_stream: R,
+) {
     let json_iter = Deserializer::from_reader(json_stream).into_iter::<Value>();
 
     info!("Starting ingestion!");
@@ -96,8 +98,7 @@ fn ingest_json<R: Read + Send>(title: &str, already_have: BTreeSet<i64>, json_st
         .filter_map(|post| {
             let post = to_submission(post).map_err(le!()).ok()??;
             if !post.is_self
-                && (EXT_RE.is_match(&post.url)
-                    || is_link_special(&post.url))
+                && (EXT_RE.is_match(&post.url) || is_link_special(&post.url))
                 && match &mut already_have {
                     Some(ref mut set) => {
                         let had = set.remove(&post.id_int);
@@ -356,6 +357,12 @@ fn main() -> Result<(), Error> {
             already_have_len,
             if already_have_len == 1 { "" } else { "s" }
         );
+
+        let already_have = if already_have_len > 0 {
+            Some(already_have)
+        } else {
+            None
+        };
 
         let input = BufReader::new(input);
 

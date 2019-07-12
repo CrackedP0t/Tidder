@@ -17,7 +17,7 @@ use std::io::{BufReader, Read};
 use std::string::ToString;
 use tokio_postgres::{to_sql_checked, types, NoTls};
 use url::{
-    percent_encoding::{utf8_percent_encode, QUERY_ENCODE_SET},
+    percent_encoding::{percent_decode, utf8_percent_encode, QUERY_ENCODE_SET},
     Url,
 };
 
@@ -591,20 +591,25 @@ pub fn follow_wikipedia(url: &Url) -> Result<Option<String>, UserError> {
         .and_then(|c| c.get(1))
         .map(|m| m.as_str())
     {
-        title
+        percent_decode(title.as_bytes())
+            .decode_utf8()
+            .map_err(map_ue!("couldn't decode title", Source::User))?
     } else {
         return Ok(None);
     };
 
     let api_url = Url::parse_with_params(
-        &format!("https://{}/w/api.php", url.domain().ok_or(ue!("no domain in Wikipedia URL"))?),
+        &format!(
+            "https://{}/w/api.php",
+            url.domain().ok_or(ue!("no domain in Wikipedia URL"))?
+        ),
         &[
             ("action", "query"),
             ("format", "json"),
             ("prop", "imageinfo"),
             ("iiprop", "url|mime"),
             ("iiurlwidth", "500"),
-            ("titles", title),
+            ("titles", &title),
         ],
     )
     .map_err(map_ue!("couldn't create Wikipedia API URL", Source::User))?;

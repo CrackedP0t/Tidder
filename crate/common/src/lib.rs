@@ -49,7 +49,8 @@ pub mod user_error {
     use failure::Error;
     use reqwest::StatusCode;
     use serde::Serialize;
-    use std::fmt::{self, Debug, Display, Formatter};
+    use std::borrow::Cow;
+    use std::fmt::{self, Display, Formatter};
 
     #[derive(Debug, Serialize)]
     pub enum Source {
@@ -60,7 +61,7 @@ pub mod user_error {
 
     #[derive(Debug, Serialize)]
     pub struct UserError {
-        pub user_msg: String,
+        pub user_msg: Cow<'static, str>,
         // #[serde(serialize_with = "UserError::serialize_status_code")]
         pub source: Source,
         #[serde(skip)]
@@ -79,45 +80,52 @@ pub mod user_error {
         // {
         //     ser.serialize_u16(sc.as_u16())
         // }
-        pub fn new<M: ToString, E: Into<Error>>(user_msg: M, error: E) -> Self {
+        pub fn new<M: Into<Cow<'static, str>> + Sync + Send, E: Into<Error>>(
+            user_msg: M,
+            error: E,
+        ) -> Self {
             Self {
                 source: Source::External,
-                user_msg: user_msg.to_string(),
+                user_msg: user_msg.into(),
                 error: error.into(),
                 file: None,
                 line: None,
             }
         }
-        pub fn new_source<M: ToString, E: Into<Error>>(
+        pub fn new_source<M: Into<Cow<'static, str>> + Sync + Send, E: Into<Error>>(
             user_msg: M,
             source: Source,
             error: E,
         ) -> Self {
             Self {
                 source,
-                user_msg: user_msg.to_string(),
+                user_msg: user_msg.into(),
                 error: error.into(),
                 file: None,
                 line: None,
             }
         }
-        pub fn new_msg<M: Display + Debug + Send + Sync + 'static>(user_msg: M) -> Self {
+        pub fn new_msg<M: Into<Cow<'static, str>> + Sync + Send>(user_msg: M) -> Self {
+            let user_msg = user_msg.into();
+            let error = failure::err_msg(user_msg.clone());
             Self {
                 source: Source::External,
-                user_msg: user_msg.to_string(),
-                error: failure::err_msg(user_msg),
+                user_msg,
+                error,
                 file: None,
                 line: None,
             }
         }
-        pub fn new_msg_source<M: Display + Debug + Send + Sync + 'static>(
+        pub fn new_msg_source<M: Into<Cow<'static, str>> + Sync + Send>(
             user_msg: M,
             source: Source,
         ) -> Self {
+            let user_msg = user_msg.into();
+            let error = failure::err_msg(user_msg.clone());
             Self {
                 source,
-                user_msg: user_msg.to_string(),
-                error: failure::err_msg(user_msg),
+                user_msg,
+                error,
                 file: None,
                 line: None,
             }
@@ -125,7 +133,7 @@ pub mod user_error {
         pub fn from_std<E: std::error::Error + Send + Sync + 'static>(error: E) -> Self {
             Self {
                 source: Source::Internal,
-                user_msg: "internal error".to_string(),
+                user_msg: Cow::Borrowed("internal error"),
                 error: error.into(),
                 file: None,
                 line: None,
@@ -145,7 +153,7 @@ pub mod user_error {
         fn from(error: Error) -> Self {
             Self {
                 source: Source::Internal,
-                user_msg: "internal error".to_string(),
+                user_msg: Cow::Borrowed("internal error"),
                 error,
                 file: None,
                 line: None,

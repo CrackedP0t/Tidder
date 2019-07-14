@@ -8,7 +8,7 @@ use postgres::NoTls;
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use rayon::prelude::*;
 use regex::Regex;
-use reqwest::{Client, Url, StatusCode};
+use reqwest::{Client, StatusCode, Url};
 use serde_json::from_value;
 use serde_json::{Deserializer, Value};
 use std::borrow::Cow;

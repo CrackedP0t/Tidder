@@ -1,8 +1,13 @@
-use bytes::Buf;
 use common::*;
 use fallible_iterator::FallibleIterator;
-use hyper::{self, Body, HeaderMap, Response, StatusCode};
+use gotham::{
+    router::builder::*,
+    state::{FromState, State},
+};
+use gotham_derive::{StateData, StaticResponseExtender};
+use hyper::{self, Body, HeaderMap, StatusCode, rt::Stream, rt::Future};
 use lazy_static::{lazy_static, LazyStatic};
+use mime::Mime;
 use multipart::server::Multipart;
 use postgres::NoTls;
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
@@ -14,16 +19,8 @@ use std::str::FromStr;
 use std::vec::Vec;
 use tera::{Context, Tera};
 use url::Url;
-use warp::path::{full, FullPath};
-use warp::{
-    body::{self, FullBody},
-    filters::path::end,
-    get2,
-    header::headers_cloned,
-    post2, query, reply, Filter, Reply,
-};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, StateData, StaticResponseExtender)]
 struct SearchQuery {
     imagelink: Option<String>,
     distance: Option<String>,
@@ -200,16 +197,6 @@ impl Params {
     }
 }
 
-fn reply_not_found(path: FullPath) -> impl Reply {
-    reply::with_status(
-        reply::html(format!(
-            "<h1>Error 404: Not Found</h1><h2>{}</h2>",
-            path.as_str()
-        )),
-        StatusCode::NOT_FOUND,
-    )
-}
-
 lazy_static! {
     static ref POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> = r2d2::Pool::new(
         PostgresConnectionManager::new(SECRETS.postgres.connect.parse().unwrap(), NoTls)
@@ -365,7 +352,7 @@ fn get_search(qs: SearchQuery) -> Search {
     }
 }
 
-fn post_search(headers: HeaderMap, body: FullBody) -> Search {
+fn post_search(headers: &HeaderMap, body: Body) -> Search {
     #[allow(clippy::ptr_arg)]
     fn utf8_to_string(utf8: &Vec<u8>) -> String {
         String::from_utf8_lossy(utf8.as_slice()).to_string()
@@ -389,7 +376,8 @@ fn post_search(headers: HeaderMap, body: FullBody) -> Search {
                 .map(|capture| capture.as_str())
                 .ok_or_else(|| ue!("no boundary in Content-Type", Source::User))?;
 
-            let mut mp = Multipart::with_body(body.reader(), boundary);
+            let chunk = body.concat2().wait().map_err(map_ue!("couldn't recieve request body"))?;
+            let mut mp = Multipart::with_body(chunk.as_ref(), boundary);
             let mut map: HashMap<String, Vec<u8>> = HashMap::new();
 
             while let Ok(Some(mut field)) = mp.read_entry() {
@@ -449,8 +437,8 @@ fn post_search(headers: HeaderMap, body: FullBody) -> Search {
     }
 }
 
-fn get_response(qs: SearchQuery) -> Response<Body> {
-    let search = get_search(qs);
+fn get_response(mut state: State) -> (State, (StatusCode, Mime, String)) {
+    let search = get_search(SearchQuery::take_from(&mut state));
     let out = Context::from_serialize(&search)
         .and_then(|context| TERA.render("search.html", context))
         .map_err(le!());
@@ -472,14 +460,12 @@ fn get_response(qs: SearchQuery) -> Response<Body> {
         ),
     };
 
-    Response::builder()
-        .status(status)
-        .header("Content-Type", "text/html")
-        .body(Body::from(page))
-        .unwrap()
+    (state, (status, mime::TEXT_HTML_UTF_8, page))
 }
 
-fn post_response(headers: HeaderMap, body: FullBody) -> Response<Body> {
+fn post_response(mut state: State) -> (State, (StatusCode, Mime, String)) {
+    let body = Body::take_from(&mut state);
+    let headers = HeaderMap::borrow_from(&state);
     let search = post_search(headers, body);
 
     let out = Context::from_serialize(&search)
@@ -500,37 +486,32 @@ fn post_response(headers: HeaderMap, body: FullBody) -> Response<Body> {
         ),
     };
 
-    Response::builder()
-        .status(status)
-        .header("Content-Type", "text/html")
-        .body(Body::from(page))
-        .unwrap()
+    (state, (status, mime::TEXT_HTML_UTF_8, page))
 }
 
 fn run_server() {
     setup_logging();
     TERA::initialize(&TERA);
 
-    let search = get2()
-        .and(query::<SearchQuery>().map(get_response))
-        .or(post2()
-            .and(headers_cloned())
-            .and(body::concat())
-            .map(post_response));
+    let router = build_simple_router(|route| {
+        route
+            .get("/")
+            .with_query_string_extractor::<SearchQuery>()
+            .to(get_response);
+        route.post("/").to(post_response);
+    });
 
-    let router = end()
-        .and(search)
-        .or(warp::path("search").and(search))
-        .or(full().map(reply_not_found));
-
-    warp::serve(router).run((
-        std::env::args()
-            .nth(1)
-            .unwrap_or_else(|| "127.0.0.1".to_string())
-            .parse::<std::net::IpAddr>()
-            .unwrap(),
-        7878,
-    ))
+    gotham::start(
+        (
+            std::env::args()
+                .nth(1)
+                .unwrap_or_else(|| "127.0.0.1".to_string())
+                .parse::<std::net::IpAddr>()
+                .unwrap(),
+            7878,
+        ),
+        router,
+    );
 }
 
 pub fn main() {

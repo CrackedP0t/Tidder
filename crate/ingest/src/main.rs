@@ -6,9 +6,8 @@ use lazy_static::lazy_static;
 use log::{error, info, warn};
 use postgres::NoTls;
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
-use rayon::prelude::*;
 use regex::Regex;
-use reqwest::{Client, StatusCode, Url};
+use reqwest::{r#async::Client, StatusCode, Url};
 use serde_json::from_value;
 use serde_json::{Deserializer, Value};
 use std::borrow::Cow;
@@ -17,6 +16,7 @@ use std::fs::{remove_file, File, OpenOptions};
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::iter::Iterator;
 use std::path::Path;
+use std::sync::{Arc, RwLock};
 use tokio::prelude::*;
 
 lazy_static! {
@@ -56,7 +56,9 @@ fn ingest_json<R: Read + Send>(
     mut already_have: Option<BTreeSet<i64>>,
     json_stream: R,
     verbose: bool,
-) {
+) -> future::PollFn<impl FnMut() -> Result<Async<()>, ()>> {
+    let title = Arc::new(title.to_string());
+
     let json_iter = Deserializer::from_reader(json_stream).into_iter::<Value>();
 
     info!("Starting ingestion!");
@@ -95,7 +97,8 @@ fn ingest_json<R: Read + Send>(
         }))
     };
 
-    let blacklist = std::sync::RwLock::new(HashSet::<String>::new());
+    let thread_count = Arc::new(());
+    let blacklist = Arc::new(RwLock::new(HashSet::<String>::new()));
 
     check_json
         .filter_map(|post| {
@@ -118,132 +121,147 @@ fn ingest_json<R: Read + Send>(
                 None
             }
         })
-        .par_bridge()
         .for_each(|mut post: Submission| {
-            post.url = post
-                .url
-                .replace("&amp;", "&")
-                .replace("&lt;", "<")
-                .replace("&gt;", ">");
+            let thread_count = thread_count.clone();
+            let title = title.clone();
+            let blacklist = blacklist.clone();
+            tokio::spawn(future::lazy(move || {
+                post.url = post
+                    .url
+                    .replace("&amp;", "&")
+                    .replace("&lt;", "<")
+                    .replace("&gt;", ">");
 
-            let post_url = match Url::parse(&post.url) {
-                Ok(url) => url,
-                Err(e) => {
-                    warn!("{}: {}: {} is invalid: {}", title, post.id, post.url, e);
-                    return;
+                let post_url = match Url::parse(&post.url) {
+                    Ok(url) => url,
+                    Err(e) => {
+                        warn!("{}: {}: {} is invalid: {}", title, post.id, post.url, e);
+                        return Ok(());
+                    }
+                };
+
+                if post_url
+                    .domain()
+                    .map(|domain| blacklist.read().unwrap().contains(domain))
+                    .unwrap_or(false)
+                {
+                    if verbose {
+                        warn!("{}: {}: {} is blacklisted", title, post.id, post.url);
+                    }
+                    return Ok(());
                 }
-            };
 
-            if post_url
-                .domain()
-                .map(|domain| blacklist.read().unwrap().contains(domain))
-                .unwrap_or(false)
-            {
-                if verbose {
-                    warn!("{}: {}: {} is blacklisted", title, post.id, post.url);
-                }
-                return;
-            }
-
-            match save_hash(&post.url, HashDest::Images) {
-                Ok((_hash, _hash_dest, image_id, exists)) => {
-                    match save_post(&DB_POOL, &post, image_id) {
-                        Ok(post_exists) => {
-                            if !post_exists {
-                                if verbose {
-                                    if exists {
-                                        info!(
-                                            "{}: {}: {} already exists",
-                                            title, post.id, post.url
-                                        );
-                                    } else {
-                                        info!(
-                                            "{}: {}: {} successfully hashed",
-                                            title, post.id, post.url
-                                        );
+                match save_hash(&post.url, HashDest::Images) {
+                    Ok((_hash, _hash_dest, image_id, exists)) => {
+                        match save_post(&DB_POOL, &post, image_id) {
+                            Ok(post_exists) => {
+                                if !post_exists {
+                                    if verbose {
+                                        if exists {
+                                            info!(
+                                                "{}: {}: {} already exists",
+                                                title, post.id, post.url
+                                            );
+                                        } else {
+                                            info!(
+                                                "{}: {}: {} successfully hashed",
+                                                title, post.id, post.url
+                                            );
+                                        }
                                     }
+                                } else {
+                                    warn!("{}: post ID {} already recorded", title, post.id);
                                 }
-                            } else {
-                                warn!("{}: post ID {} already recorded", title, post.id);
                             }
-                        }
-                        Err(ue) => match ue.source {
-                            Source::Internal => {
-                                error!(
-                                    "{}: {}: {}: {}{}{}{}",
-                                    title,
-                                    post.id,
-                                    post.url,
-                                    ue.file.unwrap_or(""),
-                                    ue.line
-                                        .map(|line| Cow::Owned(format!("#{}", line)))
-                                        .unwrap_or(Cow::Borrowed("")),
-                                    if ue.file.is_some() || ue.line.is_some() {
-                                        ": "
-                                    } else {
-                                        ""
-                                    },
-                                    ue.error
-                                );
-                                std::process::exit(1);
-                            }
-                            _ => {
-                                warn!("{}: saving post ID {} failed: {}", title, post.id, ue.error)
-                            }
-                        },
-                    }
-                }
-                Err(ue) => match ue.source {
-                    Source::Internal => {
-                        error!(
-                            "{}: {}: {}: {}{}{}{}",
-                            title,
-                            post.id,
-                            post.url,
-                            ue.file.unwrap_or(""),
-                            ue.line
-                                .map(|line| Cow::Owned(format!("#{}", line)))
-                                .unwrap_or(Cow::Borrowed("")),
-                            if ue.file.is_some() || ue.line.is_some() {
-                                ": "
-                            } else {
-                                ""
-                            },
-                            ue.error
-                        );
-                        std::process::exit(1);
-                    }
-                    _ => {
-                        if let Some(e) = ue.error.downcast_ref::<reqwest::Error>() {
-                            if let Some(StatusCode::NOT_FOUND) = e.status() {
-                                if !verbose {
-                                    return;
-                                }
-                            } else if e.is_timeout()
-                                || e.get_ref()
-                                    .and_then(|e| e.downcast_ref::<hyper::Error>())
-                                    .map(hyper::Error::is_connect)
-                                    .unwrap_or(false)
-                            {
-                                if is_link_special(&post.url) {
+                            Err(ue) => match ue.source {
+                                Source::Internal => {
                                     error!(
-                                        "{}: {}: {}: Special link timed out",
-                                        title, post.id, post.url
+                                        "{}: {}: {}: {}{}{}{}",
+                                        title,
+                                        post.id,
+                                        post.url,
+                                        ue.file.unwrap_or(""),
+                                        ue.line
+                                            .map(|line| Cow::Owned(format!("#{}", line)))
+                                            .unwrap_or(Cow::Borrowed("")),
+                                        if ue.file.is_some() || ue.line.is_some() {
+                                            ": "
+                                        } else {
+                                            ""
+                                        },
+                                        ue.error
                                     );
                                     std::process::exit(1);
                                 }
-                                if let Ok(url) = Url::parse(&post.url) {
-                                    if let Some(domain) = url.domain() {
-                                        blacklist.write().unwrap().insert(domain.to_string());
+                                _ => warn!(
+                                    "{}: saving post ID {} failed: {}",
+                                    title, post.id, ue.error
+                                ),
+                            },
+                        }
+                    }
+                    Err(ue) => match ue.source {
+                        Source::Internal => {
+                            error!(
+                                "{}: {}: {}: {}{}{}{}",
+                                title,
+                                post.id,
+                                post.url,
+                                ue.file.unwrap_or(""),
+                                ue.line
+                                    .map(|line| Cow::Owned(format!("#{}", line)))
+                                    .unwrap_or(Cow::Borrowed("")),
+                                if ue.file.is_some() || ue.line.is_some() {
+                                    ": "
+                                } else {
+                                    ""
+                                },
+                                ue.error
+                            );
+                            std::process::exit(1);
+                        }
+                        _ => {
+                            if let Some(e) = ue.error.downcast_ref::<reqwest::Error>() {
+                                if let Some(StatusCode::NOT_FOUND) = e.status() {
+                                    if !verbose {
+                                        return Ok(());
+                                    }
+                                } else if e.is_timeout()
+                                    || e.get_ref()
+                                        .and_then(|e| e.downcast_ref::<hyper::Error>())
+                                        .map(hyper::Error::is_connect)
+                                        .unwrap_or(false)
+                                {
+                                    if is_link_special(&post.url) {
+                                        error!(
+                                            "{}: {}: {}: Special link timed out",
+                                            title, post.id, post.url
+                                        );
+                                        std::process::exit(1);
+                                    }
+                                    if let Ok(url) = Url::parse(&post.url) {
+                                        if let Some(domain) = url.domain() {
+                                            blacklist.write().unwrap().insert(domain.to_string());
+                                        }
                                     }
                                 }
                             }
+                            warn!("{}: {}: {} failed: {}", title, post.id, post.url, ue.error)
                         }
-                        warn!("{}: {}: {} failed: {}", title, post.id, post.url, ue.error)
-                    }
-                },
-            }
+                    },
+                }
+                drop(thread_count);
+                Ok(())
+            }));
         });
+
+    future::poll_fn(move || {
+        if Arc::strong_count(&thread_count) > 1 {
+            Ok(Async::NotReady)
+        } else {
+            Ok(Async::Ready(()))
+        }
+    })
 }
 
 fn main() {
@@ -259,7 +277,6 @@ fn main() {
             (version: crate_version!())
             (author: crate_authors!(","))
             (about: crate_description!())
-            (@arg NO_SKIP_MONTHS: -M --("no-skip-months") "Don't skip past months we already have")
             (@arg VERBOSE: -v --("verbose") "Verbose logging")
             (@arg PATHS: +required +multiple "The URLs or paths of the files to ingest")
     )
@@ -267,167 +284,168 @@ fn main() {
 
     let verbose = matches.is_present("VERBOSE");
 
-    tokio::run(future::lazy(move || {
-        for path in matches.values_of_lossy("PATHS").unwrap() {
-            info!("Ingesting {}", &path);
+    tokio::run(
+        stream::iter_ok(matches.values_of_lossy("PATHS").unwrap())
+            .and_then(move |path| {
+                let month: i32 = MONTH_RE
+                    .captures(&path)
+                    .and_then(|caps| caps.get(1))
+                    .ok_or_else(|| format_err!("couldn't find month in {}", path))
+                    .and_then(|m| m.as_str().parse().map_err(Error::from))
+                    .unwrap();
 
-            let month: i32 = MONTH_RE
-                .captures(&path)
-                .and_then(|caps| caps.get(1))
-                .ok_or_else(|| format_err!("couldn't find month in {}", path))
-                .and_then(|m| m.as_str().parse().map_err(Error::from))?;
+                let year: i32 = YEAR_RE
+                    .find(&path)
+                    .ok_or_else(|| format_err!("couldn't find year in {}", path))
+                    .and_then(|m| m.as_str().parse().map_err(Error::from))
+                    .unwrap();
 
-            let year: i32 = YEAR_RE
-                .find(&path)
-                .ok_or_else(|| format_err!("couldn't find year in {}", path))
-                .and_then(|m| m.as_str().parse().map_err(Error::from))?;
+                let month_f = f64::from(month);
+                let year_f = f64::from(year);
 
-            let month_f = f64::from(month);
-            let year_f = f64::from(year);
+                info!("Ingesting {}", &path);
 
-            if !matches.is_present("NO_SKIP_MONTHS") {
-                let (next_month, next_year) = if month == 12 {
-                    (1, year + 1)
-                } else {
-                    (month + 1, year)
-                };
+                let (input_future, arch_path): (Box<Future<Item = File, Error = Error> + Send>, _) =
+                    if path.starts_with("http://") || path.starts_with("https://") {
+                        let arch_path = std::env::var("HOME").map_err(Error::from).unwrap()
+                            + "/archives/"
+                            + Url::parse(&path)
+                                .map_err(Error::from)
+                                .unwrap()
+                                .path_segments()
+                                .ok_or_else(|| format_err!("cannot-be-a-base-url"))
+                                .unwrap()
+                                .next_back()
+                                .ok_or_else(|| format_err!("no last path segment"))
+                                .unwrap();
 
-                let next_month = f64::from(next_month);
-                let next_year = f64::from(next_year);
+                        let arch_file = if Path::exists(Path::new(&arch_path)) {
+                            info!("Found existing archive file");
 
-                if DB_POOL
-                    .get()
-                    .map_err(Error::from)?
-                    .query_iter(
-                        "SELECT EXISTS(SELECT FROM posts \
-                         WHERE EXTRACT(MONTH FROM created_utc) = $1 \
-                         AND EXTRACT(YEAR FROM created_utc) = $2)",
-                        &[&next_month, &next_year],
-                    )
-                    .and_then(|mut q_i| q_i.next())
-                    .map(|row_opt| row_opt.map(|row| row.get::<usize, bool>(0)).unwrap())
-                    .map_err(Error::from)?
-                {
-                    info!("Already have {:02}-{}", year, month);
-                    continue;
-                }
-            }
+                            Box::new(future::result(
+                                OpenOptions::new()
+                                    .read(true)
+                                    .open(&arch_path)
+                                    .map_err(Error::from),
+                            )) as _
+                        } else {
+                            info!("Downloading archive file");
+                            let arch_file = OpenOptions::new()
+                                .create_new(true)
+                                .read(true)
+                                .write(true)
+                                .open(&arch_path)
+                                .map_err(Error::from)
+                                .unwrap();
 
-            let (input, arch_path): (Box<Read + Send>, _) = if path.starts_with("http://")
-                || path.starts_with("https://")
-            {
-                let arch_path = std::env::var("HOME").map_err(Error::from)?
-                    + "/archives/"
-                    + Url::parse(&path)
-                        .map_err(Error::from)?
-                        .path_segments()
-                        .ok_or_else(|| format_err!("cannot-be-a-base-url"))?
-                        .next_back()
-                        .ok_or_else(|| format_err!("no last path segment"))?;
+                            Box::new(REQW_CLIENT.get(&path).send().map_err(Error::from).and_then(
+                                move |resp| {
+                                    resp.into_body()
+                                        .map_err(Error::from)
+                                        .fold(arch_file, |mut arch_file, chunk| {
+                                            io::copy(&mut chunk.as_ref(), &mut arch_file)
+                                                .map(move |_| arch_file)
+                                                .map_err(Error::from)
+                                        })
+                                        .and_then(|mut arch_file| {
+                                            arch_file
+                                                .seek(SeekFrom::Start(0))
+                                                .map_err(Error::from)?;
 
-                let arch_file = if Path::exists(Path::new(&arch_path)) {
-                    info!("Found existing archive file");
+                                            Ok(arch_file)
+                                        })
+                                },
+                            )) as _
+                        };
 
-                    OpenOptions::new()
-                        .read(true)
-                        .open(&arch_path)
-                        .map_err(Error::from)?
-                } else {
-                    info!("Downloading archive file");
-                    let mut arch_file = OpenOptions::new()
-                        .create_new(true)
-                        .read(true)
-                        .write(true)
-                        .open(&arch_path)
-                        .map_err(Error::from)?;
+                        (arch_file, Some(arch_path))
+                    } else {
+                        (
+                            Box::new(future::result(File::open(&path).map_err(Error::from))) as _,
+                            None,
+                        )
+                    };
 
-                    io::copy(
-                        &mut BufReader::new(REQW_CLIENT.get(&path).send().map_err(Error::from)?),
-                        &mut arch_file,
-                    )
-                    .map_err(Error::from)?;
+                input_future.map_err(|e| panic!(e)).and_then(move |input| {
+                    info!("Processing posts we already have");
 
-                    arch_file.seek(SeekFrom::Start(0)).map_err(Error::from)?;
+                    let mut already_have = BTreeSet::new();
 
-                    arch_file
-                };
+                    DB_POOL
+                        .get()
+                        .map_err(Error::from)
+                        .unwrap()
+                        .query_iter(
+                            "SELECT reddit_id_int FROM posts \
+                             WHERE EXTRACT(month FROM created_utc) = $1 \
+                             AND EXTRACT(year FROM created_utc) = $2",
+                            &[&month_f, &year_f],
+                        )
+                        .map_err(Error::from)
+                        .unwrap()
+                        .for_each(|row| {
+                            already_have.insert(row.get(0));
+                            Ok(())
+                        })
+                        .map_err(Error::from)
+                        .unwrap();
 
-                (Box::new(arch_file), Some(arch_path))
-            } else {
-                (Box::new(File::open(&path).map_err(Error::from)?), None)
-            };
+                    let already_have_len = already_have.len();
+                    info!(
+                        "Already have {} post{}",
+                        already_have_len,
+                        if already_have_len == 1 { "" } else { "s" }
+                    );
 
-            info!("Processing posts we already have");
+                    let already_have = if already_have_len > 0 {
+                        Some(already_have)
+                    } else {
+                        None
+                    };
 
-            let mut already_have = BTreeSet::new();
+                    let input = BufReader::new(input);
 
-            DB_POOL
-                .get()
-                .map_err(Error::from)?
-                .query_iter(
-                    "SELECT reddit_id_int FROM posts \
-                     WHERE EXTRACT(month FROM created_utc) = $1 \
-                     AND EXTRACT(year FROM created_utc) = $2",
-                    &[&month_f, &year_f],
-                )
-                .map_err(Error::from)?
-                .for_each(|row| {
-                    already_have.insert(row.get(0));
-                    Ok(())
+                    let title = format!("{:02}-{}", month, year);
+
+                    let ingest_fut: Box<dyn future::Future<Item = (), Error = ()> + Send> =
+                        if path.ends_with("bz2") {
+                            Box::new(ingest_json(
+                                &title,
+                                already_have,
+                                bzip2::bufread::BzDecoder::new(input),
+                                verbose,
+                            )) as _
+                        } else if path.ends_with("xz") {
+                            Box::new(ingest_json(
+                                &title,
+                                already_have,
+                                xz2::bufread::XzDecoder::new(input),
+                                verbose,
+                            )) as _
+                        } else if path.ends_with("zst") {
+                            Box::new(ingest_json(
+                                &title,
+                                already_have,
+                                zstd::stream::read::Decoder::new(input)
+                                    .map_err(Error::from)
+                                    .unwrap(),
+                                verbose,
+                            )) as _
+                        } else {
+                            Box::new(ingest_json(&title, already_have, input, verbose)) as _
+                        };
+
+                    ingest_fut.map(move |_| {
+                        if let Some(arch_path) = arch_path {
+                            remove_file(arch_path).map_err(Error::from).unwrap();
+                        }
+
+                        info!("Done ingesting {}", &path);
+                    })
                 })
-                .map_err(Error::from)?;
-
-            let already_have_len = already_have.len();
-            info!(
-                "Already have {} post{}",
-                already_have_len,
-                if already_have_len == 1 { "" } else { "s" }
-            );
-
-            let already_have = if already_have_len > 0 {
-                Some(already_have)
-            } else {
-                None
-            };
-
-            let input = BufReader::new(input);
-
-            let title = format!("{:02}-{}", month, year);
-
-            if path.ends_with("bz2") {
-                ingest_json(
-                    &title,
-                    already_have,
-                    bzip2::bufread::BzDecoder::new(input),
-                    verbose,
-                );
-            } else if path.ends_with("xz") {
-                ingest_json(
-                    &title,
-                    already_have,
-                    xz2::bufread::XzDecoder::new(input),
-                    verbose,
-                );
-            } else if path.ends_with("zst") {
-                ingest_json(
-                    &title,
-                    already_have,
-                    zstd::stream::read::Decoder::new(input).map_err(Error::from)?,
-                    verbose,
-                );
-            } else {
-                ingest_json(&title, already_have, input, verbose);
-            }
-
-            if let Some(arch_path) = arch_path {
-                remove_file(arch_path).map_err(Error::from)?;
-            }
-
-            info!("Done ingesting {}", &path);
-        }
-
-        Ok(())
-    }).then(|res| {
-        res.map_err(|e: Error| println!("{:?}", e))
-    }));
+            })
+            .into_future()
+            .map(|_| ())
+            .map_err(|_| ()),
+    );
 }

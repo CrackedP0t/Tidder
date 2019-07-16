@@ -101,7 +101,7 @@ fn ingest_json<R: Read + Send>(
             let post = to_submission(post).map_err(le!()).ok()??;
             if !post.is_self
                 && (EXT_RE.is_match(&post.url) || is_link_special(&post.url))
-                && match &mut already_have {
+                && match already_have {
                     None => true,
                     Some(ref mut set) => {
                         let had = set.remove(&post.id_int);
@@ -224,6 +224,10 @@ fn ingest_json<R: Read + Send>(
                                     .map(hyper::Error::is_connect)
                                     .unwrap_or(false)
                             {
+                                if is_link_special(&post.url) {
+                                    error!("{}: {}: {}: Special link timed out", title, post.id, post.url);
+                                    std::process::exit(1);
+                                }
                                 if let Ok(url) = Url::parse(&post.url) {
                                     if let Some(domain) = url.domain() {
                                         blacklist.write().unwrap().insert(domain.to_string());

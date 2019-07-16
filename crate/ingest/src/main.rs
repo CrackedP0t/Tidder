@@ -17,6 +17,7 @@ use std::fs::{remove_file, File, OpenOptions};
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::iter::Iterator;
 use std::path::Path;
+use tokio::prelude::*;
 
 lazy_static! {
     static ref DB_POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> = r2d2::Pool::new(
@@ -225,7 +226,10 @@ fn ingest_json<R: Read + Send>(
                                     .unwrap_or(false)
                             {
                                 if is_link_special(&post.url) {
-                                    error!("{}: {}: {}: Special link timed out", title, post.id, post.url);
+                                    error!(
+                                        "{}: {}: {}: Special link timed out",
+                                        title, post.id, post.url
+                                    );
                                     std::process::exit(1);
                                 }
                                 if let Ok(url) = Url::parse(&post.url) {
@@ -242,7 +246,7 @@ fn ingest_json<R: Read + Send>(
         });
 }
 
-fn main() -> Result<(), Error> {
+fn main() {
     lazy_static::lazy_static! {
         static ref REQW_CLIENT: Client = Client::new();
         static ref MONTH_RE: Regex = Regex::new(r"(\d\d)\..+$").unwrap();
@@ -263,53 +267,55 @@ fn main() -> Result<(), Error> {
 
     let verbose = matches.is_present("VERBOSE");
 
-    for path in matches.values_of_lossy("PATHS").unwrap() {
-        info!("Ingesting {}", &path);
+    tokio::run(future::lazy(move || {
+        for path in matches.values_of_lossy("PATHS").unwrap() {
+            info!("Ingesting {}", &path);
 
-        let month: i32 = MONTH_RE
-            .captures(&path)
-            .and_then(|caps| caps.get(1))
-            .ok_or_else(|| format_err!("couldn't find month in {}", path))
-            .and_then(|m| m.as_str().parse().map_err(Error::from))?;
+            let month: i32 = MONTH_RE
+                .captures(&path)
+                .and_then(|caps| caps.get(1))
+                .ok_or_else(|| format_err!("couldn't find month in {}", path))
+                .and_then(|m| m.as_str().parse().map_err(Error::from))?;
 
-        let year: i32 = YEAR_RE
-            .find(&path)
-            .ok_or_else(|| format_err!("couldn't find year in {}", path))
-            .and_then(|m| m.as_str().parse().map_err(Error::from))?;
+            let year: i32 = YEAR_RE
+                .find(&path)
+                .ok_or_else(|| format_err!("couldn't find year in {}", path))
+                .and_then(|m| m.as_str().parse().map_err(Error::from))?;
 
-        let month_f = f64::from(month);
-        let year_f = f64::from(year);
+            let month_f = f64::from(month);
+            let year_f = f64::from(year);
 
-        if !matches.is_present("NO_SKIP_MONTHS") {
-            let (next_month, next_year) = if month == 12 {
-                (1, year + 1)
-            } else {
-                (month + 1, year)
-            };
+            if !matches.is_present("NO_SKIP_MONTHS") {
+                let (next_month, next_year) = if month == 12 {
+                    (1, year + 1)
+                } else {
+                    (month + 1, year)
+                };
 
-            let next_month = f64::from(next_month);
-            let next_year = f64::from(next_year);
+                let next_month = f64::from(next_month);
+                let next_year = f64::from(next_year);
 
-            if DB_POOL
-                .get()
-                .map_err(Error::from)?
-                .query_iter(
-                    "SELECT EXISTS(SELECT FROM posts \
-                     WHERE EXTRACT(MONTH FROM created_utc) = $1 \
-                     AND EXTRACT(YEAR FROM created_utc) = $2)",
-                    &[&next_month, &next_year],
-                )
-                .and_then(|mut q_i| q_i.next())
-                .map(|row_opt| row_opt.map(|row| row.get::<usize, bool>(0)).unwrap())
-                .map_err(Error::from)?
-            {
-                info!("Already have {:02}-{}", year, month);
-                continue;
+                if DB_POOL
+                    .get()
+                    .map_err(Error::from)?
+                    .query_iter(
+                        "SELECT EXISTS(SELECT FROM posts \
+                         WHERE EXTRACT(MONTH FROM created_utc) = $1 \
+                         AND EXTRACT(YEAR FROM created_utc) = $2)",
+                        &[&next_month, &next_year],
+                    )
+                    .and_then(|mut q_i| q_i.next())
+                    .map(|row_opt| row_opt.map(|row| row.get::<usize, bool>(0)).unwrap())
+                    .map_err(Error::from)?
+                {
+                    info!("Already have {:02}-{}", year, month);
+                    continue;
+                }
             }
-        }
 
-        let (input, arch_path): (Box<Read + Send>, _) =
-            if path.starts_with("http://") || path.starts_with("https://") {
+            let (input, arch_path): (Box<Read + Send>, _) = if path.starts_with("http://")
+                || path.starts_with("https://")
+            {
                 let arch_path = std::env::var("HOME").map_err(Error::from)?
                     + "/archives/"
                     + Url::parse(&path)
@@ -351,74 +357,77 @@ fn main() -> Result<(), Error> {
                 (Box::new(File::open(&path).map_err(Error::from)?), None)
             };
 
-        info!("Processing posts we already have");
+            info!("Processing posts we already have");
 
-        let mut already_have = BTreeSet::new();
+            let mut already_have = BTreeSet::new();
 
-        DB_POOL
-            .get()
-            .map_err(Error::from)?
-            .query_iter(
-                "SELECT reddit_id_int FROM posts \
-                 WHERE EXTRACT(month FROM created_utc) = $1 \
-                 AND EXTRACT(year FROM created_utc) = $2",
-                &[&month_f, &year_f],
-            )
-            .map_err(Error::from)?
-            .for_each(|row| {
-                already_have.insert(row.get(0));
-                Ok(())
-            })
-            .map_err(Error::from)?;
+            DB_POOL
+                .get()
+                .map_err(Error::from)?
+                .query_iter(
+                    "SELECT reddit_id_int FROM posts \
+                     WHERE EXTRACT(month FROM created_utc) = $1 \
+                     AND EXTRACT(year FROM created_utc) = $2",
+                    &[&month_f, &year_f],
+                )
+                .map_err(Error::from)?
+                .for_each(|row| {
+                    already_have.insert(row.get(0));
+                    Ok(())
+                })
+                .map_err(Error::from)?;
 
-        let already_have_len = already_have.len();
-        info!(
-            "Already have {} post{}",
-            already_have_len,
-            if already_have_len == 1 { "" } else { "s" }
-        );
-
-        let already_have = if already_have_len > 0 {
-            Some(already_have)
-        } else {
-            None
-        };
-
-        let input = BufReader::new(input);
-
-        let title = format!("{:02}-{}", month, year);
-
-        if path.ends_with("bz2") {
-            ingest_json(
-                &title,
-                already_have,
-                bzip2::bufread::BzDecoder::new(input),
-                verbose,
+            let already_have_len = already_have.len();
+            info!(
+                "Already have {} post{}",
+                already_have_len,
+                if already_have_len == 1 { "" } else { "s" }
             );
-        } else if path.ends_with("xz") {
-            ingest_json(
-                &title,
-                already_have,
-                xz2::bufread::XzDecoder::new(input),
-                verbose,
-            );
-        } else if path.ends_with("zst") {
-            ingest_json(
-                &title,
-                already_have,
-                zstd::stream::read::Decoder::new(input).map_err(Error::from)?,
-                verbose,
-            );
-        } else {
-            ingest_json(&title, already_have, input, verbose);
+
+            let already_have = if already_have_len > 0 {
+                Some(already_have)
+            } else {
+                None
+            };
+
+            let input = BufReader::new(input);
+
+            let title = format!("{:02}-{}", month, year);
+
+            if path.ends_with("bz2") {
+                ingest_json(
+                    &title,
+                    already_have,
+                    bzip2::bufread::BzDecoder::new(input),
+                    verbose,
+                );
+            } else if path.ends_with("xz") {
+                ingest_json(
+                    &title,
+                    already_have,
+                    xz2::bufread::XzDecoder::new(input),
+                    verbose,
+                );
+            } else if path.ends_with("zst") {
+                ingest_json(
+                    &title,
+                    already_have,
+                    zstd::stream::read::Decoder::new(input).map_err(Error::from)?,
+                    verbose,
+                );
+            } else {
+                ingest_json(&title, already_have, input, verbose);
+            }
+
+            if let Some(arch_path) = arch_path {
+                remove_file(arch_path).map_err(Error::from)?;
+            }
+
+            info!("Done ingesting {}", &path);
         }
 
-        if let Some(arch_path) = arch_path {
-            remove_file(arch_path).map_err(Error::from)?;
-        }
-
-        info!("Done ingesting {}", &path);
-    }
-
-    Ok(())
+        Ok(())
+    }).then(|res| {
+        res.map_err(|e: Error| println!("{:?}", e))
+    }));
 }

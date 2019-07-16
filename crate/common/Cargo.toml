@@ -20,6 +20,7 @@ toml = "0.5.1"
 url = "1.7.2"
 scraper = "0.10.0"
 image = "0.21.2"
+tokio = "0.1.22"
 
 [build-dependencies]
 image = "0.21.2"

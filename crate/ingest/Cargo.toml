@@ -24,3 +24,5 @@ regex = "1.1.6"
 failure = "0.1.5"
 hyper = "0.12.31"
 tokio = "0.1.22"
+macros = { path = "../macros" }
+futures = "0.1.28"

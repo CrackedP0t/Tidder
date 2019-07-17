@@ -7,7 +7,7 @@ use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use regex::Regex;
 use reqwest::{
     header::{self, HeaderMap},
-    Response, StatusCode,
+    StatusCode,
 };
 use scraper::{Html, Selector};
 use serde::Deserialize;
@@ -413,13 +413,6 @@ fn get_existing(link: &str) -> Result<Option<(Hash, HashDest, i64)>, UserError> 
         })
 }
 
-lazy_static! {
-    static ref REQW_CLIENT: reqwest::Client = reqwest::Client::builder()
-        .timeout(Some(std::time::Duration::from_secs(30)))
-        .build()
-        .unwrap();
-}
-
 fn error_for_status_ue(e: reqwest::Error) -> UserError {
     let msg = match e.status() {
         None => Cow::Borrowed("couldn't download image"),
@@ -428,7 +421,6 @@ fn error_for_status_ue(e: reqwest::Error) -> UserError {
 
     UserError::new(msg, e)
 }
-
 
 pub fn setup_logging() {
     fern::Dispatch::new()

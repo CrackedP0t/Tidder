@@ -1,2 +1,2 @@
 [workspace]
-members = ["common", "hasher", "site", "watcher", "ingest", "cache_control"]
+members = ["common", "hasher", "site", "watcher", "ingest", "cache_control", "macros"]

@@ -144,53 +144,22 @@ fn ingest_json<R: Read + Send>(
                 return;
             }
 
-            match save_hash(&post.url, HashDest::Images) {
+            let image_id = match save_hash(&post.url, HashDest::Images) {
                 Ok((_hash, _hash_dest, image_id, exists)) => {
-                    match save_post(&DB_POOL, &post, image_id) {
-                        Ok(post_exists) => {
-                            if !post_exists {
-                                if verbose {
-                                    if exists {
-                                        info!(
-                                            "{}: {}: {} already exists",
-                                            title, post.id, post.url
-                                        );
-                                    } else {
-                                        info!(
-                                            "{}: {}: {} successfully hashed",
-                                            title, post.id, post.url
-                                        );
-                                    }
-                                }
-                            } else {
-                                warn!("{}: post ID {} already recorded", title, post.id);
-                            }
+                    if verbose {
+                        if exists {
+                            info!(
+                                "{}: {}: {} already exists",
+                                title, post.id, post.url
+                            );
+                        } else {
+                            info!(
+                                "{}: {}: {} successfully hashed",
+                                title, post.id, post.url
+                            );
                         }
-                        Err(ue) => match ue.source {
-                            Source::Internal => {
-                                error!(
-                                    "{}: {}: {}: {}{}{}{}",
-                                    title,
-                                    post.id,
-                                    post.url,
-                                    ue.file.unwrap_or(""),
-                                    ue.line
-                                        .map(|line| Cow::Owned(format!("#{}", line)))
-                                        .unwrap_or(Cow::Borrowed("")),
-                                    if ue.file.is_some() || ue.line.is_some() {
-                                        ": "
-                                    } else {
-                                        ""
-                                    },
-                                    ue.error
-                                );
-                                std::process::exit(1);
-                            }
-                            _ => {
-                                warn!("{}: saving post ID {} failed: {}", title, post.id, ue.error)
-                            }
-                        },
                     }
+                    Some(image_id)
                 }
                 Err(ue) => match ue.source {
                     Source::Internal => {
@@ -235,10 +204,44 @@ fn ingest_json<R: Read + Send>(
                                 }
                             }
                         }
-                        warn!("{}: {}: {} failed: {}", title, post.id, post.url, ue.error)
+                        warn!("{}: {}: {} failed: {}", title, post.id, post.url, ue.error);
+
+                        None
                     }
                 },
-            }
+            };
+
+            match save_post(&DB_POOL, &post, image_id) {
+                Ok(post_exists) => {
+                    if post_exists {
+                        warn!("{}: post ID {} already recorded", title, post.id);
+                    }
+                }
+                Err(ue) => match ue.source {
+                    Source::Internal => {
+                        error!(
+                            "{}: {}: {}: {}{}{}{}",
+                            title,
+                            post.id,
+                            post.url,
+                            ue.file.unwrap_or(""),
+                            ue.line
+                                .map(|line| Cow::Owned(format!("#{}", line)))
+                                .unwrap_or(Cow::Borrowed("")),
+                            if ue.file.is_some() || ue.line.is_some() {
+                                ": "
+                            } else {
+                                ""
+                            },
+                            ue.error
+                        );
+                        std::process::exit(1);
+                    }
+                    _ => {
+                        warn!("{}: saving post ID {} failed: {}", title, post.id, ue.error)
+                    }
+                },
+            };
         });
 }
 

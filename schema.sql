@@ -2,8 +2,8 @@
 -- PostgreSQL database dump
 --
 
--- Dumped from database version 11.3
--- Dumped by pg_dump version 11.3
+-- Dumped from database version 11.4
+-- Dumped by pg_dump version 11.4
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -116,7 +116,7 @@ CREATE TABLE public.posts (
     title character varying NOT NULL,
     nsfw boolean NOT NULL,
     spoiler boolean DEFAULT false NOT NULL,
-    image_id bigint NOT NULL,
+    image_id bigint,
     reddit_id_int bigint NOT NULL
 );
 

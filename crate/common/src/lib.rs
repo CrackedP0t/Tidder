@@ -250,7 +250,7 @@ pub struct PushShiftSearch {
 pub fn save_post(
     pool: &r2d2::Pool<PostgresConnectionManager<NoTls>>,
     post: &Submission,
-    image_id: i64,
+    image_id: Option<i64>,
 ) -> Result<bool, UserError> {
     lazy_static! {
         static ref ID_RE: Regex = Regex::new(r"/comments/([^/]+)/").unwrap();

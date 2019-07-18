@@ -895,3 +895,23 @@ pub mod secrets {
 lazy_static! {
     pub static ref SECRETS: secrets::Secrets = secrets::load().unwrap();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn imgur_links() {
+        assert!(is_link_imgur("https://i.imgur.com/3EqtHIK.jpg"));
+        assert!(is_link_imgur("https://imgur.com/3EqtHIK"));
+        assert!(is_link_imgur("https://imgur.com"));
+        assert!(!is_link_imgur("https://notimgur.com/3EqtHIK"));
+    }
+    #[test]
+    fn gfycat_links() {
+        assert!(is_link_gfycat("https://gfycat.com/excellentclumsyjanenschia-dog"));
+        assert!(is_link_gfycat("https://gfycat.com"));
+        assert!(is_link_gfycat("https://developers.gfycat.com/api/"));
+        assert!(!is_link_gfycat("https://notgfycat.com/excellentclumsyjanenschia-dog"));
+    }
+}

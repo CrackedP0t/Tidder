@@ -193,7 +193,7 @@ fn ingest_json<R: Read + Send>(
                                     .map(hyper::Error::is_connect)
                                     .unwrap_or(false)
                             {
-                                if is_link_special(&post.url) {
+                                if is_link_important(&post.url) {
                                     error!("{}: {}: {}: Special link timed out", title, post.id, post.url);
                                     std::process::exit(1);
                                 }

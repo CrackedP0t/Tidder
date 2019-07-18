@@ -455,6 +455,10 @@ pub fn is_link_special(link: &str) -> bool {
     is_link_imgur(link) || is_link_gfycat(link) || is_wikipedia_file(link)
 }
 
+pub fn is_link_important(link: &str) -> bool {
+    is_link_imgur(link) || is_link_gfycat(link)
+}
+
 pub fn follow_link(url: &Url) -> Result<Option<String>, UserError> {
     if let Some(link) = follow_wikipedia(url)? {
         return Ok(Some(link));

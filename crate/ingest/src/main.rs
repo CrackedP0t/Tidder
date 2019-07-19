@@ -259,12 +259,14 @@ fn main() -> Result<(), Error> {
             (author: crate_authors!(","))
             (about: crate_description!())
             (@arg NO_SKIP_MONTHS: -M --("no-skip-months") "Don't skip past months we already have")
-            (@arg VERBOSE: -v --("verbose") "Verbose logging")
+            (@arg VERBOSE: -v --verbose "Verbose logging")
+            (@arg NO_DELETE: -D --("no-delete") "Don't delete archive files when done")
             (@arg PATHS: +required +multiple "The URLs or paths of the files to ingest")
     )
     .get_matches();
 
     let verbose = matches.is_present("VERBOSE");
+    let no_delete = matches.is_present("NO_DELETE");
 
     for path in matches.values_of_lossy("PATHS").unwrap() {
         info!("Ingesting {}", &path);
@@ -416,8 +418,10 @@ fn main() -> Result<(), Error> {
             ingest_json(&title, already_have, input, verbose);
         }
 
-        if let Some(arch_path) = arch_path {
-            remove_file(arch_path).map_err(Error::from)?;
+        if !no_delete {
+            if let Some(arch_path) = arch_path {
+                remove_file(arch_path).map_err(Error::from)?;
+            }
         }
 
         info!("Done ingesting {}", &path);

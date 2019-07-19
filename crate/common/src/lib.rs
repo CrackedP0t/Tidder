@@ -448,7 +448,7 @@ pub fn is_link_gfycat(link: &str) -> bool {
 
 lazy_static! {
     static ref WIKIPEDIA_FILE_RE: Regex =
-        Regex::new(r"(?:^|\.)(?:wikipedia|wiktionary|wikiquote|wikibooks|wikisource|wikinews|wikiversity|wikispecies|mediawiki|wikidata|wikivoyage|wikimedia).org/wiki/((?:Image|File):[^#?]+)").unwrap();
+        Regex::new(r"(?i)(?:^|\.)(?:wikipedia|wiktionary|wikiquote|wikibooks|wikisource|wikinews|wikiversity|wikispecies|mediawiki|wikidata|wikivoyage|wikimedia).org(?-i)/wiki/((?i:Image|File):[^#?]+)").unwrap();
 }
 
 pub fn is_wikipedia_file(link: &str) -> bool {

@@ -907,6 +907,7 @@ mod tests {
         assert!(is_link_imgur("https://imgur.com"));
         assert!(!is_link_imgur("https://notimgur.com/3EqtHIK"));
         assert!(!is_link_imgur("http://www.valuatemysite.com/www.imgur.com"));
+        assert!(is_link_imgur("https://sub-domain.imgur.com"));
     }
     #[test]
     fn gfycat_links() {

@@ -428,7 +428,7 @@ fn error_for_status_ue(e: reqwest::Error) -> UserError {
 
 pub fn is_link_imgur(link: &str) -> bool {
     lazy_static! {
-        static ref IMGUR_LINK_RE: Regex = Regex::new(r"(?:/|\.)imgur.com(?:[:/]|$)").unwrap();
+        static ref IMGUR_LINK_RE: Regex = Regex::new(r"https?://(?:[a-z0-9-.]+\.)?imgur.com(?:[:/]|$)").unwrap();
     }
 
     IMGUR_LINK_RE.is_match(link)
@@ -436,7 +436,7 @@ pub fn is_link_imgur(link: &str) -> bool {
 
 pub fn is_link_gfycat(link: &str) -> bool {
     lazy_static! {
-        static ref GFYCAT_LINK_RE: Regex = Regex::new(r"(?:/|\.)gfycat.com(?:[:/]|$)").unwrap();
+        static ref GFYCAT_LINK_RE: Regex = Regex::new(r"https?://(?:[a-z0-9-.]+\.)?gfycat.com(?:[:/]|$)").unwrap();
     }
 
     GFYCAT_LINK_RE.is_match(link)
@@ -906,6 +906,7 @@ mod tests {
         assert!(is_link_imgur("https://imgur.com/3EqtHIK"));
         assert!(is_link_imgur("https://imgur.com"));
         assert!(!is_link_imgur("https://notimgur.com/3EqtHIK"));
+        assert!(!is_link_imgur("http://www.valuatemysite.com/www.imgur.com"));
     }
     #[test]
     fn gfycat_links() {

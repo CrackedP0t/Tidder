@@ -172,7 +172,7 @@ fn ingest_json<R: Read + Send>(
 
                     save_hash(post.url.clone(), HashDest::Images)
                         .then(|res| {
-                            std::thread::sleep(std::time::Duration::from_millis(1));
+                            std::thread::sleep(std::time::Duration::from_millis(20));
                             match res {
                                 Ok(o) => Ok((post, o)),
                                 Err(e) => Err((post, e)),

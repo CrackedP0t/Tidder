@@ -171,14 +171,14 @@ fn ingest_json<R: Read + Send>(
                         return err(());
                     }
 
-                    *in_flight.write().unwrap() += 1;
-
-                    ok((in_flight, post))
+                    ok(post)
                 })
-                .and_then(move |(in_flight, post)| {
+                .and_then(move |post| {
                     future::poll_fn(move || match in_flight.try_read() {
                         Ok(guard) => {
                             if *guard < 8 {
+                                drop(guard);
+                                *in_flight.write().unwrap() += 1;
                                 Ok(Async::Ready(()))
                             } else {
                                 Ok(Async::NotReady)
@@ -193,9 +193,12 @@ fn ingest_json<R: Read + Send>(
                     let e_title = title.clone();
 
                     save_hash(post.url.clone(), HashDest::Images)
-                        .then(|res| match res {
-                            Ok(o) => Ok((post, o)),
-                            Err(e) => Err((post, e)),
+                        .then(move |res| {
+                            *end_in_flight.write().unwrap() -= 1;
+                            match res {
+                                Ok(o) => Ok((post, o)),
+                                Err(e) => Err((post, e)),
+                            }
                         })
                         .map(move |(post, (_hash, _hash_dest, image_id, exists))| {
                             if verbose {
@@ -267,7 +270,6 @@ fn ingest_json<R: Read + Send>(
                             post
                         })
                         .then(move |res| {
-                            *end_in_flight.write().unwrap() -= 1;
                             let (post, image_id) = res
                                 .map(|tup| (tup.0, Some(tup.1)))
                                 .unwrap_or_else(|post| (post, None));

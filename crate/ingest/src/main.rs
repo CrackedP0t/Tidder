@@ -25,7 +25,7 @@ lazy_static! {
     .unwrap();
 }
 
-static PERMA_BLACKLIST: [&'static str; 1] = ["womp.imgur.com"];
+static PERMA_BLACKLIST: [&'static str; 1] = ["www.womp.imgur.com"];
 
 struct Check<I> {
     iter: I,

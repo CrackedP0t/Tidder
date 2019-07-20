@@ -110,6 +110,8 @@ fn ingest_json<R: Read + Send>(
 
     let blacklist = Arc::new(RwLock::new(blacklist));
 
+    let in_flight = Arc::new(RwLock::new(0u32));
+
     check_json
         .filter_map(|post| {
             let post = to_submission(post).map_err(le!()).ok()??;
@@ -136,47 +138,64 @@ fn ingest_json<R: Read + Send>(
             let title = title.clone();
             let lazy_blacklist = blacklist.clone();
             let blacklist = blacklist.clone();
+
+            let in_flight = in_flight.clone();
+            let end_in_flight = in_flight.clone();
+
             tokio::spawn(
                 future::lazy(move || {
-                    let title = lazy_title;
-                    let blacklist = lazy_blacklist;
-                    post.url = post
-                        .url
-                        .replace("&amp;", "&")
-                        .replace("&lt;", "<")
-                        .replace("&gt;", ">");
+                    *in_flight.write().unwrap() += 1;
 
-                    let post_url = match Url::parse(&post.url) {
-                        Ok(url) => url,
-                        Err(e) => {
-                            warn!("{}: {}: {} is invalid: {}", title, post.id, post.url, e);
+                    Ok(in_flight)
+                })
+                .and_then(|in_flight| {
+                    future::poll_fn(move || {
+                        if *in_flight.read().unwrap() < 8 {
+                            Ok(Async::Ready(()))
+                        } else {
+                            Ok(Async::NotReady)
+                        }
+                    })
+                })
+                .and_then(move |_| {
+                    future::lazy(move || {
+                        let title = lazy_title;
+                        let blacklist = lazy_blacklist;
+                        post.url = post
+                            .url
+                            .replace("&amp;", "&")
+                            .replace("&lt;", "<")
+                            .replace("&gt;", ">");
+
+                        let post_url = match Url::parse(&post.url) {
+                            Ok(url) => url,
+                            Err(e) => {
+                                warn!("{}: {}: {} is invalid: {}", title, post.id, post.url, e);
+                                return err(());
+                            }
+                        };
+
+                        if post_url
+                            .domain()
+                            .map(|domain| blacklist.read().unwrap().contains(domain))
+                            .unwrap_or(false)
+                        {
+                            if verbose {
+                                warn!("{}: {}: {} is blacklisted", title, post.id, post.url);
+                            }
                             return err(());
                         }
-                    };
 
-                    if post_url
-                        .domain()
-                        .map(|domain| blacklist.read().unwrap().contains(domain))
-                        .unwrap_or(false)
-                    {
-                        if verbose {
-                            warn!("{}: {}: {} is blacklisted", title, post.id, post.url);
-                        }
-                        return err(());
-                    }
-
-                    ok(post)
+                        ok(post)
+                    })
                 })
                 .and_then(move |post| {
                     let e_title = title.clone();
 
                     save_hash(post.url.clone(), HashDest::Images)
-                        .then(|res| {
-                            std::thread::sleep(std::time::Duration::from_millis(20));
-                            match res {
-                                Ok(o) => Ok((post, o)),
-                                Err(e) => Err((post, e)),
-                            }
+                        .then(|res| match res {
+                            Ok(o) => Ok((post, o)),
+                            Err(e) => Err((post, e)),
                         })
                         .map(move |(post, (_hash, _hash_dest, image_id, exists))| {
                             if verbose {
@@ -248,6 +267,7 @@ fn ingest_json<R: Read + Send>(
                             post
                         })
                         .then(move |res| {
+                            *end_in_flight.write().unwrap() -= 1;
                             let (post, image_id) = res
                                 .map(|tup| (tup.0, Some(tup.1)))
                                 .unwrap_or_else(|post| (post, None));

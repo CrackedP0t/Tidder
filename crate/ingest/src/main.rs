@@ -25,6 +25,8 @@ lazy_static! {
     .unwrap();
 }
 
+static PERMA_BLACKLIST: [&'static str; 1] = ["womp.imgur.com"];
+
 struct Check<I> {
     iter: I,
 }
@@ -94,7 +96,10 @@ fn ingest_json<R: Read + Send>(
         }))
     };
 
-    let blacklist = std::sync::RwLock::new(HashSet::<String>::new());
+    let mut blacklist = HashSet::<Cow<str>>::new();
+    blacklist.extend(PERMA_BLACKLIST.iter().map(|s| Cow::Borrowed(*s)));
+
+    let blacklist = std::sync::RwLock::new(blacklist);
 
     check_json
         .filter_map(|post| {
@@ -148,15 +153,9 @@ fn ingest_json<R: Read + Send>(
                 Ok((_hash, _hash_dest, image_id, exists)) => {
                     if verbose {
                         if exists {
-                            info!(
-                                "{}: {}: {} already exists",
-                                title, post.id, post.url
-                            );
+                            info!("{}: {}: {} already exists", title, post.id, post.url);
                         } else {
-                            info!(
-                                "{}: {}: {} successfully hashed",
-                                title, post.id, post.url
-                            );
+                            info!("{}: {}: {} successfully hashed", title, post.id, post.url);
                         }
                     }
                     Some(image_id)
@@ -194,12 +193,18 @@ fn ingest_json<R: Read + Send>(
                                     .unwrap_or(false)
                             {
                                 if is_link_important(&post.url) {
-                                    error!("{}: {}: {}: Special link timed out", title, post.id, post.url);
+                                    error!(
+                                        "{}: {}: {}: Special link timed out",
+                                        title, post.id, post.url
+                                    );
                                     std::process::exit(1);
                                 }
                                 if let Ok(url) = Url::parse(&post.url) {
                                     if let Some(domain) = url.domain() {
-                                        blacklist.write().unwrap().insert(domain.to_string());
+                                        blacklist
+                                            .write()
+                                            .unwrap()
+                                            .insert(Cow::Owned(domain.to_string()));
                                     }
                                 }
                             }
@@ -237,9 +242,7 @@ fn ingest_json<R: Read + Send>(
                         );
                         std::process::exit(1);
                     }
-                    _ => {
-                        warn!("{}: saving post ID {} failed: {}", title, post.id, ue.error)
-                    }
+                    _ => warn!("{}: saving post ID {} failed: {}", title, post.id, ue.error),
                 },
             };
         });

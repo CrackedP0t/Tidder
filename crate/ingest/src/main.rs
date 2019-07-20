@@ -33,7 +33,7 @@ lazy_static! {
 }
 
 const PERMA_BLACKLIST: [&str; 0] = [];
-const MAX_IN_FLIGHT: u32 = 8;
+const MAX_IN_FLIGHT: u32 = 4;
 
 struct Check<I> {
     iter: I,

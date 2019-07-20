@@ -181,6 +181,7 @@ fn ingest_json<R: Read + Send>(
                         std::process::exit(1);
                     }
                     _ => {
+                        warn!("{}: {}: {} failed: {}", title, post.id, post.url, ue.error);
                         if let Some(e) = ue.error.downcast_ref::<reqwest::Error>() {
                             if let Some(StatusCode::NOT_FOUND) = e.status() {
                                 if !verbose {
@@ -209,7 +210,6 @@ fn ingest_json<R: Read + Send>(
                                 }
                             }
                         }
-                        warn!("{}: {}: {} failed: {}", title, post.id, post.url, ue.error);
 
                         None
                     }

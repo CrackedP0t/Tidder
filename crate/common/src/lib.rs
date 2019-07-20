@@ -427,7 +427,10 @@ fn error_for_status_ue(e: reqwest::Error) -> UserError {
 }
 
 pub fn new_domain_re(domain: &str) -> Result<Regex, regex::Error> {
-    Regex::new(&format!(r"(?i)https?://(?:[a-z0-9-.]+\.)?{}(?:[/?#:]|$)", domain))
+    Regex::new(&format!(
+        r"(?i)https?://(?:[a-z0-9-.]+\.)?{}(?:[/?#:]|$)",
+        domain
+    ))
 }
 
 pub fn is_link_imgur(link: &str) -> bool {
@@ -463,8 +466,10 @@ pub fn is_link_important(link: &str) -> bool {
     is_link_imgur(link) || is_link_gfycat(link)
 }
 
-pub fn follow_link(url: &Url) -> Result<Option<String>, UserError> {
-    if let Some(link) = follow_wikipedia(url)? {
+pub fn follow_link(url: Url) -> Result<Option<String>, UserError> {
+    if is_link_imgur(url.as_str()) {
+        return follow_imgur(url).map(Some)
+    } else if let Some(link) = follow_wikipedia(&url)? {
         return Ok(Some(link));
     }
 
@@ -476,9 +481,7 @@ pub fn follow_link(url: &Url) -> Result<Option<String>, UserError> {
         return Ok(None);
     }
 
-    if is_link_imgur(url.as_str()) {
-        follow_imgur(&url).map(Some)
-    } else if is_link_gfycat(url.as_str()) {
+    if is_link_gfycat(url.as_str()) {
         follow_gfycat(&url).map(Some)
     } else {
         Ok(None)
@@ -521,17 +524,29 @@ pub fn follow_gfycat(url: &Url) -> Result<String, UserError> {
         .mobile_poster_url)
 }
 
-pub fn follow_imgur(url: &Url) -> Result<String, UserError> {
+pub fn follow_imgur(mut url: Url) -> Result<String, UserError> {
     lazy_static! {
         static ref IMGUR_SEL: Selector = Selector::parse("meta[property='og:image']").unwrap();
-        static ref IMGUR_GIFV_RE: Regex = Regex::new(r"([^.]+)\.(?:gifv|webm|mp4)$").unwrap();
+        static ref IMGUR_GIFV_RE: Regex = Regex::new(r"(?i)([^.]+)\.(?:gifv|webm|mp4)$").unwrap();
         static ref IMGUR_EMPTY_RE: Regex = Regex::new(r"^/\.[[:alnum:]]+\b").unwrap();
         static ref IMGUR_EXT_RE: Regex =
             Regex::new(r"[[:alnum:]]\.(?:jpg|png)[[:alnum:]]+").unwrap();
     }
 
-    let path = url.path();
+    let host = url.host_str().ok_or(ue!("No host in Imgur URL"))?;
+
+    if host.starts_with("www.") {
+        let new_host = host[4..].to_string();
+        url.set_host(Some(&new_host)).map_err(map_ue!("couldn't set new host"))?;
+    }
+
     let link = url.as_str();
+
+    if EXT_RE.is_match(link) {
+        return Ok(url.into_string());
+    }
+
+    let path = url.path();
     let path_start = url
         .path_segments()
         .and_then(|mut ps| ps.next())
@@ -542,7 +557,7 @@ pub fn follow_imgur(url: &Url) -> Result<String, UserError> {
             .replace(path, "https://i.imgur.com/$1.gif")
             .to_string())
     } else if IMGUR_EXT_RE.is_match(path) || path_start == "download" {
-        Ok(url.to_string())
+        Ok(url.into_string())
     } else {
         let mut resp = REQW_CLIENT
             .get(link)
@@ -668,7 +683,7 @@ pub fn get_hash(link: &str) -> Result<(Hash, Cow<str>, GetKind), UserError> {
         return Err(ue!("unsupported scheme in URL", Source::User));
     }
 
-    let link = follow_link(&url)?
+    let link = follow_link(url)?
         .map(Cow::Owned)
         .unwrap_or_else(|| Cow::Borrowed(link));
 
@@ -917,13 +932,16 @@ mod tests {
         assert!(is_link_imgur("HTTPS://IMGUR.COM/3EqtHIK"));
         assert!(is_link_imgur("https://imgur.com#fragment"));
         assert!(is_link_imgur("https://imgur.com:443"));
-
     }
     #[test]
     fn gfycat_links() {
-        assert!(is_link_gfycat("https://gfycat.com/excellentclumsyjanenschia-dog"));
+        assert!(is_link_gfycat(
+            "https://gfycat.com/excellentclumsyjanenschia-dog"
+        ));
         assert!(is_link_gfycat("https://gfycat.com"));
         assert!(is_link_gfycat("https://developers.gfycat.com/api/"));
-        assert!(!is_link_gfycat("https://notgfycat.com/excellentclumsyjanenschia-dog"));
+        assert!(!is_link_gfycat(
+            "https://notgfycat.com/excellentclumsyjanenschia-dog"
+        ));
     }
 }

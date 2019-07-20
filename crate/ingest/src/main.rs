@@ -18,7 +18,7 @@ use std::fs::{remove_file, File, OpenOptions};
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::iter::Iterator;
 use std::path::Path;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, TryLockError};
 use tokio::prelude::*;
 
 use future::{err, ok};
@@ -176,12 +176,16 @@ fn ingest_json<R: Read + Send>(
                     ok((in_flight, post))
                 })
                 .and_then(move |(in_flight, post)| {
-                    future::poll_fn(move || {
-                        if *in_flight.read().unwrap() < 8 {
-                            Ok(Async::Ready(()))
-                        } else {
-                            Ok(Async::NotReady)
+                    future::poll_fn(move || match in_flight.try_read() {
+                        Ok(guard) => {
+                            if *guard < 8 {
+                                Ok(Async::Ready(()))
+                            } else {
+                                Ok(Async::NotReady)
+                            }
                         }
+                        Err(TryLockError::WouldBlock) => Ok(Async::NotReady),
+                        Err(TryLockError::Poisoned(e)) => panic!(e.to_string()),
                     })
                     .map(|_| post)
                 })

@@ -144,11 +144,38 @@ fn ingest_json<R: Read + Send>(
 
             tokio::spawn(
                 future::lazy(move || {
+                    let title = lazy_title;
+                    let blacklist = lazy_blacklist;
+                    post.url = post
+                        .url
+                        .replace("&amp;", "&")
+                        .replace("&lt;", "<")
+                        .replace("&gt;", ">");
+
+                    let post_url = match Url::parse(&post.url) {
+                        Ok(url) => url,
+                        Err(e) => {
+                            warn!("{}: {}: {} is invalid: {}", title, post.id, post.url, e);
+                            return err(());
+                        }
+                    };
+
+                    if post_url
+                        .domain()
+                        .map(|domain| blacklist.read().unwrap().contains(domain))
+                        .unwrap_or(false)
+                    {
+                        if verbose {
+                            warn!("{}: {}: {} is blacklisted", title, post.id, post.url);
+                        }
+                        return err(());
+                    }
+
                     *in_flight.write().unwrap() += 1;
 
-                    Ok(in_flight)
+                    ok((in_flight, post))
                 })
-                .and_then(|in_flight| {
+                .and_then(move |(in_flight, post)| {
                     future::poll_fn(move || {
                         if *in_flight.read().unwrap() < 8 {
                             Ok(Async::Ready(()))
@@ -156,38 +183,7 @@ fn ingest_json<R: Read + Send>(
                             Ok(Async::NotReady)
                         }
                     })
-                })
-                .and_then(move |_| {
-                    future::lazy(move || {
-                        let title = lazy_title;
-                        let blacklist = lazy_blacklist;
-                        post.url = post
-                            .url
-                            .replace("&amp;", "&")
-                            .replace("&lt;", "<")
-                            .replace("&gt;", ">");
-
-                        let post_url = match Url::parse(&post.url) {
-                            Ok(url) => url,
-                            Err(e) => {
-                                warn!("{}: {}: {} is invalid: {}", title, post.id, post.url, e);
-                                return err(());
-                            }
-                        };
-
-                        if post_url
-                            .domain()
-                            .map(|domain| blacklist.read().unwrap().contains(domain))
-                            .unwrap_or(false)
-                        {
-                            if verbose {
-                                warn!("{}: {}: {} is blacklisted", title, post.id, post.url);
-                            }
-                            return err(());
-                        }
-
-                        ok(post)
-                    })
+                    .map(|_| post)
                 })
                 .and_then(move |post| {
                     let e_title = title.clone();

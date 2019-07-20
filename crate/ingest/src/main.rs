@@ -171,9 +171,12 @@ fn ingest_json<R: Read + Send>(
                     let e_title = title.clone();
 
                     save_hash(post.url.clone(), HashDest::Images)
-                        .then(|res| match res {
-                            Ok(o) => Ok((post, o)),
-                            Err(e) => Err((post, e)),
+                        .then(|res| {
+                            std::thread::sleep(std::time::Duration::from_millis(1));
+                            match res {
+                                Ok(o) => Ok((post, o)),
+                                Err(e) => Err((post, e)),
+                            }
                         })
                         .map(move |(post, (_hash, _hash_dest, image_id, exists))| {
                             if verbose {

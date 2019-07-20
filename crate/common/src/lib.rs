@@ -13,7 +13,6 @@ use scraper::{Html, Selector};
 use serde::Deserialize;
 use std::borrow::Cow;
 use std::fmt::{self, Display};
-use std::io::{BufReader, Read};
 use std::string::ToString;
 use tokio_postgres::{to_sql_checked, types, NoTls};
 use url::{
@@ -29,7 +28,7 @@ pub use getter::*;
 
 lazy_static! {
     pub static ref EXT_RE: Regex =
-        Regex::new(r"\W(?:png|jpe?g|gif|webp|p[bgpn]m|tiff?|bmp|ico|hdr)\b").unwrap();
+        Regex::new(r"(?i)\W(?:png|jpe?g|gif|webp|p[bgpn]m|tiff?|bmp|ico|hdr)\b").unwrap();
 }
 
 // Log Error, returning empty
@@ -253,7 +252,7 @@ pub struct PushShiftSearch {
 pub fn save_post(
     pool: &r2d2::Pool<PostgresConnectionManager<NoTls>>,
     post: &Submission,
-    image_id: i64,
+    image_id: Option<i64>,
 ) -> Result<bool, UserError> {
     lazy_static! {
         static ref ID_RE: Regex = Regex::new(r"/comments/([^/]+)/").unwrap();
@@ -498,4 +497,39 @@ pub mod secrets {
 
 lazy_static! {
     pub static ref SECRETS: secrets::Secrets = secrets::load().unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn imgur_links() {
+        assert!(is_link_imgur("https://i.imgur.com/3EqtHIK.jpg"));
+        assert!(is_link_imgur("https://imgur.com/3EqtHIK"));
+        assert!(is_link_imgur("http://imgur.com/3EqtHIK"));
+        assert!(is_link_imgur("https://imgur.com"));
+        assert!(!is_link_imgur("https://notimgur.com/3EqtHIK"));
+        assert!(!is_link_imgur("http://www.valuatemysite.com/www.imgur.com"));
+        assert!(is_link_imgur("https://sub-domain.imgur.com"));
+        assert!(is_link_imgur("https://imgur.com?query=string"));
+        assert!(is_link_imgur("HTTPS://IMGUR.COM/3EqtHIK"));
+        assert!(is_link_imgur("https://imgur.com#fragment"));
+        assert!(is_link_imgur("https://imgur.com:443"));
+        // assert_eq!(
+        //     follow_imgur(Url::parse("http://www.i.imgur.com/3EqtHIK.jpg").unwrap()).unwrap(),
+        //     "http://i.imgur.com/3EqtHIK.jpg"
+        // );
+    }
+    #[test]
+    fn gfycat_links() {
+        assert!(is_link_gfycat(
+            "https://gfycat.com/excellentclumsyjanenschia-dog"
+        ));
+        assert!(is_link_gfycat("https://gfycat.com"));
+        assert!(is_link_gfycat("https://developers.gfycat.com/api/"));
+        assert!(!is_link_gfycat(
+            "https://notgfycat.com/excellentclumsyjanenschia-dog"
+        ));
+    }
 }

@@ -1,7 +1,6 @@
 use super::*;
 
 use future::{err, ok, result, Either};
-use reqwest::r#async::Response;
 use tokio::prelude::*;
 
 macro_rules! fut_try {
@@ -34,9 +33,16 @@ lazy_static! {
         .unwrap();
 }
 
+pub fn new_domain_re(domain: &str) -> Result<Regex, regex::Error> {
+    Regex::new(&format!(
+        r"(?i)^https?://(?:[a-z0-9-.]+\.)?{}(?:[/?#:]|$)",
+        domain
+    ))
+}
+
 pub fn is_link_imgur(link: &str) -> bool {
     lazy_static! {
-        static ref IMGUR_LINK_RE: Regex = Regex::new(r"^https?://(?:^|\.)imgur.com[:/]").unwrap();
+        static ref IMGUR_LINK_RE: Regex = new_domain_re("imgur.com").unwrap();
     }
 
     IMGUR_LINK_RE.is_match(link)
@@ -44,7 +50,7 @@ pub fn is_link_imgur(link: &str) -> bool {
 
 pub fn is_link_gfycat(link: &str) -> bool {
     lazy_static! {
-        static ref GFYCAT_LINK_RE: Regex = Regex::new(r"^https?://(?:^|\.)gfycat.com[:/]").unwrap();
+        static ref GFYCAT_LINK_RE: Regex = new_domain_re("gfycat.com").unwrap();
     }
 
     GFYCAT_LINK_RE.is_match(link)
@@ -52,7 +58,7 @@ pub fn is_link_gfycat(link: &str) -> bool {
 
 lazy_static! {
     static ref WIKIPEDIA_FILE_RE: Regex =
-        Regex::new(r"(?:^|\.)(?:wikipedia|wiktionary|wikiquote|wikibooks|wikisource|wikinews|wikiversity|wikispecies|mediawiki|wikidata|wikivoyage|wikimedia).org/wiki/((?:Image|File):[^#?]+)").unwrap();
+               Regex::new(r"(?i)(?:^|\.)(?:wikipedia|wiktionary|wikiquote|wikibooks|wikisource|wikinews|wikiversity|wikispecies|mediawiki|wikidata|wikivoyage|wikimedia).org(?-i)/wiki/((?i:Image|File):[^#?]+)").unwrap();
 }
 
 pub fn is_wikipedia_file(link: &str) -> bool {
@@ -61,6 +67,10 @@ pub fn is_wikipedia_file(link: &str) -> bool {
 
 pub fn is_link_special(link: &str) -> bool {
     is_link_imgur(link) || is_link_gfycat(link) || is_wikipedia_file(link)
+}
+
+pub fn is_link_important(link: &str) -> bool {
+    is_link_imgur(link) || is_link_gfycat(link)
 }
 
 pub fn follow_link(url: Url) -> impl Future<Item = String, Error = UserError> + Send {
@@ -115,13 +125,23 @@ fn follow_gfycat(url: Url) -> impl Future<Item = String, Error = UserError> + Se
     )
 }
 
-fn follow_imgur(url: Url) -> impl Future<Item = String, Error = UserError> + Send {
+fn follow_imgur(mut url: Url) -> impl Future<Item = String, Error = UserError> + Send {
     lazy_static! {
         static ref IMGUR_SEL: Selector = Selector::parse("meta[property='og:image']").unwrap();
-        static ref IMGUR_GIFV_RE: Regex = Regex::new(r"([^.]+)\.(?:gifv|webm|mp4)$").unwrap();
+        static ref IMGUR_GIFV_RE: Regex = Regex::new(r"(?i)([^.]+)\.(?:gifv|webm|mp4)$").unwrap();
         static ref IMGUR_EMPTY_RE: Regex = Regex::new(r"^/\.[[:alnum:]]+\b").unwrap();
         static ref IMGUR_EXT_RE: Regex =
-            Regex::new(r"[[:alnum:]]\.(?:jpg|png)[[:alnum:]]+").unwrap();
+            Regex::new(r"(?i)[[:alnum:]]\.(?:jpg|png)[[:alnum:]]+").unwrap();
+        static ref HOST_LIMIT_RE: Regex =
+            Regex::new(r"^(?i).+?\.([a-z0-9-]+\.[a-z0-9-]+\.[a-z0-9-]+)$").unwrap();
+    }
+
+    let host = fut_try!(url.host_str().ok_or(ue!("No host in Imgur URL")));
+
+    if let Some(caps) = HOST_LIMIT_RE.captures(host) {
+        let new_host = caps.get(1).unwrap().as_str().to_string();
+        fut_try!(url.set_host(Some(&new_host))
+            .map_err(map_ue!("couldn't set new host")));
     }
 
     let path = url.path();
@@ -268,7 +288,9 @@ fn follow_wikipedia(url: Url) -> impl Future<Item = String, Error = UserError> +
     )
 }
 
-pub fn get_hash(link: String) -> impl Future<Item = (Hash, String, GetKind), Error = UserError> + Send {
+pub fn get_hash(
+    link: String,
+) -> impl Future<Item = (Hash, String, GetKind), Error = UserError> + Send {
     if link.len() > 2000 {
         return Either::B(err(ue!("URL too long", Source::User)));
     }

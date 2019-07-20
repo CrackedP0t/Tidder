@@ -9,7 +9,7 @@ use log::{error, info, warn};
 use postgres::NoTls;
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use regex::Regex;
-use reqwest::{r#async::Client, StatusCode, Url};
+use reqwest::{r#async::Client, Url};
 use serde_json::from_value;
 use serde_json::{Deserializer, Value};
 use std::borrow::Cow;
@@ -21,7 +21,7 @@ use std::path::Path;
 use std::sync::{Arc, RwLock};
 use tokio::prelude::*;
 
-use future::{err, ok, result};
+use future::{err, ok};
 
 macros::multi_either!(2);
 
@@ -31,6 +31,8 @@ lazy_static! {
     )
     .unwrap();
 }
+
+static PERMA_BLACKLIST: [&'static str; 0] = [];
 
 struct Check<I> {
     iter: I,
@@ -103,8 +105,10 @@ fn ingest_json<R: Read + Send>(
         }))
     };
 
-    // let thread_count = Arc::new(());
-    let blacklist = Arc::new(RwLock::new(HashSet::<String>::new()));
+    let mut blacklist = HashSet::<Cow<str>>::new();
+    blacklist.extend(PERMA_BLACKLIST.iter().map(|s| Cow::Borrowed(*s)));
+
+    let blacklist = Arc::new(RwLock::new(blacklist));
 
     check_json
         .filter_map(|post| {
@@ -128,7 +132,6 @@ fn ingest_json<R: Read + Send>(
             }
         })
         .for_each(|mut post: Submission| {
-            // let thread_count = thread_count.clone();
             let lazy_title = title.clone();
             let title = title.clone();
             let lazy_blacklist = blacklist.clone();
@@ -165,47 +168,35 @@ fn ingest_json<R: Read + Send>(
                     ok(post)
                 })
                 .and_then(move |post| {
-                    let post_id = post.id.clone();
-                    let post_url = post.url.clone();
-
-                    let e_post_id = post.id.clone();
-                    let e_post_url = post.url.clone();
-
                     let e_title = title.clone();
 
                     save_hash(post.url.clone(), HashDest::Images)
-                        .and_then(move |(_hash, _hash_dest, image_id, exists)| {
-                            (result(save_post(&DB_POOL, &post, image_id)), ok(exists))
+                        .then(|res| match res {
+                            Ok(o) => Ok((post, o)),
+                            Err(e) => Err((post, e)),
                         })
-                        .map(move |(post_exists, exists)| {
-                            if !post_exists {
-                                if verbose {
-                                    if exists {
-                                        info!(
-                                            "{}: {}: {} already exists",
-                                            title, post_id, post_url
-                                        );
-                                    } else {
-                                        info!(
-                                            "{}: {}: {} successfully hashed",
-                                            title, post_id, post_url
-                                        );
-                                    }
+                        .map(move |(post, (_hash, _hash_dest, image_id, exists))| {
+                            if verbose {
+                                if exists {
+                                    info!("{}: {}: {} already exists", title, post.id, post.url);
+                                } else {
+                                    info!(
+                                        "{}: {}: {} successfully hashed",
+                                        title, post.id, post.url
+                                    );
                                 }
-                            } else {
-                                warn!("{}: post ID {} already recorded", title, post_id);
                             }
+
+                            (post, image_id)
                         })
-                        .map_err(move |ue| {
-                            let post_id = e_post_id;
-                            let post_url = e_post_url;
+                        .map_err(move |(post, ue)| {
                             match ue.source {
                                 Source::Internal => {
                                     error!(
                                         "{}: {}: {}: {}{}{}{}",
                                         e_title,
-                                        post_id,
-                                        post_url,
+                                        post.id,
+                                        post.url,
                                         ue.file.unwrap_or(""),
                                         ue.line
                                             .map(|line| Cow::Owned(format!("#{}", line)))
@@ -221,57 +212,52 @@ fn ingest_json<R: Read + Send>(
                                 }
                                 _ => {
                                     if let Some(e) = ue.error.downcast_ref::<reqwest::Error>() {
-                                        if let Some(StatusCode::NOT_FOUND) = e.status() {
-                                            if !verbose {
-                                                return;
-                                            }
-                                        } else if e.is_timeout()
+                                        if e.is_timeout()
                                             || e.get_ref()
                                                 .and_then(|e| e.downcast_ref::<hyper::Error>())
                                                 .map(hyper::Error::is_connect)
                                                 .unwrap_or(false)
                                         {
-                                            if is_link_special(&post_url) {
+                                            if is_link_special(&post.url) {
                                                 error!(
                                                     "{}: {}: {}: Special link timed out",
-                                                    e_title, post_id, post_url
+                                                    e_title, post.id, post.url
                                                 );
                                                 std::process::exit(1);
                                             }
-                                            if let Ok(url) = Url::parse(&post_url) {
+                                            if let Ok(url) = Url::parse(&post.url) {
                                                 if let Some(domain) = url.domain() {
                                                     blacklist
                                                         .write()
                                                         .unwrap()
-                                                        .insert(domain.to_string());
+                                                        .insert(Cow::Owned(domain.to_string()));
                                                 }
                                             }
                                         }
                                     }
                                     warn!(
                                         "{}: {}: {} failed: {}",
-                                        e_title, post_id, post_url, ue.error
+                                        e_title, post.id, post.url, ue.error
                                     );
                                 }
                             };
+
+                            post
                         })
-                })
-                .then(move |_| {
-                    // drop(thread_count);
-                    ok(())
+                        .then(move |res| {
+                            let (post, image_id) = res
+                                .map(|tup| (tup.0, Some(tup.1)))
+                                .unwrap_or_else(|post| (post, None));
+                            save_post(&DB_POOL, &post, image_id)
+                        })
+                        .map(|_| ())
+                        .map_err(|e| {
+                            error!("Saving post failed: {}", e);
+                            std::process::exit(1);
+                        })
                 }),
             );
         });
-
-    // future::poll_fn(move || {
-    // println!("{}", Arc::strong_count(&thread_count));
-    // if Arc::strong_count(&thread_count) > 1 {
-    //     Ok(Async::NotReady)
-    // } else {
-    //     println!("Ready!");
-    //     Ok(Async::Ready(()))
-    // }
-    // })
     ok(())
 }
 
@@ -288,12 +274,15 @@ fn main() {
             (version: crate_version!())
             (author: crate_authors!(","))
             (about: crate_description!())
-            (@arg VERBOSE: -v --("verbose") "Verbose logging")
+            (@arg NO_SKIP_MONTHS: -M --("no-skip-months") "Don't skip past months we already have")
+            (@arg VERBOSE: -v --verbose "Verbose logging")
+            (@arg NO_DELETE: -D --("no-delete") "Don't delete archive files when done")
             (@arg PATHS: +required +multiple "The URLs or paths of the files to ingest")
     )
     .get_matches();
 
     let verbose = matches.is_present("VERBOSE");
+    let no_delete = matches.is_present("NO_DELETE");
 
     tokio::run(
         stream::iter_ok(matches.values_of_lossy("PATHS").unwrap())
@@ -447,8 +436,10 @@ fn main() {
                         };
 
                     ingest_fut.map(move |_| {
-                        if let Some(arch_path) = arch_path {
-                            remove_file(arch_path).map_err(Error::from).unwrap();
+                        if !no_delete {
+                            if let Some(arch_path) = arch_path {
+                                remove_file(arch_path).map_err(Error::from).unwrap();
+                            }
                         }
 
                         info!("Done ingesting {}", &path);

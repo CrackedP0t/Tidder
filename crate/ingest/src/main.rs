@@ -9,17 +9,18 @@ use log::{error, info, warn};
 use postgres::NoTls;
 use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use regex::Regex;
-use reqwest::{r#async::Client, Url};
+use reqwest::r#async::Client;
 use serde_json::from_value;
 use serde_json::{Deserializer, Value};
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::{remove_file, File, OpenOptions};
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
-use std::iter::Iterator;
+use std::iter::{FromIterator, Iterator};
 use std::path::Path;
 use std::sync::{Arc, RwLock, TryLockError};
 use tokio::prelude::*;
+use url::{Host, Url};
 
 use future::{err, ok};
 
@@ -30,10 +31,11 @@ lazy_static! {
         PostgresConnectionManager::new(SECRETS.postgres.connect.parse().unwrap(), NoTls)
     )
     .unwrap();
+    static ref IN_FLIGHT_LIMITS: HashMap<&'static str, u32> =
+        HashMap::from_iter([("imgur.com", 2)].iter().copied());
 }
 
 const PERMA_BLACKLIST: [&str; 0] = [];
-const MAX_IN_FLIGHT: u32 = 4;
 
 struct Check<I> {
     iter: I,
@@ -58,6 +60,22 @@ where
             None => None,
         }
     }
+}
+
+fn get_tld(url: &Url) -> &str {
+    lazy_static! {
+        static ref TLD_RE: Regex = Regex::new(r"([^.]+\.[^.]+)$").unwrap();
+    }
+
+    if let Host::Domain(s) = url.host().unwrap() {
+        TLD_RE.find(s).unwrap().as_str()
+    } else {
+        url.host_str().unwrap()
+    }
+}
+
+fn get_in_flight_limit(url: &Url) -> u32 {
+    IN_FLIGHT_LIMITS.get(get_tld(url)).copied().unwrap_or(1)
 }
 
 fn ingest_json<R: Read + Send>(
@@ -111,7 +129,7 @@ fn ingest_json<R: Read + Send>(
 
     let blacklist = Arc::new(RwLock::new(blacklist));
 
-    let in_flight = Arc::new(RwLock::new(0u32));
+    let in_flight = Arc::new(RwLock::new(HashMap::<String, u32>::new()));
 
     check_json
         .filter_map(|post| {
@@ -172,30 +190,40 @@ fn ingest_json<R: Read + Send>(
                         return err(());
                     }
 
-                    ok(post)
+                    ok((post_url, post))
                 })
-                .and_then(move |post| {
-                    future::poll_fn(move || match in_flight.try_read() {
-                        Ok(guard) => {
-                            if *guard < MAX_IN_FLIGHT {
-                                drop(guard);
-                                *in_flight.write().unwrap() += 1;
-                                Ok(Async::Ready(()))
-                            } else {
-                                Ok(Async::NotReady)
+                .and_then(move |(post_url, post)| {
+                    let limit = get_in_flight_limit(&post_url);
+                    future::poll_fn(move || {
+                        let tld = get_tld(&post_url);
+                        match in_flight.try_read() {
+                            Ok(guard) => {
+                                if guard
+                                    .get::<str>(&tld)
+                                    .map(|in_flight| *in_flight < limit)
+                                    .unwrap_or(true)
+                                {
+                                    drop(guard);
+                                    *(*in_flight.write().unwrap())
+                                        .entry(tld.to_owned())
+                                        .or_insert(0) += 1;
+                                    Ok(Async::Ready(tld.to_owned()))
+                                } else {
+                                    Ok(Async::NotReady)
+                                }
                             }
+                            Err(TryLockError::WouldBlock) => Ok(Async::NotReady),
+                            Err(TryLockError::Poisoned(e)) => panic!(e.to_string()),
                         }
-                        Err(TryLockError::WouldBlock) => Ok(Async::NotReady),
-                        Err(TryLockError::Poisoned(e)) => panic!(e.to_string()),
                     })
-                    .map(|_| post)
+                    .map(|tld| (tld, post))
                 })
-                .and_then(move |post| {
+                .and_then(move |(tld, post)| {
                     let e_title = title.clone();
 
                     save_hash(post.url.clone(), HashDest::Images)
                         .then(move |res| {
-                            *end_in_flight.write().unwrap() -= 1;
+                            *end_in_flight.write().unwrap().get_mut(&tld).unwrap() -= 1;
                             match res {
                                 Ok(o) => Ok((post, o)),
                                 Err(e) => Err((post, e)),

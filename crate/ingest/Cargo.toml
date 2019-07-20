@@ -26,3 +26,4 @@ hyper = "0.12.31"
 tokio = "0.1.22"
 macros = { path = "../macros" }
 futures = "0.1.28"
+url = "1.7.2"

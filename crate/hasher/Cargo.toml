@@ -8,3 +8,4 @@ edition = "2018"
 common = { path = "../common" }
 postgres = "0.16.0-rc.1"
 fallible-iterator = "0.2"
+futures = "0.1.28"

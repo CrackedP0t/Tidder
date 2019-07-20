@@ -1,10 +1,31 @@
 use super::*;
 
-use future::{err, ok, result};
+use future::{err, ok, result, Either};
 use reqwest::r#async::Response;
 use tokio::prelude::*;
 
-macros::multi_either!(2);
+macro_rules! fut_try {
+    ($res:expr) => {
+        match $res {
+            Ok(r) => r,
+            Err(e) => return Either::B(err(e)),
+        }
+    };
+    ($res:expr, ) => {
+        match $res {
+            Ok(r) => r,
+            Err(e) => return err(e),
+        }
+    };
+    ($res:expr, $wrap:path) => {
+        match $res {
+            Ok(r) => r,
+            Err(e) => return $wrap(err(e)),
+        }
+    };
+}
+
+macros::multi_either!(4);
 
 lazy_static! {
     static ref REQW_CLIENT: reqwest::r#async::Client = reqwest::r#async::Client::builder()
@@ -42,65 +63,59 @@ pub fn is_link_special(link: &str) -> bool {
     is_link_imgur(link) || is_link_gfycat(link) || is_wikipedia_file(link)
 }
 
-// pub fn follow_link(url: &Url) -> Result<Option<String>, UserError> {
-//     if let Some(link) = follow_wikipedia(url)? {
-//         return Ok(Some(link));
-//     }
+pub fn follow_link(url: Url) -> impl Future<Item = String, Error = UserError> {
+    if is_wikipedia_file(url.as_str()) {
+        Either::A(Either::A(follow_wikipedia(url)))
+    } else if EXT_RE.is_match(url.as_str()) {
+        Either::A(Either::B(ok(url.into_string())))
+    // } else if is_link_imgur(url.as_str()) {
+    //     MultiEither4::V3(follow_imgur(url))
+    } else if is_link_gfycat(url.as_str()) {
+        Either::B(Either::A(follow_gfycat(url)))
+    } else {
+        Either::B(Either::B(ok(url.into_string())))
+    }
+}
 
-//     if EXT_RE.is_match(url.as_str()) {
-//         return Ok(None);
-//     }
+fn follow_gfycat(url: Url) -> impl Future<Item = String, Error = UserError> {
+    lazy_static! {
+        static ref GFY_ID_SEL: Regex = Regex::new(r"^/([[:alpha:]]+)").unwrap();
+    }
 
-//     if url.path() == "/" {
-//         return Ok(None);
-//     }
+    #[derive(Deserialize)]
+    struct GfyItem {
+        #[serde(rename = "mobilePosterUrl")]
+        mobile_poster_url: String,
+    }
 
-//     if is_link_imgur(url.as_str()) {
-//         follow_imgur(&url).map(Some)
-//     } else if is_link_gfycat(url.as_str()) {
-//         follow_gfycat(&url).map(Some)
-//     } else {
-//         Ok(None)
-//     }
-// }
+    #[derive(Deserialize)]
+    struct Gfycats {
+        #[serde(rename = "gfyItem")]
+        gfy_item: GfyItem,
+    }
 
-// pub fn follow_gfycat(url: &Url) -> Result<String, UserError> {
-//     lazy_static! {
-//         static ref GFY_ID_SEL: Regex = Regex::new(r"^/([[:alpha:]]+)").unwrap();
-//     }
+    Either::A(
+        REQW_CLIENT
+            .get(&format!(
+                "https://api.gfycat.com/v1/gfycats/{}",
+                fut_try!(GFY_ID_SEL
+                    .captures(url.path())
+                    .and_then(|c| c.get(1))
+                    .map(|m| m.as_str())
+                    .ok_or_else(|| ue!("couldn't find Gfycat ID in link", Source::User)))
+            ))
+            .send()
+            .map_err(map_ue!("couldn't reach Gfycat API"))
+            .and_then(|resp| resp.error_for_status().map_err(error_for_status_ue))
+            .and_then(|mut resp| {
+                resp.json::<Gfycats>()
+                    .map_err(map_ue!("invalid JSON from Gfycat API"))
+            })
+            .map(|gfycats| gfycats.gfy_item.mobile_poster_url),
+    )
+}
 
-//     #[derive(Deserialize)]
-//     struct GfyItem {
-//         #[serde(rename = "mobilePosterUrl")]
-//         mobile_poster_url: String,
-//     }
-
-//     #[derive(Deserialize)]
-//     struct Gfycats {
-//         #[serde(rename = "gfyItem")]
-//         gfy_item: GfyItem,
-//     }
-
-//     Ok(REQW_CLIENT
-//         .get(&format!(
-//             "https://api.gfycat.com/v1/gfycats/{}",
-//             GFY_ID_SEL
-//                 .captures(url.path())
-//                 .and_then(|c| c.get(1))
-//                 .map(|m| m.as_str())
-//                 .ok_or_else(|| ue!("couldn't find Gfycat ID in link", Source::User))?
-//         ))
-//         .send()
-//         .map_err(map_ue!("couldn't reach Gfycat API"))?
-//         .error_for_status()
-//         .map_err(error_for_status_ue)?
-//         .json::<Gfycats>()
-//         .map_err(map_ue!("invalid JSON from Gfycat API"))?
-//         .gfy_item
-//         .mobile_poster_url)
-// }
-
-// pub fn follow_imgur(url: &Url) -> Result<String, UserError> {
+// fn follow_imgur(url: Url) -> Future<Item = String, Error = UserError> {
 //     lazy_static! {
 //         static ref IMGUR_SEL: Selector = Selector::parse("meta[property='og:image']").unwrap();
 //         static ref IMGUR_GIFV_RE: Regex = Regex::new(r"([^.]+)\.(?:gifv|webm|mp4)$").unwrap();
@@ -161,154 +176,145 @@ pub fn is_link_special(link: &str) -> bool {
 //     }
 // }
 
-// pub fn follow_wikipedia(url: &Url) -> Result<Option<String>, UserError> {
-//     #[derive(Debug, Deserialize)]
-//     struct ImageInfo {
-//         mime: String,
-//         thumburl: String,
-//         url: String,
-//     }
-//     #[derive(Debug, Deserialize)]
-//     struct Page {
-//         imageinfo: Vec<ImageInfo>,
-//     }
-//     #[derive(Debug, Deserialize)]
-//     struct Query {
-//         pages: std::collections::HashMap<String, Page>,
-//     }
-//     #[derive(Debug, Deserialize)]
-//     struct APIQuery {
-//         query: Query,
-//     }
+fn follow_wikipedia(url: Url) -> impl Future<Item = String, Error = UserError> {
+    #[derive(Debug, Deserialize)]
+    struct ImageInfo {
+        mime: String,
+        thumburl: String,
+        url: String,
+    }
+    #[derive(Debug, Deserialize)]
+    struct Page {
+        imageinfo: Vec<ImageInfo>,
+    }
+    #[derive(Debug, Deserialize)]
+    struct Query {
+        pages: std::collections::HashMap<String, Page>,
+    }
+    #[derive(Debug, Deserialize)]
+    struct APIQuery {
+        query: Query,
+    }
 
-//     let title = if let Some(title) = WIKIPEDIA_FILE_RE
-//         .captures(url.as_str())
-//         .and_then(|c| c.get(1))
-//         .map(|m| m.as_str())
-//     {
-//         percent_decode(title.as_bytes())
-//             .decode_utf8()
-//             .map_err(map_ue!("couldn't decode title", Source::User))?
-//     } else {
-//         return Ok(None);
-//     };
+    let title = fut_try!(WIKIPEDIA_FILE_RE
+        .captures(url.as_str())
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str())
+        .ok_or(ue!("couldn't extract title")));
 
-//     let api_url = Url::parse_with_params(
-//         &format!(
-//             "https://{}/w/api.php",
-//             url.domain().ok_or(ue!("no domain in Wikipedia URL"))?
-//         ),
-//         &[
-//             ("action", "query"),
-//             ("format", "json"),
-//             ("prop", "imageinfo"),
-//             ("iiprop", "url|mime"),
-//             ("iiurlwidth", "500"),
-//             ("titles", &title),
-//         ],
-//     )
-//     .map_err(map_ue!("couldn't create Wikipedia API URL", Source::User))?;
+    let title = fut_try!(percent_decode(title.as_bytes())
+        .decode_utf8()
+        .map_err(map_ue!("couldn't decode title", Source::User)));
 
-//     let api_query = REQW_CLIENT
-//         .get(api_url)
-//         .send()
-//         .map_err(map_ue!("couldn't query Wikipedia API"))?
-//         .json::<APIQuery>()
-//         .map_err(map_ue!("Wikipedia API returned problematic JSON"))?;
+    let api_url = fut_try!(Url::parse_with_params(
+        &format!(
+            "https://{}/w/api.php",
+            fut_try!(url.domain().ok_or(ue!("no domain in Wikipedia URL")))
+        ),
+        &[
+            ("action", "query"),
+            ("format", "json"),
+            ("prop", "imageinfo"),
+            ("iiprop", "url|mime"),
+            ("iiurlwidth", "500"),
+            ("titles", &title),
+        ],
+    )
+    .map_err(map_ue!("couldn't create Wikipedia API URL", Source::User)));
 
-//     let imageinfo = api_query
-//         .query
-//         .pages
-//         .into_iter()
-//         .next()
-//         .ok_or(ue!("Wikipedia API returned no pages", Source::User))?
-//         .1
-//         .imageinfo
-//         .into_iter()
-//         .nth(0)
-//         .ok_or(ue!("Wikipedia API returned no images", Source::User))?;
+    Either::A(
+        REQW_CLIENT
+            .get(api_url)
+            .send()
+            .map_err(map_ue!("couldn't query Wikipedia API"))
+            .and_then(|mut resp| {
+                resp.json::<APIQuery>()
+                    .map_err(map_ue!("Wikipedia API returned problematic JSON"))
+            })
+            .and_then(|api_query| {
+                let imageinfo = api_query
+                    .query
+                    .pages
+                    .into_iter()
+                    .next()
+                    .ok_or(ue!("Wikipedia API returned no pages", Source::User))?
+                    .1
+                    .imageinfo
+                    .into_iter()
+                    .nth(0)
+                    .ok_or(ue!("Wikipedia API returned no images", Source::User))?;
 
-//     Ok(Some(if IMAGE_MIMES.contains(&imageinfo.mime.as_str()) {
-//         imageinfo.url
-//     } else {
-//         imageinfo.thumburl
-//     }))
-// }
+                Ok(if IMAGE_MIMES.contains(&imageinfo.mime.as_str()) {
+                    imageinfo.url
+                } else {
+                    imageinfo.thumburl
+                })
+            }),
+    )
+}
 
 pub fn get_hash(link: String) -> impl Future<Item = (Hash, String, GetKind), Error = UserError> {
     if link.len() > 2000 {
-        return MultiEither2::V2(err(ue!("URL too long", Source::User)));
+        return Either::B(err(ue!("URL too long", Source::User)));
     }
 
-    let url = match Url::parse(&link).map_err(map_ue!("not a valid URL", Source::User)) {
-        Ok(url) => url,
-        Err(e) => return MultiEither2::V2(err(e)),
-    };
+    let url = fut_try!(Url::parse(&link).map_err(map_ue!("not a valid URL", Source::User)));
 
     let scheme = url.scheme();
     if scheme != "http" && scheme != "https" {
-        return MultiEither2::V2(err(ue!("unsupported scheme in URL", Source::User)));
+        return Either::B(err(ue!("unsupported scheme in URL", Source::User)));
     }
 
-    // let link = follow_link(&url)?
-    //     .map(Cow::Owned)
-    //     .unwrap_or_else(|| Cow::Borrowed(link));
+    Either::A(follow_link(url).and_then(|link| {
+        if let Some((hash, hash_dest, id)) = fut_try!(get_existing(&link)) {
+            return Either::B(ok((hash, link, GetKind::Cache(hash_dest, id))));
+        }
 
-    if let Some((hash, hash_dest, id)) = match get_existing(&link) {
-        Ok(r) => r,
-        Err(e) => return MultiEither2::V2(err(e)),
-    } {
-        return MultiEither2::V2(ok((hash, link, GetKind::Cache(hash_dest, id))));
-    }
-
-    MultiEither2::V1(
-        REQW_CLIENT
-            .get(&utf8_percent_encode(&link, QUERY_ENCODE_SET).collect::<String>())
-            .header(header::ACCEPT, IMAGE_MIMES.join(","))
-            .header(
-                header::USER_AGENT,
-                "Mozilla/5.0 (X11; Linux x86_64; rv:66.0) Gecko/20100101 Firefox/66.0",
-            )
-            .send()
-            .map_err(map_ue!("couldn't connect to image host"))
-            .and_then(|resp| resp.error_for_status().map_err(error_for_status_ue))
-            .and_then(|resp| {
-                let url = resp.url();
-                if url
-                    .host_str()
-                    .map(|host| host == "i.imgur.com")
-                    .unwrap_or(false)
-                    && url.path() == "/removed.png"
-                {
-                    return err(ue!("removed from Imgur"));
-                }
-
-                if let Some(ct) = resp.headers().get(header::CONTENT_TYPE) {
-                    let ct = match ct
-                        .to_str()
-                        .map_err(map_ue!("non-ASCII Content-Type header"))
+        Either::A(
+            REQW_CLIENT
+                .get(&utf8_percent_encode(&link, QUERY_ENCODE_SET).collect::<String>())
+                .header(header::ACCEPT, IMAGE_MIMES.join(","))
+                .header(
+                    header::USER_AGENT,
+                    "Mozilla/5.0 (X11; Linux x86_64; rv:66.0) Gecko/20100101 Firefox/66.0",
+                )
+                .send()
+                .map_err(map_ue!("couldn't connect to image host"))
+                .and_then(|resp| resp.error_for_status().map_err(error_for_status_ue))
+                .and_then(|resp| {
+                    let url = resp.url();
+                    if url
+                        .host_str()
+                        .map(|host| host == "i.imgur.com")
+                        .unwrap_or(false)
+                        && url.path() == "/removed.png"
                     {
-                        Ok(ct) => ct,
-                        Err(e) => return err(e),
-                    };
-                    if !IMAGE_MIMES.contains(&ct) {
-                        return err(ue!(format!("unsupported Content-Type: {}", ct)));
+                        return err(ue!("removed from Imgur"));
                     }
-                }
 
-                ok((
-                    resp.headers().to_owned(),
-                    resp.into_body()
-                        .concat2()
-                        .map_err(map_ue!("couldn't download image", Source::External)),
-                ))
-            })
-            .and_then(|(headers, fut)| (ok(headers), fut))
-            .and_then(|(headers, image)| match hash_from_memory(image.as_ref()) {
-                Ok(hash) => ok((hash, link, GetKind::Request(headers))),
-                Err(e) => err(e),
-            }),
-    )
+                    if let Some(ct) = resp.headers().get(header::CONTENT_TYPE) {
+                        let ct = fut_try!(ct
+                            .to_str()
+                            .map_err(map_ue!("non-ASCII Content-Type header")),);
+                        if !IMAGE_MIMES.contains(&ct) {
+                            return err(ue!(format!("unsupported Content-Type: {}", ct)));
+                        }
+                    }
+
+                    ok((
+                        resp.headers().to_owned(),
+                        resp.into_body()
+                            .concat2()
+                            .map_err(map_ue!("couldn't download image", Source::External)),
+                    ))
+                })
+                .and_then(|(headers, fut)| (ok(headers), fut))
+                .and_then(|(headers, image)| match hash_from_memory(image.as_ref()) {
+                    Ok(hash) => ok((hash, link, GetKind::Request(headers))),
+                    Err(e) => err(e),
+                }),
+        )
+    }))
 }
 
 pub fn save_hash(

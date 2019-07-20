@@ -1,11 +1,19 @@
+#![recursion_limit="128"]
+
 use common::*;
 use fallible_iterator::FallibleIterator;
 use gotham::{
     router::builder::*,
     state::{FromState, State},
+    handler::{HandlerFuture, IntoResponse},
 };
 use gotham_derive::{StateData, StaticResponseExtender};
-use hyper::{self, Body, HeaderMap, StatusCode, rt::Stream, rt::Future};
+use hyper::{self, Body, HeaderMap, StatusCode};
+
+use futures::{
+    future::{err, ok, Either},
+    Future, Stream,
+};
 use lazy_static::{lazy_static, LazyStatic};
 use mime::Mime;
 use multipart::server::Multipart;
@@ -307,7 +315,7 @@ fn make_findings(hash: Hash, params: Params) -> Result<Findings, UserError> {
     matches.map(|matches| Findings { matches })
 }
 
-fn get_search(qs: SearchQuery) -> Search {
+fn get_search(qs: SearchQuery) -> impl Future<Item = Search, Error = ()> + Send {
     let imagelink = qs.imagelink.clone();
 
     let default_form = Form::default();
@@ -319,37 +327,48 @@ fn get_search(qs: SearchQuery) -> Search {
         link: qs.imagelink.unwrap_or(default_form.link),
     };
 
-    let findings = imagelink
-        .and_then(|link| {
-            if &link != "" {
-                Some(
-                    Url::parse(&link)
-                        .map_err(map_ue!("invalid URL"))
-                        .and_then(|_| {
-                            let params = Params::from_form(&form)?;
-                            let (hash, _hash_dest, _image_id, _exists) =
-                                save_hash(&link, HashDest::ImageCache)?;
-                            make_findings(hash, params)
-                        }),
-                )
-            } else {
-                None
+    let err_form = form.clone();
+
+    Future::map(
+        match imagelink {
+            None => Either::B(ok(None)),
+            Some(link) => {
+                if &link != "" {
+                    match Url::parse(&link).map_err(map_ue!("invalid URL")) {
+                        Ok(_url) => match Params::from_form(&form) {
+                            Ok(params) => {
+                                Either::A(save_hash(link, HashDest::ImageCache).and_then(
+                                    |(hash, _hash_dest, _image_id, _exists)| {
+                                        make_findings(hash, params).map(Some)
+                                    },
+                                ))
+                            }
+                            Err(e) => Either::B(err(e)),
+                        },
+                        Err(e) => Either::B(err(e)),
+                    }
+                } else {
+                    Either::B(ok(None))
+                }
             }
+        },
+        |findings| Search {
+            form,
+            error: None,
+            findings,
+            upload: false,
+            ..Default::default()
+        },
+    )
+    .or_else(|error| {
+        ok(Search {
+            form: err_form,
+            error: Some(error),
+            findings: None,
+            upload: false,
+            ..Default::default()
         })
-        .transpose();
-
-    let (findings, error) = match findings {
-        Ok(findings) => (findings, None),
-        Err(error) => (None, Some(error)),
-    };
-
-    Search {
-        form: form.clone(),
-        error,
-        findings,
-        upload: false,
-        ..Default::default()
-    }
+    })
 }
 
 fn post_search(headers: &HeaderMap, body: Body) -> Search {
@@ -376,7 +395,10 @@ fn post_search(headers: &HeaderMap, body: Body) -> Search {
                 .map(|capture| capture.as_str())
                 .ok_or_else(|| ue!("no boundary in Content-Type", Source::User))?;
 
-            let chunk = body.concat2().wait().map_err(map_ue!("couldn't recieve request body"))?;
+            let chunk = body
+                .concat2()
+                .wait()
+                .map_err(map_ue!("couldn't recieve request body"))?;
             let mut mp = Multipart::with_body(chunk.as_ref(), boundary);
             let mut map: HashMap<String, Vec<u8>> = HashMap::new();
 
@@ -437,30 +459,34 @@ fn post_search(headers: &HeaderMap, body: Body) -> Search {
     }
 }
 
-fn get_response(mut state: State) -> (State, (StatusCode, Mime, String)) {
-    let search = get_search(SearchQuery::take_from(&mut state));
-    let out = Context::from_serialize(&search)
-        .and_then(|context| TERA.render("search.html", context))
-        .map_err(le!());
+fn get_response(mut state: State) -> Box<HandlerFuture> {
+    Box::new(get_search(SearchQuery::take_from(&mut state)).then(|search| {
+        let search = search.unwrap();
+        let out = Context::from_serialize(&search)
+            .and_then(|context| TERA.render("search.html", context))
+            .map_err(le!());
 
-    let (page, status) = match out {
-        Ok(page) => (
-            page,
-            search
-                .error
-                .map(|ue| {
-                    warn!("{}", ue.error);
-                    ue.status_code()
-                })
-                .unwrap_or(StatusCode::OK),
-        ),
-        Err(_) => (
-            "<h1>Error 500: Internal Server Error</h1>".to_string(),
-            StatusCode::INTERNAL_SERVER_ERROR,
-        ),
-    };
+        let (page, status) = match out {
+            Ok(page) => (
+                page,
+                search
+                    .error
+                    .map(|ue| {
+                        warn!("{}", ue.error);
+                        ue.status_code()
+                    })
+                    .unwrap_or(StatusCode::OK),
+            ),
+            Err(_) => (
+                "<h1>Error 500: Internal Server Error</h1>".to_string(),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+        };
 
-    (state, (status, mime::TEXT_HTML_UTF_8, page))
+        let response = (status, mime::TEXT_HTML_UTF_8, page).into_response(&state);
+
+        ok((state, response))
+    }))
 }
 
 fn post_response(mut state: State) -> (State, (StatusCode, Mime, String)) {

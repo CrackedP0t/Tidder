@@ -211,6 +211,10 @@ fn ingest_json<R: Read + Send>(
                                     std::process::exit(1);
                                 }
                                 _ => {
+                                    warn!(
+                                        "{}: {}: {} failed: {}",
+                                        e_title, post.id, post.url, ue.error
+                                    );
                                     if let Some(e) = ue.error.downcast_ref::<reqwest::Error>() {
                                         if e.is_timeout()
                                             || e.get_ref()
@@ -235,10 +239,6 @@ fn ingest_json<R: Read + Send>(
                                             }
                                         }
                                     }
-                                    warn!(
-                                        "{}: {}: {} failed: {}",
-                                        e_title, post.id, post.url, ue.error
-                                    );
                                 }
                             };
 

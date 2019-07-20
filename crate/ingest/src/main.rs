@@ -32,7 +32,8 @@ lazy_static! {
     .unwrap();
 }
 
-static PERMA_BLACKLIST: [&'static str; 0] = [];
+const PERMA_BLACKLIST: [&str; 0] = [];
+const MAX_IN_FLIGHT: u32 = 8;
 
 struct Check<I> {
     iter: I,
@@ -176,7 +177,7 @@ fn ingest_json<R: Read + Send>(
                 .and_then(move |post| {
                     future::poll_fn(move || match in_flight.try_read() {
                         Ok(guard) => {
-                            if *guard < 8 {
+                            if *guard < MAX_IN_FLIGHT {
                                 drop(guard);
                                 *in_flight.write().unwrap() += 1;
                                 Ok(Async::Ready(()))

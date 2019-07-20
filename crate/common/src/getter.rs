@@ -464,3 +464,16 @@ pub fn save_hash(
         result(inner_result())
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn follow() {
+        assert_eq!(
+            follow_imgur(Url::parse("http://www.i.imgur.com/3EqtHIK.jpg").unwrap()).wait().unwrap(),
+            "http://i.imgur.com/3EqtHIK.jpg"
+        );
+    }
+}

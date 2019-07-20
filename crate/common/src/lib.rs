@@ -517,10 +517,6 @@ mod tests {
         assert!(is_link_imgur("https://imgur.com#fragment"));
         assert!(is_link_imgur("https://imgur.com:443"));
         assert!(!is_link_imgur("http://rir.li/http://i.imgur.com/oGqNH.jpg"));
-        // assert_eq!(
-        //     follow_imgur(Url::parse("http://www.i.imgur.com/3EqtHIK.jpg").unwrap()).unwrap(),
-        //     "http://i.imgur.com/3EqtHIK.jpg"
-        // );
     }
     #[test]
     fn gfycat_links() {

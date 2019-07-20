@@ -468,7 +468,7 @@ pub fn is_link_important(link: &str) -> bool {
 
 pub fn follow_link(url: Url) -> Result<Option<String>, UserError> {
     if is_link_imgur(url.as_str()) {
-        return follow_imgur(url).map(Some)
+        return follow_imgur(url).map(Some);
     } else if let Some(link) = follow_wikipedia(&url)? {
         return Ok(Some(link));
     }
@@ -531,13 +531,16 @@ pub fn follow_imgur(mut url: Url) -> Result<String, UserError> {
         static ref IMGUR_EMPTY_RE: Regex = Regex::new(r"^/\.[[:alnum:]]+\b").unwrap();
         static ref IMGUR_EXT_RE: Regex =
             Regex::new(r"[[:alnum:]]\.(?:jpg|png)[[:alnum:]]+").unwrap();
+        static ref HOST_LIMIT_RE: Regex =
+            Regex::new(r"^(?i).+?\.([a-z0-9-]+\.[a-z0-9-]+\.[a-z0-9-]+)$").unwrap();
     }
 
     let host = url.host_str().ok_or(ue!("No host in Imgur URL"))?;
 
-    if host.starts_with("www.") {
-        let new_host = host[4..].to_string();
-        url.set_host(Some(&new_host)).map_err(map_ue!("couldn't set new host"))?;
+    if let Some(caps) = HOST_LIMIT_RE.captures(host) {
+        let new_host = caps.get(1).unwrap().as_str().to_string();
+        url.set_host(Some(&new_host))
+            .map_err(map_ue!("couldn't set new host"))?;
     }
 
     let link = url.as_str();
@@ -932,6 +935,10 @@ mod tests {
         assert!(is_link_imgur("HTTPS://IMGUR.COM/3EqtHIK"));
         assert!(is_link_imgur("https://imgur.com#fragment"));
         assert!(is_link_imgur("https://imgur.com:443"));
+        assert_eq!(
+            follow_imgur(Url::parse("http://www.i.imgur.com/3EqtHIK.jpg").unwrap()).unwrap(),
+            "http://i.imgur.com/3EqtHIK.jpg"
+        );
     }
     #[test]
     fn gfycat_links() {

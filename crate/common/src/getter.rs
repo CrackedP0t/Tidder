@@ -74,12 +74,12 @@ pub fn is_link_important(link: &str) -> bool {
 }
 
 pub fn follow_link(url: Url) -> impl Future<Item = String, Error = UserError> + Send {
-    if is_wikipedia_file(url.as_str()) {
+    if is_link_imgur(url.as_str()) {
+        Box::new(follow_imgur(url)) as _
+    } else if is_wikipedia_file(url.as_str()) {
         Box::new(follow_wikipedia(url)) as Box<dyn Future<Item = _, Error = _> + Send>
     } else if EXT_RE.is_match(url.as_str()) {
         Box::new(ok(url.into_string())) as _
-    } else if is_link_imgur(url.as_str()) {
-        Box::new(follow_imgur(url)) as _
     } else if is_link_gfycat(url.as_str()) {
         Box::new(follow_gfycat(url)) as _
     } else {
@@ -140,8 +140,13 @@ fn follow_imgur(mut url: Url) -> impl Future<Item = String, Error = UserError> +
 
     if let Some(caps) = HOST_LIMIT_RE.captures(host) {
         let new_host = caps.get(1).unwrap().as_str().to_string();
-        fut_try!(url.set_host(Some(&new_host))
+        fut_try!(url
+            .set_host(Some(&new_host))
             .map_err(map_ue!("couldn't set new host")));
+    }
+
+    if EXT_RE.is_match(url.as_str()) {
+        return Either::B(ok(url.into_string()));
     }
 
     let path = url.path();

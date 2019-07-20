@@ -63,21 +63,21 @@ pub fn is_link_special(link: &str) -> bool {
     is_link_imgur(link) || is_link_gfycat(link) || is_wikipedia_file(link)
 }
 
-pub fn follow_link(url: Url) -> impl Future<Item = String, Error = UserError> {
+pub fn follow_link(url: Url) -> impl Future<Item = String, Error = UserError> + Send {
     if is_wikipedia_file(url.as_str()) {
-        Either::A(Either::A(follow_wikipedia(url)))
+        Box::new(follow_wikipedia(url)) as Box<dyn Future<Item = _, Error = _> + Send>
     } else if EXT_RE.is_match(url.as_str()) {
-        Either::A(Either::B(ok(url.into_string())))
-    // } else if is_link_imgur(url.as_str()) {
-    //     MultiEither4::V3(follow_imgur(url))
+        Box::new(ok(url.into_string())) as _
+    } else if is_link_imgur(url.as_str()) {
+        Box::new(follow_imgur(url)) as _
     } else if is_link_gfycat(url.as_str()) {
-        Either::B(Either::A(follow_gfycat(url)))
+        Box::new(follow_gfycat(url)) as _
     } else {
-        Either::B(Either::B(ok(url.into_string())))
+        Box::new(ok(url.into_string())) as _
     }
 }
 
-fn follow_gfycat(url: Url) -> impl Future<Item = String, Error = UserError> {
+fn follow_gfycat(url: Url) -> impl Future<Item = String, Error = UserError> + Send {
     lazy_static! {
         static ref GFY_ID_SEL: Regex = Regex::new(r"^/([[:alpha:]]+)").unwrap();
     }
@@ -115,68 +115,83 @@ fn follow_gfycat(url: Url) -> impl Future<Item = String, Error = UserError> {
     )
 }
 
-// fn follow_imgur(url: Url) -> Future<Item = String, Error = UserError> {
-//     lazy_static! {
-//         static ref IMGUR_SEL: Selector = Selector::parse("meta[property='og:image']").unwrap();
-//         static ref IMGUR_GIFV_RE: Regex = Regex::new(r"([^.]+)\.(?:gifv|webm|mp4)$").unwrap();
-//         static ref IMGUR_EMPTY_RE: Regex = Regex::new(r"^/\.[[:alnum:]]+\b").unwrap();
-//         static ref IMGUR_EXT_RE: Regex =
-//             Regex::new(r"[[:alnum:]]\.(?:jpg|png)[[:alnum:]]+").unwrap();
-//     }
+fn follow_imgur(url: Url) -> impl Future<Item = String, Error = UserError> + Send {
+    lazy_static! {
+        static ref IMGUR_SEL: Selector = Selector::parse("meta[property='og:image']").unwrap();
+        static ref IMGUR_GIFV_RE: Regex = Regex::new(r"([^.]+)\.(?:gifv|webm|mp4)$").unwrap();
+        static ref IMGUR_EMPTY_RE: Regex = Regex::new(r"^/\.[[:alnum:]]+\b").unwrap();
+        static ref IMGUR_EXT_RE: Regex =
+            Regex::new(r"[[:alnum:]]\.(?:jpg|png)[[:alnum:]]+").unwrap();
+    }
 
-//     let path = url.path();
-//     let link = url.as_str();
-//     let path_start = url
-//         .path_segments()
-//         .and_then(|mut ps| ps.next())
-//         .ok_or(ue!("base Imgur URL", Source::User))?;
+    let path = url.path();
+    let link = url.to_string();
 
-//     if IMGUR_GIFV_RE.is_match(path) {
-//         Ok(IMGUR_GIFV_RE
-//             .replace(path, "https://i.imgur.com/$1.gif")
-//             .to_string())
-//     } else if IMGUR_EXT_RE.is_match(path) || path_start == "download" {
-//         Ok(url.to_string())
-//     } else {
-//         let mut resp = REQW_CLIENT
-//             .get(link)
-//             .send()
-//             .and_then(|resp| {
-//                 if resp.status() == StatusCode::NOT_FOUND && path_start == "gallery" {
-//                     REQW_CLIENT
-//                         .get(&link.replace("/gallery/", "/a/"))
-//                         .send()
-//                         .and_then(Response::error_for_status)
-//                 } else {
-//                     resp.error_for_status()
-//                 }
-//             })
-//             .map_err(error_for_status_ue)?;
+    let my_url = url.clone();
 
-//         let mut doc_string = String::new();
+    let path_start = fut_try!(my_url
+        .path_segments()
+        .and_then(|mut ps| ps.next())
+        .ok_or(ue!("base Imgur URL", Source::User)))
+    .to_owned();
 
-//         resp.read_to_string(&mut doc_string)
-//             .map_err(map_ue!("invalid response", Source::External))?;
+    if IMGUR_GIFV_RE.is_match(path) {
+        Either::B(ok(IMGUR_GIFV_RE
+            .replace(path, "https://i.imgur.com/$1.gif")
+            .to_string()))
+    } else if IMGUR_EXT_RE.is_match(path) || path_start == "download" {
+        Either::B(ok(url.to_string()))
+    } else {
+        Either::A(
+            REQW_CLIENT
+                .get(&link)
+                .send()
+                .map_err(map_ue!("couldn't reach Imgur"))
+                .and_then(move |resp| {
+                    if resp.status() == StatusCode::NOT_FOUND && path_start == "gallery" {
+                        Either::A(
+                            REQW_CLIENT
+                                .get(&link.replace("/gallery/", "/a/"))
+                                .send()
+                                .map_err(map_ue!("couldn't reach Imgur"))
+                                .and_then(|resp| {
+                                    resp.error_for_status().map_err(error_for_status_ue)
+                                }),
+                        )
+                    } else {
+                        Either::B(result(resp.error_for_status().map_err(error_for_status_ue)))
+                    }
+                })
+                .and_then(|resp| {
+                    resp.into_body()
+                        .concat2()
+                        .map_err(map_ue!("couldn't retrieve Imgur page"))
+                })
+                .and_then(|chunk| {
+                    let doc_str = std::str::from_utf8(chunk.as_ref())
+                        .map_err(map_ue!("invalid UTF-8 in Imgur page"))?;
+                    let doc = Html::parse_document(&doc_str);
 
-//         let doc = Html::parse_document(&doc_string);
-//         let og_image = doc
-//             .select(&IMGUR_SEL)
-//             .next()
-//             .and_then(|el| el.value().attr("content"))
-//             .ok_or_else(|| ue!("couldn't extract image from Imgur album"))?;
+                    let og_image = doc
+                        .select(&IMGUR_SEL)
+                        .next()
+                        .and_then(|el| el.value().attr("content"))
+                        .ok_or_else(|| ue!("couldn't extract image from Imgur album"))?;
 
-//         let mut image_url =
-//             Url::parse(og_image).map_err(map_ue!("invalid image URL from Imgur"))?;
-//         image_url.set_query(None); // Maybe take advantage of Imgur's downscaling?
-//         if IMGUR_EMPTY_RE.is_match(image_url.path()) {
-//             return Err(ue!("empty Imgur album"));
-//         }
+                    let mut image_url =
+                        Url::parse(og_image).map_err(map_ue!("invalid image URL from Imgur"))?;
+                    image_url.set_query(None); // Maybe take advantage of Imgur's downscaling?
+                    if IMGUR_EMPTY_RE.is_match(image_url.path()) {
+                        return Err(ue!("empty Imgur album"));
+                    }
 
-//         Ok(image_url.into_string())
-//     }
-// }
+                    Ok(image_url.into_string())
+                }),
+        )
+    }
+}
 
-fn follow_wikipedia(url: Url) -> impl Future<Item = String, Error = UserError> {
+fn follow_wikipedia(url: Url) -> impl Future<Item = String, Error = UserError> + Send {
     #[derive(Debug, Deserialize)]
     struct ImageInfo {
         mime: String,
@@ -253,7 +268,7 @@ fn follow_wikipedia(url: Url) -> impl Future<Item = String, Error = UserError> {
     )
 }
 
-pub fn get_hash(link: String) -> impl Future<Item = (Hash, String, GetKind), Error = UserError> {
+pub fn get_hash(link: String) -> impl Future<Item = (Hash, String, GetKind), Error = UserError> + Send {
     if link.len() > 2000 {
         return Either::B(err(ue!("URL too long", Source::User)));
     }
@@ -320,7 +335,7 @@ pub fn get_hash(link: String) -> impl Future<Item = (Hash, String, GetKind), Err
 pub fn save_hash(
     link: String,
     hash_dest: HashDest,
-) -> impl Future<Item = (Hash, HashDest, i64, bool), Error = UserError> {
+) -> impl Future<Item = (Hash, HashDest, i64, bool), Error = UserError> + Send {
     get_hash(link).and_then(move |(hash, link, get_kind)| {
         let inner_result = move || {
             let poss_move_row = |hash: Hash,

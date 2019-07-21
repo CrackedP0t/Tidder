@@ -1,9 +1,10 @@
 use cache_control::CacheControl;
 use chrono::{DateTime, NaiveDateTime};
+use futures::future::{err, Either, Future};
+use futures::stream::Stream;
 use image::{imageops, load_from_memory, DynamicImage};
 use lazy_static::lazy_static;
 use log::LevelFilter;
-use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use regex::Regex;
 use reqwest::{
     header::{self, HeaderMap},
@@ -25,6 +26,28 @@ pub use log::{error, info, warn};
 
 mod getter;
 pub use getter::*;
+
+#[macro_export]
+macro_rules! fut_try {
+    ($res:expr) => {
+        match $res {
+            Ok(r) => r,
+            Err(e) => return Either::B(err(e)),
+        }
+    };
+    ($res:expr, ) => {
+        match $res {
+            Ok(r) => r,
+            Err(e) => return err(e),
+        }
+    };
+    ($res:expr, $wrap:path) => {
+        match $res {
+            Ok(r) => r,
+            Err(e) => return $wrap(err(e)),
+        }
+    };
+}
 
 lazy_static! {
     pub static ref EXT_RE: Regex =
@@ -151,17 +174,34 @@ pub mod user_error {
         }
     }
 
-    impl From<Error> for UserError {
-        fn from(error: Error) -> Self {
-            Self {
-                source: Source::Internal,
-                user_msg: Cow::Borrowed("internal error"),
-                error,
-                file: None,
-                line: None,
-            }
+    // impl From<Error> for UserError {
+    //     fn from(error: Error) -> Self {
+    //         Self {
+    //             source: Source::Internal,
+    //             user_msg: Cow::Borrowed("internal error"),
+    //             error,
+    //             file: None,
+    //             line: None,
+    //         }
+    //     }
+    // }
+
+    // impl<E> From<E> for UserError
+    // where
+    //     E: std::error::Error + Send + Sync + 'static,
+    // {
+    //     fn from(error: E) -> Self {
+    //         Self::from_std(error)
+    //     }
+    // }
+
+    impl From<tokio_postgres::error::Error> for UserError {
+        fn from(error: tokio_postgres::error::Error) -> Self {
+            Self::from_std(error)
         }
     }
+
+    impl std::error::Error for UserError {}
 
     impl Display for UserError {
         fn fmt(&self, f: &mut Formatter) -> fmt::Result {
@@ -249,49 +289,73 @@ pub struct PushShiftSearch {
     pub hits: Hits,
 }
 
+pub fn connect_postgres() -> impl Future<Item = tokio_postgres::Client, Error = UserError> {
+    tokio_postgres::connect(&SECRETS.postgres.connect, NoTls)
+        .map(|(client, connection)| {
+            let connection = connection.map_err(|e| {
+                error!("connection error: {}", e);
+                std::process::exit(1);
+            });
+            tokio::spawn(connection);
+
+            client
+        })
+        .map_err(map_ue!())
+}
+
 pub fn save_post(
-    pool: &r2d2::Pool<PostgresConnectionManager<NoTls>>,
-    post: &Submission,
+    post: Submission,
     image_id: Option<i64>,
-) -> Result<bool, UserError> {
+) -> impl Future<Item = bool, Error = UserError> {
     lazy_static! {
         static ref ID_RE: Regex = Regex::new(r"/comments/([^/]+)/").unwrap();
     }
 
     let reddit_id = String::from(
-        ID_RE
+        fut_try!(ID_RE
             .captures(&post.permalink)
             .and_then(|cap| cap.get(1))
-            .ok_or_else(|| ue!("Couldn't find ID in permalink"))?
-            .as_str(),
+            .ok_or_else(|| ue!("Couldn't find ID in permalink")))
+        .as_str(),
     );
 
-    let mut client = pool.get().map_err(map_ue!())?;
-    let mut trans = client.transaction().map_err(map_ue!())?;
-    let modified = trans
-        .execute(
-            "INSERT INTO posts (reddit_id, link, permalink, author, created_utc, score, subreddit, title, nsfw, spoiler, image_id, reddit_id_int) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
-             ON CONFLICT DO NOTHING",
-            &[
-                &reddit_id,
-                &post.url,
-                &post.permalink,
-                &post.author,
-                &(NaiveDateTime::from_timestamp(post.created_utc, 0)),
-                &post.score,
-                &post.subreddit,
-                &post.title,
-                &post.over_18,
-                &post.spoiler.unwrap_or(false),
-                &image_id,
-                &i64::from_str_radix(&reddit_id, 36).map_err(map_ue!())?
-            ],
-        ).map_err(map_ue!())?;
-
-    trans.commit().map_err(map_ue!())?;
-
-    Ok(modified == 0)
+    Either::A(connect_postgres().and_then(move |mut client| {
+        client
+            .build_transaction()
+            .build(
+                client
+                    .prepare(
+                        "INSERT INTO posts \
+                         (reddit_id, link, permalink, author, \
+                         created_utc, score, subreddit, title, nsfw, \
+                         spoiler, image_id, reddit_id_int) \
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, \
+                         $8, $9, $10, $11, $12) \
+                         ON CONFLICT DO NOTHING",
+                    )
+                    .and_then(move |stmt| {
+                        client.execute(
+                            &stmt,
+                            &[
+                                &reddit_id,
+                                &post.url,
+                                &post.permalink,
+                                &post.author,
+                                &(NaiveDateTime::from_timestamp(post.created_utc, 0)),
+                                &post.score,
+                                &post.subreddit,
+                                &post.title,
+                                &post.over_18,
+                                &post.spoiler.unwrap_or(false),
+                                &image_id,
+                                &i64::from_str_radix(&reddit_id, 36).unwrap(),
+                            ],
+                        )
+                    })
+                    .map(|modified| modified > 0),
+            )
+            .map_err(map_ue!())
+    }))
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -380,36 +444,48 @@ impl HashDest {
     }
 }
 
-lazy_static! {
-    static ref DB_POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> = r2d2::Pool::new(
-        PostgresConnectionManager::new(SECRETS.postgres.connect.parse().unwrap(), NoTls)
-    )
-    .unwrap();
-}
-
 pub enum GetKind {
     Cache(HashDest, i64),
     Request(HeaderMap),
 }
 
-fn get_existing(link: &str) -> Result<Option<(Hash, HashDest, i64)>, UserError> {
-    let mut client = DB_POOL.get().map_err(map_ue!())?;
-    let mut trans = client.transaction().map_err(map_ue!())?;
-
-    trans
-        .query(
-            "SELECT hash, id, 'images' as table_name FROM images WHERE link = $1 UNION SELECT hash, id, 'image_cache' as table_name FROM image_cache WHERE link = $1",
-            &[&link],
-        )
-        .map_err(map_ue!())
-        .map(|rows| {
-            rows.get(0)
-                .map(|row| (Hash(row.get::<_, i64>("hash") as u64), match row.get("table_name") {
-                    "images" => HashDest::Images,
-                    "image_cache" => HashDest::ImageCache,
-                    _ => unreachable!()
-                }, row.get("id")))
-        })
+fn get_existing(
+    link: String,
+) -> impl Future<Item = Option<(Hash, HashDest, i64)>, Error = UserError> {
+    connect_postgres().and_then(move |mut client| {
+        client
+            .build_transaction()
+            .build(
+                client
+                    .prepare(
+                        "SELECT hash, id, 'images' as table_name \
+                         FROM images WHERE link = $1 \
+                         UNION \
+                         SELECT hash, id, 'image_cache' as table_name \
+                         FROM image_cache WHERE link = $1",
+                    )
+                    .and_then(move |stmt| {
+                        client
+                            .query(&stmt, &[&link])
+                            .into_future()
+                            .map_err(|(e, _)| e)
+                            .map(|(row, _)| {
+                                row.map(|row| {
+                                    (
+                                        Hash(row.get::<_, i64>("hash") as u64),
+                                        match row.get("table_name") {
+                                            "images" => HashDest::Images,
+                                            "image_cache" => HashDest::ImageCache,
+                                            _ => unreachable!(),
+                                        },
+                                        row.get("id"),
+                                    )
+                                })
+                            })
+                    }),
+            )
+            .map_err(map_ue!())
+    })
 }
 
 fn error_for_status_ue(e: reqwest::Error) -> UserError {

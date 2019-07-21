@@ -3,11 +3,8 @@
 use clap::{clap_app, crate_authors, crate_description, crate_version};
 use common::*;
 use failure::{format_err, Error};
-use fallible_iterator::FallibleIterator;
 use lazy_static::lazy_static;
 use log::{error, info, warn};
-use postgres::NoTls;
-use r2d2_postgres::{r2d2, PostgresConnectionManager};
 use regex::Regex;
 use reqwest::r#async::Client;
 use serde_json::from_value;
@@ -24,14 +21,10 @@ use url::{Host, Url};
 
 use future::{err, ok};
 
-lazy_static! {
-    static ref DB_POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> = r2d2::Pool::new(
-        PostgresConnectionManager::new(SECRETS.postgres.connect.parse().unwrap(), NoTls)
-    )
-    .unwrap();
-    // static ref IN_FLIGHT_LIMITS: HashMap<&'static str, u32> =
-    //     HashMap::from_iter([("imgur.com", 1)].iter().copied());
-}
+// lazy_static! {
+// static ref IN_FLIGHT_LIMITS: HashMap<&'static str, u32> =
+//     HashMap::from_iter([("imgur.com", 1)].iter().copied());
+// }
 
 const PERMA_BLACKLIST: [&str; 0] = [];
 const IN_FLIGHT_LIMIT: u32 = 1;
@@ -300,7 +293,7 @@ fn ingest_json<R: Read + Send>(
                             let (post, image_id) = res
                                 .map(|tup| (tup.0, Some(tup.1)))
                                 .unwrap_or_else(|post| (post, None));
-                            save_post(&DB_POOL, &post, image_id)
+                            save_post(post, image_id)
                         })
                         .map(|_| ())
                         .map_err(|e| {
@@ -421,81 +414,83 @@ fn main() {
                 input_future.map_err(|e| panic!(e)).and_then(move |input| {
                     info!("Processing posts we already have");
 
-                    let mut already_have = BTreeSet::new();
-
-                    DB_POOL
-                        .get()
+                    connect_postgres()
                         .map_err(Error::from)
-                        .unwrap()
-                        .query_iter(
-                            "SELECT reddit_id_int FROM posts \
-                             WHERE EXTRACT(month FROM created_utc) = $1 \
-                             AND EXTRACT(year FROM created_utc) = $2",
-                            &[&month_f, &year_f],
-                        )
-                        .map_err(Error::from)
-                        .unwrap()
-                        .for_each(|row| {
-                            already_have.insert(row.get(0));
-                            Ok(())
+                        .and_then(move |mut client| {
+                            client
+                                .prepare(
+                                    "SELECT reddit_id_int FROM posts \
+                                     WHERE EXTRACT(month FROM created_utc) = $1 \
+                                     AND EXTRACT(year FROM created_utc) = $2",
+                                )
+                                .and_then(move |stmt| {
+                                    client.query(&stmt, &[&month_f, &year_f]).fold(
+                                        BTreeSet::new(),
+                                        |mut already_have, row| {
+                                            already_have.insert(row.get(0));
+                                            ok(already_have)
+                                        },
+                                    )
+                                })
+                                .map_err(Error::from)
                         })
-                        .map_err(Error::from)
-                        .unwrap();
+                        .map_err(|e| panic!(e))
+                        .and_then(move |already_have| {
+                            let already_have_len = already_have.len();
+                            info!(
+                                "Already have {} post{}",
+                                already_have_len,
+                                if already_have_len == 1 { "" } else { "s" }
+                            );
 
-                    let already_have_len = already_have.len();
-                    info!(
-                        "Already have {} post{}",
-                        already_have_len,
-                        if already_have_len == 1 { "" } else { "s" }
-                    );
+                            let already_have = if already_have_len > 0 {
+                                Some(already_have)
+                            } else {
+                                None
+                            };
 
-                    let already_have = if already_have_len > 0 {
-                        Some(already_have)
-                    } else {
-                        None
-                    };
+                            let input = BufReader::new(input);
 
-                    let input = BufReader::new(input);
+                            let title = format!("{:02}-{}", month, year);
 
-                    let title = format!("{:02}-{}", month, year);
+                            let ingest_fut: Box<dyn future::Future<Item = (), Error = ()> + Send> =
+                                if path.ends_with("bz2") {
+                                    Box::new(ingest_json(
+                                        &title,
+                                        already_have,
+                                        bzip2::bufread::BzDecoder::new(input),
+                                        verbose,
+                                    )) as _
+                                } else if path.ends_with("xz") {
+                                    Box::new(ingest_json(
+                                        &title,
+                                        already_have,
+                                        xz2::bufread::XzDecoder::new(input),
+                                        verbose,
+                                    )) as _
+                                } else if path.ends_with("zst") {
+                                    Box::new(ingest_json(
+                                        &title,
+                                        already_have,
+                                        zstd::stream::read::Decoder::new(input)
+                                            .map_err(Error::from)
+                                            .unwrap(),
+                                        verbose,
+                                    )) as _
+                                } else {
+                                    Box::new(ingest_json(&title, already_have, input, verbose)) as _
+                                };
 
-                    let ingest_fut: Box<dyn future::Future<Item = (), Error = ()> + Send> =
-                        if path.ends_with("bz2") {
-                            Box::new(ingest_json(
-                                &title,
-                                already_have,
-                                bzip2::bufread::BzDecoder::new(input),
-                                verbose,
-                            )) as _
-                        } else if path.ends_with("xz") {
-                            Box::new(ingest_json(
-                                &title,
-                                already_have,
-                                xz2::bufread::XzDecoder::new(input),
-                                verbose,
-                            )) as _
-                        } else if path.ends_with("zst") {
-                            Box::new(ingest_json(
-                                &title,
-                                already_have,
-                                zstd::stream::read::Decoder::new(input)
-                                    .map_err(Error::from)
-                                    .unwrap(),
-                                verbose,
-                            )) as _
-                        } else {
-                            Box::new(ingest_json(&title, already_have, input, verbose)) as _
-                        };
+                            ingest_fut.map(move |_| {
+                                if !no_delete {
+                                    if let Some(arch_path) = arch_path {
+                                        remove_file(arch_path).map_err(Error::from).unwrap();
+                                    }
+                                }
 
-                    ingest_fut.map(move |_| {
-                        if !no_delete {
-                            if let Some(arch_path) = arch_path {
-                                remove_file(arch_path).map_err(Error::from).unwrap();
-                            }
-                        }
-
-                        info!("Done ingesting {}", &path);
-                    })
+                                info!("Done ingesting {}", &path);
+                            })
+                        })
                 })
             })
             .for_each(|_| ok(()))

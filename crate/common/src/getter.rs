@@ -3,27 +3,6 @@ use super::*;
 use future::{err, ok, result, Either};
 use tokio::prelude::*;
 
-macro_rules! fut_try {
-    ($res:expr) => {
-        match $res {
-            Ok(r) => r,
-            Err(e) => return Either::B(err(e)),
-        }
-    };
-    ($res:expr, ) => {
-        match $res {
-            Ok(r) => r,
-            Err(e) => return err(e),
-        }
-    };
-    ($res:expr, $wrap:path) => {
-        match $res {
-            Ok(r) => r,
-            Err(e) => return $wrap(err(e)),
-        }
-    };
-}
-
 macros::multi_either!(4);
 
 lazy_static! {
@@ -85,6 +64,7 @@ pub fn follow_link(url: Url) -> impl Future<Item = String, Error = UserError> + 
     } else {
         Box::new(ok(url.into_string())) as _
     }
+    .map(|link: String| utf8_percent_encode(link.as_str(), QUERY_ENCODE_SET).collect::<String>())
 }
 
 fn follow_gfycat(url: Url) -> impl Future<Item = String, Error = UserError> + Send {
@@ -313,132 +293,140 @@ pub fn get_hash(
         return Either::B(err(ue!("unsupported scheme in URL", Source::User)));
     }
 
-    Either::A(follow_link(url).and_then(|mut link| {
-        if let Some((hash, hash_dest, id)) = fut_try!(get_existing(&link)) {
-            return Either::B(ok((hash, link, GetKind::Cache(hash_dest, id))));
-        }
+    Either::A(follow_link(url).and_then(move |mut link| {
+        get_existing(link.clone()).and_then(move |found| {
+            if let Some((hash, hash_dest, id)) = found {
+                return Either::B(ok((hash, link, GetKind::Cache(hash_dest, id))));
+            }
 
-        Either::A(
-            REQW_CLIENT
-                .get(&utf8_percent_encode(&link, QUERY_ENCODE_SET).collect::<String>())
-                .header(header::ACCEPT, IMAGE_MIMES.join(","))
-                .header(
-                    header::USER_AGENT,
-                    "Mozilla/5.0 (X11; Linux x86_64; rv:66.0) Gecko/20100101 Firefox/66.0",
-                )
-                .send()
-                .map_err(map_ue!("couldn't connect to image host"))
-                .and_then(|resp| resp.error_for_status().map_err(error_for_status_ue))
-                .and_then(|resp| {
-                    let url = resp.url();
-                    if url
-                        .host_str()
-                        .map(|host| host == "i.imgur.com")
-                        .unwrap_or(false)
-                        && url.path() == "/removed.png"
-                    {
-                        return err(ue!("removed from Imgur"));
-                    }
-
-                    if let Some(ct) = resp.headers().get(header::CONTENT_TYPE) {
-                        let ct = fut_try!(ct
-                            .to_str()
-                            .map_err(map_ue!("non-ASCII Content-Type header")),);
-
-                        if !IMAGE_MIMES.contains(&ct) {
-                            return err(ue!(format!("unsupported Content-Type: {}", ct)));
-                        }
-
+            Either::A(
+                REQW_CLIENT
+                    .get(&link)
+                    .header(header::ACCEPT, IMAGE_MIMES.join(","))
+                    .header(
+                        header::USER_AGENT,
+                        "Mozilla/5.0 (X11; Linux x86_64; rv:66.0) Gecko/20100101 Firefox/66.0",
+                    )
+                    .send()
+                    .map_err(map_ue!("couldn't connect to image host"))
+                    .and_then(|resp| resp.error_for_status().map_err(error_for_status_ue))
+                    .and_then(|resp| {
+                        let url = resp.url();
                         if url
                             .host_str()
                             .map(|host| host == "i.imgur.com")
                             .unwrap_or(false)
+                            && url.path() == "/removed.png"
                         {
-                            link = EXT_REPLACE_RE
-                                .replace(
-                                    &link,
-                                    format!("$1.{}", ct.split('/').nth(1).unwrap()).as_str(),
-                                )
-                                .to_owned().to_string();
+                            return err(ue!("removed from Imgur"));
                         }
-                    }
 
-                    ok((
-                        link,
-                        resp.headers().to_owned(),
-                        resp.into_body()
-                            .concat2()
-                            .map_err(map_ue!("couldn't download image", Source::External)),
-                    ))
-                })
-                .and_then(|(link, headers, fut)| (ok(link), ok(headers), fut))
-                .and_then(
-                    |(link, headers, image)| match hash_from_memory(image.as_ref()) {
-                        Ok(hash) => ok((hash, link, GetKind::Request(headers))),
-                        Err(e) => err(e),
-                    },
-                ),
-        )
+                        if let Some(ct) = resp.headers().get(header::CONTENT_TYPE) {
+                            let ct = fut_try!(ct
+                                .to_str()
+                                .map_err(map_ue!("non-ASCII Content-Type header")),);
+
+                            if !IMAGE_MIMES.contains(&ct) {
+                                return err(ue!(format!("unsupported Content-Type: {}", ct)));
+                            }
+
+                            if url
+                                .host_str()
+                                .map(|host| host == "i.imgur.com")
+                                .unwrap_or(false)
+                            {
+                                link = EXT_REPLACE_RE
+                                    .replace(
+                                        &link,
+                                        format!("$1.{}", ct.split('/').nth(1).unwrap()).as_str(),
+                                    )
+                                    .to_owned()
+                                    .to_string();
+                            }
+                        }
+
+                        ok((
+                            link,
+                            resp.headers().to_owned(),
+                            resp.into_body()
+                                .concat2()
+                                .map_err(map_ue!("couldn't download image", Source::External)),
+                        ))
+                    })
+                    .and_then(|(link, headers, fut)| (ok(link), ok(headers), fut))
+                    .and_then(
+                        |(link, headers, image)| match hash_from_memory(image.as_ref()) {
+                            Ok(hash) => ok((hash, link, GetKind::Request(headers))),
+                            Err(e) => err(e),
+                        },
+                    ),
+            )
+        })
     }))
 }
 
-pub fn save_hash(
-    link: String,
+fn poss_move_row(
+    hash: Hash,
     hash_dest: HashDest,
-) -> impl Future<Item = (Hash, HashDest, i64, bool), Error = UserError> + Send {
-    get_hash(link).and_then(move |(hash, link, get_kind)| {
-        let inner_result = move || {
-            let poss_move_row = |hash: Hash,
-                                 found_hash_dest: HashDest,
-                                 id: i64|
-             -> Result<(Hash, HashDest, i64, bool), UserError> {
-                if hash_dest == found_hash_dest || hash_dest == HashDest::ImageCache {
-                    Ok((hash, hash_dest, id, true))
-                } else {
-                    let mut client = DB_POOL.get().map_err(map_ue!())?;
-                    let mut trans = client.transaction().map_err(map_ue!())?;
-                    let rows = trans
-                        .query(
+    found_hash_dest: HashDest,
+    id: i64,
+) -> impl Future<Item = (Hash, HashDest, i64, bool), Error = UserError> {
+    if hash_dest == found_hash_dest || hash_dest == HashDest::ImageCache {
+        Either::B(ok((hash, hash_dest, id, true)))
+    } else {
+        Either::A(connect_postgres().and_then(move |mut client| {
+            client
+                .build_transaction()
+                .build(
+                    client
+                        .prepare(
                             "INSERT INTO images \
                              (link, hash, no_store, no_cache, expires, etag, \
                              must_revalidate, retrieved_on) \
                              VALUES (SELECT link, hash, no_store, no_cache, expires, etag,\
                              must_revalidate, retrieved_on FROM image_cache WHERE id = $1) \
                              RETURNING id",
-                            &[&id],
                         )
-                        .map_err(map_ue!())?;
-                    trans.commit().map_err(map_ue!())?;
+                        .and_then(move |stmt| {
+                            client
+                                .query(&stmt, &[&id])
+                                .into_future()
+                                .map_err(|(e, _)| e)
+                                .map(|(row, _)| row.unwrap().get::<_, i64>("id"))
+                                .and_then(move |new_id| {
+                                    client
+                                        .prepare("DELETE FROM image_cache WHERE id = $1")
+                                        .join(ok(new_id))
+                                        .and_then(move |(stmt, new_id)| {
+                                            (ok(new_id), client.execute(&stmt, &[&id]))
+                                        })
+                                })
+                        }),
+                )
+                .map(move |(new_id, _modified)| (hash, HashDest::Images, new_id, true))
+                .map_err(map_ue!())
+        }))
+    }
+}
 
-                    let mut trans = client.transaction().map_err(map_ue!())?;
-                    trans
-                        .query("DELETE FROM image_cache WHERE id = $1", &[&id])
-                        .map_err(map_ue!())?;
-                    trans.commit().map_err(map_ue!())?;
-
-                    let id = rows
-                        .get(0)
-                        .and_then(|row| row.get("id"))
-                        .unwrap_or_else(|| unreachable!());
-
-                    Ok((hash, HashDest::Images, id, true))
-                }
-            };
-
-            match get_kind {
-                GetKind::Cache(hash_dest, id) => poss_move_row(hash, hash_dest, id),
-                GetKind::Request(headers) => {
-                    let now = chrono::offset::Utc::now().naive_utc();
-                    let cc: Option<CacheControl> = headers
-                        .get(header::CACHE_CONTROL)
-                        .and_then(|hv| hv.to_str().ok())
-                        .and_then(|s| cache_control::with_str(s).ok());
-                    let cc = cc.as_ref();
-
-                    let mut client = DB_POOL.get().map_err(map_ue!())?;
-                    let mut trans = client.transaction().map_err(map_ue!())?;
-                    let rows = trans
-                        .query(
+pub fn save_hash(
+    link: String,
+    hash_dest: HashDest,
+) -> impl Future<Item = (Hash, HashDest, i64, bool), Error = UserError> + Send {
+    get_hash(link).and_then(move |(hash, link, get_kind)| match get_kind {
+        GetKind::Cache(found_hash_dest, id) => {
+            Either::A(poss_move_row(hash, hash_dest, found_hash_dest, id))
+        }
+        GetKind::Request(headers) => {
+            let now = chrono::offset::Utc::now().naive_utc();
+            let cc: Option<CacheControl> = headers
+                .get(header::CACHE_CONTROL)
+                .and_then(|hv| hv.to_str().ok())
+                .and_then(|s| cache_control::with_str(s).ok());
+            Either::B(connect_postgres().and_then(move |mut client| {
+                client.build_transaction().build(
+                    client
+                        .prepare(
                             format!(
                                 "INSERT INTO {} (link, hash, no_store, no_cache, expires, \
                                  etag, must_revalidate, retrieved_on) \
@@ -448,43 +436,57 @@ pub fn save_hash(
                                 hash_dest.table_name()
                             )
                             .as_str(),
-                            &[
-                                &link,
-                                &hash,
-                                &cc.map(|cc| cc.no_store),
-                                &cc.map(|cc| cc.no_cache),
-                                &cc.and_then(|cc| cc.max_age)
-                                    .map(|n| NaiveDateTime::from_timestamp(n as i64, 0))
-                                    .or_else(|| {
-                                        headers
-                                            .get(header::EXPIRES)
-                                            .and_then(|hv| hv.to_str().ok())
-                                            .and_then(|s| DateTime::parse_from_rfc2822(s).ok())
-                                            .map(|dt| dt.naive_utc())
-                                    }),
-                                &headers.get(header::ETAG).and_then(|hv| hv.to_str().ok()),
-                                &cc.map(|cc| cc.must_revalidate),
-                                &now,
-                            ],
                         )
-                        .map_err(map_ue!())?;
-                    trans.commit().map_err(map_ue!())?;
+                        .and_then(move |stmt| {
+                            let cc = cc.as_ref();
 
-                    match rows.get(0) {
-                        Some(row) => Ok((
-                            hash,
-                            hash_dest,
-                            row.try_get("id").map_err(map_ue!())?,
-                            false,
-                        )),
-                        None => get_existing(&link)?
-                            .map(|(hash, hash_dest, id)| poss_move_row(hash, hash_dest, id))
-                            .ok_or_else(|| ue!("conflict but no existing match"))?,
-                    }
-                }
-            }
-        };
-        result(inner_result())
+                            let query = client
+                                .query(
+                                    &stmt,
+                                    &[
+                                        &link,
+                                        &hash,
+                                        &cc.map(|cc| cc.no_store),
+                                        &cc.map(|cc| cc.no_cache),
+                                        &cc.and_then(|cc| cc.max_age)
+                                            .map(|n| NaiveDateTime::from_timestamp(n as i64, 0))
+                                            .or_else(|| {
+                                                headers
+                                                    .get(header::EXPIRES)
+                                                    .and_then(|hv| hv.to_str().ok())
+                                                    .and_then(|s| {
+                                                        DateTime::parse_from_rfc2822(s).ok()
+                                                    })
+                                                    .map(|dt| dt.naive_utc())
+                                            }),
+                                        &headers.get(header::ETAG).and_then(|hv| hv.to_str().ok()),
+                                        &cc.map(|cc| cc.must_revalidate),
+                                        &now,
+                                    ],
+                                )
+                                .into_future()
+                                .map_err(|(e, _)| e);
+
+                            (ok(link), query)
+                        })
+                        .map_err(map_ue!())
+                        .and_then(move |(link, (row, _))| match row {
+                            Some(row) => Either::B(ok((hash, hash_dest, row.get("id"), false))),
+                            None => {
+                                Either::A(get_existing(link).and_then(move |found| match found {
+                                    Some((hash, found_hash_dest, id)) => Either::A(poss_move_row(
+                                        hash,
+                                        hash_dest,
+                                        found_hash_dest,
+                                        id,
+                                    )),
+                                    None => Either::B(err(ue!("conflict but no existing match"))),
+                                }))
+                            }
+                        }),
+                )
+            }))
+        }
     })
 }
 

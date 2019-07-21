@@ -165,8 +165,8 @@ fn follow_imgur(mut url: Url) -> impl Future<Item = String, Error = UserError> +
             .replace(path, "https://i.imgur.com/$1.gif")
             .to_string()))
     } else if IMGUR_EXT_RE.is_match(path) || path_start == "download" {
-        Either::B(ok(url.to_string()))
-    } else {
+        Either::B(ok(url.into_string()))
+    } else if path_start == "a" || path_start == "gallery" {
         Either::A(
             REQW_CLIENT
                 .get(&link)
@@ -213,6 +213,8 @@ fn follow_imgur(mut url: Url) -> impl Future<Item = String, Error = UserError> +
                     Ok(image_url.into_string())
                 }),
         )
+    } else {
+        Either::B(ok(format!("https://i.imgur.com/{}.jpg", path_start)))
     }
 }
 
@@ -296,6 +298,10 @@ fn follow_wikipedia(url: Url) -> impl Future<Item = String, Error = UserError> +
 pub fn get_hash(
     link: String,
 ) -> impl Future<Item = (Hash, String, GetKind), Error = UserError> + Send {
+    lazy_static! {
+        static ref EXT_REPLACE_RE: Regex = Regex::new(r"^(.+?)\.[[:alnum:]]+$").unwrap();
+    }
+
     if link.len() > 2000 {
         return Either::B(err(ue!("URL too long", Source::User)));
     }
@@ -307,7 +313,7 @@ pub fn get_hash(
         return Either::B(err(ue!("unsupported scheme in URL", Source::User)));
     }
 
-    Either::A(follow_link(url).and_then(|link| {
+    Either::A(follow_link(url).and_then(|mut link| {
         if let Some((hash, hash_dest, id)) = fut_try!(get_existing(&link)) {
             return Either::B(ok((hash, link, GetKind::Cache(hash_dest, id))));
         }
@@ -338,23 +344,40 @@ pub fn get_hash(
                         let ct = fut_try!(ct
                             .to_str()
                             .map_err(map_ue!("non-ASCII Content-Type header")),);
+
                         if !IMAGE_MIMES.contains(&ct) {
                             return err(ue!(format!("unsupported Content-Type: {}", ct)));
+                        }
+
+                        if url
+                            .host_str()
+                            .map(|host| host == "i.imgur.com")
+                            .unwrap_or(false)
+                        {
+                            link = EXT_REPLACE_RE
+                                .replace(
+                                    &link,
+                                    format!("$1.{}", ct.split('/').nth(1).unwrap()).as_str(),
+                                )
+                                .to_owned().to_string();
                         }
                     }
 
                     ok((
+                        link,
                         resp.headers().to_owned(),
                         resp.into_body()
                             .concat2()
                             .map_err(map_ue!("couldn't download image", Source::External)),
                     ))
                 })
-                .and_then(|(headers, fut)| (ok(headers), fut))
-                .and_then(|(headers, image)| match hash_from_memory(image.as_ref()) {
-                    Ok(hash) => ok((hash, link, GetKind::Request(headers))),
-                    Err(e) => err(e),
-                }),
+                .and_then(|(link, headers, fut)| (ok(link), ok(headers), fut))
+                .and_then(
+                    |(link, headers, image)| match hash_from_memory(image.as_ref()) {
+                        Ok(hash) => ok((hash, link, GetKind::Request(headers))),
+                        Err(e) => err(e),
+                    },
+                ),
         )
     }))
 }
@@ -472,7 +495,9 @@ mod tests {
     #[test]
     fn follow() {
         assert_eq!(
-            follow_imgur(Url::parse("http://www.i.imgur.com/3EqtHIK.jpg").unwrap()).wait().unwrap(),
+            follow_imgur(Url::parse("http://www.i.imgur.com/3EqtHIK.jpg").unwrap())
+                .wait()
+                .unwrap(),
             "http://i.imgur.com/3EqtHIK.jpg"
         );
     }

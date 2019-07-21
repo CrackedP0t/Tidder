@@ -3,8 +3,6 @@ use super::*;
 use future::{err, ok, result, Either};
 use tokio::prelude::*;
 
-macros::multi_either!(4);
-
 lazy_static! {
     static ref REQW_CLIENT: reqwest::r#async::Client = reqwest::r#async::Client::builder()
         .timeout(std::time::Duration::from_secs(30))

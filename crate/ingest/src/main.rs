@@ -208,98 +208,101 @@ fn ingest_json<R: Read + Send>(
                         }
                     })
                     .map(|tld| (tld, post))
-                })
-                .and_then(move |(tld, post)| {
-                    let e_title = title.clone();
+                    .and_then(move |(tld, post)| {
+                        let e_title = title.clone();
 
-                    save_hash(post.url.clone(), HashDest::Images)
-                        .then(move |res| {
-                            *end_in_flight.write().unwrap().get_mut(&tld).unwrap() -= 1;
-                            match res {
-                                Ok(o) => Ok((post, o)),
-                                Err(e) => Err((post, e)),
-                            }
-                        })
-                        .map(move |(post, (_hash, _hash_dest, image_id, exists))| {
-                            if verbose {
-                                if exists {
-                                    info!("{}: {}: {} already exists", title, post.id, post.url);
-                                } else {
-                                    info!(
-                                        "{}: {}: {} successfully hashed",
-                                        title, post.id, post.url
-                                    );
+                        save_hash(post.url.clone(), HashDest::Images)
+                            .then(move |res| {
+                                *end_in_flight.write().unwrap().get_mut(&tld).unwrap() -= 1;
+                                match res {
+                                    Ok(o) => Ok((post, o)),
+                                    Err(e) => Err((post, e)),
                                 }
-                            }
+                            })
+                            .map(move |(post, (_hash, _hash_dest, image_id, exists))| {
+                                if verbose {
+                                    if exists {
+                                        info!(
+                                            "{}: {}: {} already exists",
+                                            title, post.id, post.url
+                                        );
+                                    } else {
+                                        info!(
+                                            "{}: {}: {} successfully hashed",
+                                            title, post.id, post.url
+                                        );
+                                    }
+                                }
 
-                            (post, image_id)
-                        })
-                        .map_err(move |(post, ue)| {
-                            match ue.source {
-                                Source::Internal => {
-                                    error!(
-                                        "{}: {}: {}: {}{}{}{}",
-                                        e_title,
-                                        post.id,
-                                        post.url,
-                                        ue.file.unwrap_or(""),
-                                        ue.line
-                                            .map(|line| Cow::Owned(format!("#{}", line)))
-                                            .unwrap_or(Cow::Borrowed("")),
-                                        if ue.file.is_some() || ue.line.is_some() {
-                                            ": "
-                                        } else {
-                                            ""
-                                        },
-                                        ue.error
-                                    );
-                                    std::process::exit(1);
-                                }
-                                _ => {
-                                    warn!(
-                                        "{}: {}: {} failed: {}",
-                                        e_title, post.id, post.url, ue.error
-                                    );
-                                    if let Some(e) = ue.error.downcast_ref::<reqwest::Error>() {
-                                        if e.is_timeout()
-                                            || e.get_ref()
-                                                .and_then(|e| e.downcast_ref::<hyper::Error>())
-                                                .map(hyper::Error::is_connect)
-                                                .unwrap_or(false)
-                                        {
-                                            if is_link_special(&post.url) {
-                                                error!(
-                                                    "{}: {}: {}: Special link timed out",
-                                                    e_title, post.id, post.url
-                                                );
-                                                std::process::exit(1);
-                                            }
-                                            if let Ok(url) = Url::parse(&post.url) {
-                                                if let Some(domain) = url.domain() {
-                                                    blacklist
-                                                        .write()
-                                                        .unwrap()
-                                                        .insert(Cow::Owned(domain.to_string()));
+                                (post, image_id)
+                            })
+                            .map_err(move |(post, ue)| {
+                                match ue.source {
+                                    Source::Internal => {
+                                        error!(
+                                            "{}: {}: {}: {}{}{}{}",
+                                            e_title,
+                                            post.id,
+                                            post.url,
+                                            ue.file.unwrap_or(""),
+                                            ue.line
+                                                .map(|line| Cow::Owned(format!("#{}", line)))
+                                                .unwrap_or(Cow::Borrowed("")),
+                                            if ue.file.is_some() || ue.line.is_some() {
+                                                ": "
+                                            } else {
+                                                ""
+                                            },
+                                            ue.error
+                                        );
+                                        std::process::exit(1);
+                                    }
+                                    _ => {
+                                        warn!(
+                                            "{}: {}: {} failed: {}",
+                                            e_title, post.id, post.url, ue.error
+                                        );
+                                        if let Some(e) = ue.error.downcast_ref::<reqwest::Error>() {
+                                            if e.is_timeout()
+                                                || e.get_ref()
+                                                    .and_then(|e| e.downcast_ref::<hyper::Error>())
+                                                    .map(hyper::Error::is_connect)
+                                                    .unwrap_or(false)
+                                            {
+                                                if is_link_special(&post.url) {
+                                                    error!(
+                                                        "{}: {}: {}: Special link timed out",
+                                                        e_title, post.id, post.url
+                                                    );
+                                                    std::process::exit(1);
+                                                }
+                                                if let Ok(url) = Url::parse(&post.url) {
+                                                    if let Some(domain) = url.domain() {
+                                                        blacklist
+                                                            .write()
+                                                            .unwrap()
+                                                            .insert(Cow::Owned(domain.to_string()));
+                                                    }
                                                 }
                                             }
                                         }
                                     }
-                                }
-                            };
+                                };
 
-                            post
-                        })
-                        .then(move |res| {
-                            let (post, image_id) = res
-                                .map(|tup| (tup.0, Some(tup.1)))
-                                .unwrap_or_else(|post| (post, None));
-                            save_post(post, image_id)
-                        })
-                        .map(|_| ())
-                        .map_err(|e| {
-                            error!("Saving post failed: {}", e);
-                            std::process::exit(1);
-                        })
+                                post
+                            })
+                    })
+                    .then(move |res| {
+                        let (post, image_id) = res
+                            .map(|tup| (tup.0, Some(tup.1)))
+                            .unwrap_or_else(|post| (post, None));
+                        save_post(post, image_id)
+                    })
+                    .map(|_| ())
+                    .map_err(|e| {
+                        error!("Saving post failed: {}", e);
+                        std::process::exit(1);
+                    })
                 }),
             );
         });

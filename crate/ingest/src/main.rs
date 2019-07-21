@@ -59,11 +59,10 @@ fn get_tld(url: &Url) -> &str {
         static ref TLD_RE: Regex = Regex::new(r"([^.]+\.[^.]+)$").unwrap();
     }
 
-    if let Host::Domain(s) = url.host().unwrap() {
-        TLD_RE.find(s).unwrap().as_str()
-    } else {
-        url.host_str().unwrap()
-    }
+    url.domain()
+        .and_then(|s| TLD_RE.find(s))
+        .map(|m| m.as_str())
+        .unwrap_or_else(|| url.host_str().unwrap())
 }
 
 // fn get_in_flight_limit(url: &Url) -> u32 {

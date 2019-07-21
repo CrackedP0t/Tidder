@@ -16,7 +16,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::{remove_file, File, OpenOptions};
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
-use std::iter::{FromIterator, Iterator};
+use std::iter::Iterator;
 use std::path::Path;
 use std::sync::{Arc, RwLock, TryLockError};
 use tokio::prelude::*;
@@ -24,18 +24,17 @@ use url::{Host, Url};
 
 use future::{err, ok};
 
-macros::multi_either!(2);
-
 lazy_static! {
     static ref DB_POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> = r2d2::Pool::new(
         PostgresConnectionManager::new(SECRETS.postgres.connect.parse().unwrap(), NoTls)
     )
     .unwrap();
-    static ref IN_FLIGHT_LIMITS: HashMap<&'static str, u32> =
-        HashMap::from_iter([("imgur.com", 2)].iter().copied());
+    // static ref IN_FLIGHT_LIMITS: HashMap<&'static str, u32> =
+    //     HashMap::from_iter([("imgur.com", 1)].iter().copied());
 }
 
 const PERMA_BLACKLIST: [&str; 0] = [];
+const IN_FLIGHT_LIMIT: u32 = 1;
 
 struct Check<I> {
     iter: I,
@@ -74,9 +73,9 @@ fn get_tld(url: &Url) -> &str {
     }
 }
 
-fn get_in_flight_limit(url: &Url) -> u32 {
-    IN_FLIGHT_LIMITS.get(get_tld(url)).copied().unwrap_or(1)
-}
+// fn get_in_flight_limit(url: &Url) -> u32 {
+//     IN_FLIGHT_LIMITS.get(get_tld(url)).copied().unwrap_or(1)
+// }
 
 fn ingest_json<R: Read + Send>(
     title: &str,
@@ -193,14 +192,13 @@ fn ingest_json<R: Read + Send>(
                     ok((post_url, post))
                 })
                 .and_then(move |(post_url, post)| {
-                    let limit = get_in_flight_limit(&post_url);
                     future::poll_fn(move || {
                         let tld = get_tld(&post_url);
                         match in_flight.try_read() {
                             Ok(guard) => {
                                 if guard
                                     .get::<str>(&tld)
-                                    .map(|in_flight| *in_flight < limit)
+                                    .map(|in_flight| *in_flight < IN_FLIGHT_LIMIT)
                                     .unwrap_or(true)
                                 {
                                     drop(guard);

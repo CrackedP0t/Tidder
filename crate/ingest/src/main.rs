@@ -167,7 +167,7 @@ fn ingest_json<R: Read + Send>(
                         Ok(url) => url,
                         Err(e) => {
                             warn!("{}: {}: {} is invalid: {}", title, post.id, post.url, e);
-                            return err(());
+                            return err(post);
                         }
                     };
 
@@ -179,7 +179,7 @@ fn ingest_json<R: Read + Send>(
                         if verbose {
                             warn!("{}: {}: {} is blacklisted", title, post.id, post.url);
                         }
-                        return err(());
+                        return err(post);
                     }
 
                     ok((post_url, post))
@@ -292,17 +292,17 @@ fn ingest_json<R: Read + Send>(
                                 post
                             })
                     })
-                    .then(move |res| {
-                        let (post, image_id) = res
-                            .map(|tup| (tup.0, Some(tup.1)))
-                            .unwrap_or_else(|post| (post, None));
-                        save_post(post, image_id)
-                    })
-                    .map(|_| ())
-                    .map_err(|e| {
-                        error!("Saving post failed: {}", e);
-                        std::process::exit(1);
-                    })
+                })
+                .then(move |res| {
+                    let (post, image_id) = res
+                        .map(|tup| (tup.0, Some(tup.1)))
+                        .unwrap_or_else(|post| (post, None));
+                    save_post(post, image_id)
+                })
+                .map(|_| ())
+                .map_err(|e| {
+                    error!("Saving post failed: {}", e);
+                    std::process::exit(1);
                 }),
             );
         });

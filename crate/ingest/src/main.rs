@@ -17,7 +17,7 @@ use std::iter::Iterator;
 use std::path::Path;
 use std::sync::{Arc, RwLock, TryLockError};
 use tokio::prelude::*;
-use url::{Host, Url};
+use url::Url;
 
 use future::{err, ok};
 

@@ -28,7 +28,7 @@ use future::{err, ok};
 
 const PERMA_BLACKLIST: [&str; 0] = [];
 const IN_FLIGHT_LIMIT: u32 = 1;
-const PG_IN_FLIGHT_LIMIT: u32 = 80;
+const PG_IN_FLIGHT_LIMIT: u32 = 480;
 
 struct Check<I> {
     iter: I,
@@ -165,13 +165,13 @@ fn ingest_json<R: Read + Send>(
             tokio::spawn(
                 future::poll_fn(move || match pg_in_flight.try_read() {
                     Ok(guard) => {
-                        // if *guard < PG_IN_FLIGHT_LIMIT {
-                        drop(guard);
-                        *pg_in_flight.write().unwrap() += 1;
-                        Ok(Async::Ready(()))
-                        // } else {
-                        //     Ok(Async::NotReady)
-                        // }
+                        if *guard < PG_IN_FLIGHT_LIMIT {
+                            drop(guard);
+                            *pg_in_flight.write().unwrap() += 1;
+                            Ok(Async::Ready(()))
+                        } else {
+                            Ok(Async::NotReady)
+                        }
                     }
                     Err(TryLockError::WouldBlock) => Ok(Async::NotReady),
                     Err(TryLockError::Poisoned(e)) => panic!(e.to_string()),
@@ -327,7 +327,6 @@ fn ingest_json<R: Read + Send>(
                     save_post(post, image_id).then(move |res| {
                         drop(end_counter);
                         *end_pg_in_flight.write().unwrap() -= 1;
-                        dbg!(*end_pg_in_flight.read().unwrap());
 
                         res
                     })

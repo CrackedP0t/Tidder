@@ -166,7 +166,6 @@ fn ingest_json<R: Read + Send>(
                 future::poll_fn(move || match pg_in_flight.try_read() {
                     Ok(guard) => {
                         // if *guard < PG_IN_FLIGHT_LIMIT {
-                        dbg!(*guard);
                         drop(guard);
                         *pg_in_flight.write().unwrap() += 1;
                         Ok(Async::Ready(()))
@@ -328,6 +327,8 @@ fn ingest_json<R: Read + Send>(
                     save_post(post, image_id).then(move |res| {
                         drop(end_counter);
                         *end_pg_in_flight.write().unwrap() -= 1;
+                        dbg!(*end_pg_in_flight.read().unwrap());
+
                         res
                     })
                 })

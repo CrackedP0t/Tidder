@@ -170,6 +170,7 @@ fn ingest_json<R: Read + Send>(
                             *pg_in_flight.write().unwrap() += 1;
                             Ok(Async::Ready(()))
                         } else {
+                            println!("Too many connections");
                             Ok(Async::NotReady)
                         }
                     }

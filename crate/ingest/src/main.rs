@@ -123,7 +123,7 @@ fn ingest_json<R: Read + Send>(
 
     let in_flight = Arc::new(RwLock::new(HashMap::<String, u32>::new()));
 
-    let pg_in_flight = Arc::new(RwLock::new(0u32));
+    // let pg_in_flight = Arc::new(RwLock::new(0u32));
 
     let counter = Arc::new(());
 
@@ -157,194 +157,192 @@ fn ingest_json<R: Read + Send>(
             let in_flight = in_flight.clone();
             let end_in_flight = in_flight.clone();
 
-            let pg_in_flight = pg_in_flight.clone();
-            let end_pg_in_flight = pg_in_flight.clone();
+            // let pg_in_flight = pg_in_flight.clone();
+            // let end_pg_in_flight = pg_in_flight.clone();
 
             let end_counter = counter.clone();
 
             tokio::spawn(
-                future::poll_fn(move || match pg_in_flight.try_read() {
-                    Ok(guard) => {
-                        if *guard < PG_IN_FLIGHT_LIMIT {
-                            drop(guard);
-                            *pg_in_flight.write().unwrap() += 1;
-                            Ok(Async::Ready(()))
-                        } else {
-                            Ok(Async::NotReady)
-                        }
-                    }
-                    Err(TryLockError::WouldBlock) => Ok(Async::NotReady),
-                    Err(TryLockError::Poisoned(e)) => panic!(e.to_string()),
-                })
-                .and_then(move |_| {
-                    future::lazy(move || {
-                        let title = lazy_title;
-                        let blacklist = lazy_blacklist;
-                        post.url = post
-                            .url
-                            .replace("&amp;", "&")
-                            .replace("&lt;", "<")
-                            .replace("&gt;", ">");
+                // future::poll_fn(move || match pg_in_flight.try_read() {
+                //     Ok(guard) => {
+                //         if *guard < PG_IN_FLIGHT_LIMIT {
+                //             drop(guard);
+                //             *pg_in_flight.write().unwrap() += 1;
+                //             Ok(Async::Ready(()))
+                //         } else {
+                //             Ok(Async::NotReady)
+                //         }
+                //     }
+                //     Err(TryLockError::WouldBlock) => Ok(Async::NotReady),
+                //     Err(TryLockError::Poisoned(e)) => panic!(e.to_string()),
+                // })
+                // .and_then(move |_| {
+                future::lazy(move || {
+                    let title = lazy_title;
+                    let blacklist = lazy_blacklist;
+                    post.url = post
+                        .url
+                        .replace("&amp;", "&")
+                        .replace("&lt;", "<")
+                        .replace("&gt;", ">");
 
-                        let post_url = match Url::parse(&post.url) {
-                            Ok(url) => url,
-                            Err(e) => {
-                                warn!("{}: {}: {} is invalid: {}", title, post.id, post.url, e);
-                                return err(post);
-                            }
-                        };
-
-                        if post_url
-                            .domain()
-                            .map(|domain| blacklist.read().unwrap().contains(domain))
-                            .unwrap_or(false)
-                        {
-                            if verbose {
-                                warn!("{}: {}: {} is blacklisted", title, post.id, post.url);
-                            }
+                    let post_url = match Url::parse(&post.url) {
+                        Ok(url) => url,
+                        Err(e) => {
+                            warn!("{}: {}: {} is invalid: {}", title, post.id, post.url, e);
                             return err(post);
                         }
+                    };
 
-                        ok((post_url, post))
+                    if post_url
+                        .domain()
+                        .map(|domain| blacklist.read().unwrap().contains(domain))
+                        .unwrap_or(false)
+                    {
+                        if verbose {
+                            warn!("{}: {}: {} is blacklisted", title, post.id, post.url);
+                        }
+                        return err(post);
+                    }
+
+                    ok((post_url, post))
+                })
+                .and_then(move |(post_url, post)| {
+                    future::poll_fn(move || {
+                        let tld = get_tld(&post_url);
+                        match in_flight.try_read() {
+                            Ok(guard) => {
+                                if guard
+                                    .get::<str>(&tld)
+                                    .map(|in_flight| *in_flight < IN_FLIGHT_LIMIT)
+                                    .unwrap_or(true)
+                                {
+                                    drop(guard);
+                                    *(*in_flight.write().unwrap())
+                                        .entry(tld.to_owned())
+                                        .or_insert(0) += 1;
+                                    Ok(Async::Ready(tld.to_owned()))
+                                } else {
+                                    Ok(Async::NotReady)
+                                }
+                            }
+                            Err(TryLockError::WouldBlock) => Ok(Async::NotReady),
+                            Err(TryLockError::Poisoned(e)) => panic!(e.to_string()),
+                        }
                     })
-                    .and_then(move |(post_url, post)| {
-                        future::poll_fn(move || {
-                            let tld = get_tld(&post_url);
-                            match in_flight.try_read() {
-                                Ok(guard) => {
-                                    if guard
-                                        .get::<str>(&tld)
-                                        .map(|in_flight| *in_flight < IN_FLIGHT_LIMIT)
-                                        .unwrap_or(true)
-                                    {
-                                        drop(guard);
-                                        *(*in_flight.write().unwrap())
-                                            .entry(tld.to_owned())
-                                            .or_insert(0) += 1;
-                                        Ok(Async::Ready(tld.to_owned()))
+                    .map(|tld| (tld, post))
+                    .and_then(move |(tld, post)| {
+                        let e_title = title.clone();
+
+                        save_hash(post.url.clone(), HashDest::Images)
+                            .then(move |res| {
+                                *end_in_flight.write().unwrap().get_mut(&tld).unwrap() -= 1;
+                                match res {
+                                    Ok(o) => Ok((post, o)),
+                                    Err(e) => Err((post, e)),
+                                }
+                            })
+                            .map(move |(post, (_hash, _hash_dest, image_id, exists))| {
+                                if verbose {
+                                    if exists {
+                                        info!(
+                                            "{}: {}: {} already exists",
+                                            title, post.id, post.url
+                                        );
                                     } else {
-                                        Ok(Async::NotReady)
+                                        info!(
+                                            "{}: {}: {} successfully hashed",
+                                            title, post.id, post.url
+                                        );
                                     }
                                 }
-                                Err(TryLockError::WouldBlock) => Ok(Async::NotReady),
-                                Err(TryLockError::Poisoned(e)) => panic!(e.to_string()),
-                            }
-                        })
-                        .map(|tld| (tld, post))
-                        .and_then(move |(tld, post)| {
-                            let e_title = title.clone();
 
-                            save_hash(post.url.clone(), HashDest::Images)
-                                .then(move |res| {
-                                    *end_in_flight.write().unwrap().get_mut(&tld).unwrap() -= 1;
-                                    match res {
-                                        Ok(o) => Ok((post, o)),
-                                        Err(e) => Err((post, e)),
+                                (post, image_id)
+                            })
+                            .map_err(move |(post, ue)| {
+                                match ue.source {
+                                    Source::Internal => {
+                                        error!(
+                                            "{}: {}: {}: {}{}{}{}",
+                                            e_title,
+                                            post.id,
+                                            post.url,
+                                            ue.file.unwrap_or(""),
+                                            ue.line
+                                                .map(|line| Cow::Owned(format!("#{}", line)))
+                                                .unwrap_or(Cow::Borrowed("")),
+                                            if ue.file.is_some() || ue.line.is_some() {
+                                                ": "
+                                            } else {
+                                                ""
+                                            },
+                                            ue.error
+                                        );
+                                        std::process::exit(1);
                                     }
-                                })
-                                .map(move |(post, (_hash, _hash_dest, image_id, exists))| {
-                                    if verbose {
-                                        if exists {
-                                            info!(
-                                                "{}: {}: {} already exists",
-                                                title, post.id, post.url
-                                            );
-                                        } else {
-                                            info!(
-                                                "{}: {}: {} successfully hashed",
-                                                title, post.id, post.url
-                                            );
-                                        }
-                                    }
-
-                                    (post, image_id)
-                                })
-                                .map_err(move |(post, ue)| {
-                                    match ue.source {
-                                        Source::Internal => {
-                                            error!(
-                                                "{}: {}: {}: {}{}{}{}",
-                                                e_title,
-                                                post.id,
-                                                post.url,
-                                                ue.file.unwrap_or(""),
-                                                ue.line
-                                                    .map(|line| Cow::Owned(format!("#{}", line)))
-                                                    .unwrap_or(Cow::Borrowed("")),
-                                                if ue.file.is_some() || ue.line.is_some() {
-                                                    ": "
-                                                } else {
-                                                    ""
-                                                },
-                                                ue.error
-                                            );
-                                            std::process::exit(1);
-                                        }
-                                        _ => {
-                                            warn!(
-                                                "{}: {}: {} failed: {}",
-                                                e_title, post.id, post.url, ue.error
-                                            );
-                                            if let Some(e) =
-                                                ue.error.downcast_ref::<reqwest::Error>()
+                                    _ => {
+                                        warn!(
+                                            "{}: {}: {} failed: {}",
+                                            e_title, post.id, post.url, ue.error
+                                        );
+                                        if let Some(e) = ue.error.downcast_ref::<reqwest::Error>() {
+                                            if e.is_timeout()
+                                                || e.get_ref()
+                                                    .and_then(|e| e.downcast_ref::<hyper::Error>())
+                                                    .map(hyper::Error::is_connect)
+                                                    .unwrap_or(false)
                                             {
-                                                if e.is_timeout()
-                                                    || e.get_ref()
-                                                        .and_then(|e| {
-                                                            e.downcast_ref::<hyper::Error>()
-                                                        })
-                                                        .map(hyper::Error::is_connect)
-                                                        .unwrap_or(false)
-                                                {
-                                                    if is_link_special(&post.url) {
-                                                        error!(
-                                                            "{}: {}: {}: Special link timed out",
-                                                            e_title, post.id, post.url
-                                                        );
-                                                        std::process::exit(1);
-                                                    }
-                                                    if let Ok(url) = Url::parse(&post.url) {
-                                                        if let Some(domain) = url.domain() {
-                                                            blacklist.write().unwrap().insert(
-                                                                Cow::Owned(domain.to_string()),
-                                                            );
-                                                        }
+                                                if is_link_special(&post.url) {
+                                                    error!(
+                                                        "{}: {}: {}: Special link timed out",
+                                                        e_title, post.id, post.url
+                                                    );
+                                                    std::process::exit(1);
+                                                }
+                                                if let Ok(url) = Url::parse(&post.url) {
+                                                    if let Some(domain) = url.domain() {
+                                                        blacklist
+                                                            .write()
+                                                            .unwrap()
+                                                            .insert(Cow::Owned(domain.to_string()));
                                                     }
                                                 }
                                             }
                                         }
-                                    };
+                                    }
+                                };
 
-                                    post
-                                })
-                        })
+                                post
+                            })
                     })
-                    .then(move |res| {
-
-                        let (post, image_id) = res
-                            .map(|tup| (tup.0, Some(tup.1)))
-                            .unwrap_or_else(|post| (post, None));
-                        save_post(post, image_id).then(move |res| {
-                            drop(end_counter);
-                            *end_pg_in_flight.write().unwrap() -= 1;
-                            res
-                        })
+                })
+                .then(move |res| {
+                    let (post, image_id) = res
+                        .map(|tup| (tup.0, Some(tup.1)))
+                        .unwrap_or_else(|post| (post, None));
+                    save_post(post, image_id).then(move |res| {
+                        drop(end_counter);
+                        // *end_pg_in_flight.write().unwrap() -= 1;
+                        res
                     })
-                    .map(|_| ())
-                    .map_err(|e| {
-                        error!("Saving post failed: {}", e);
-                        std::process::exit(1);
-                    })
+                })
+                .map(|_| ())
+                .map_err(|e| {
+                    error!("Saving post failed: {}", e);
+                    std::process::exit(1);
                 }),
             );
         });
 
-    future::poll_fn(move || if Arc::strong_count(&counter) == 1 {
-        Ok(Async::Ready(()))
-    } else {
-        Ok(Async::NotReady)
+    future::poll_fn(move || {
+        let count = Arc::strong_count(&counter);
+        println!("Count = {}", count);
+        if count == 1 {
+            Ok(Async::Ready(()))
+        } else {
+            Ok(Async::NotReady)
+        }
     })
-
 }
 
 fn main() {

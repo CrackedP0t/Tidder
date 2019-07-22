@@ -1,7 +1,8 @@
 use cache_control::CacheControl;
 use chrono::{DateTime, NaiveDateTime};
-use futures::future::{err, Either, Future};
+use futures::future::{err, poll_fn, Either, Future};
 use futures::stream::Stream;
+use futures::Async;
 use image::{imageops, load_from_memory, DynamicImage};
 use lazy_static::lazy_static;
 use log::LevelFilter;
@@ -15,6 +16,7 @@ use serde::Deserialize;
 use std::borrow::Cow;
 use std::fmt::{self, Display};
 use std::string::ToString;
+use std::sync::{RwLock, TryLockError};
 use tokio_postgres::{to_sql_checked, types, NoTls};
 use url::{
     percent_encoding::{percent_decode, utf8_percent_encode, QUERY_ENCODE_SET},
@@ -289,18 +291,44 @@ pub struct PushShiftSearch {
     pub hits: Hits,
 }
 
-pub fn connect_postgres() -> impl Future<Item = tokio_postgres::Client, Error = UserError> {
-    tokio_postgres::connect(&SECRETS.postgres.connect, NoTls)
-        .map(|(client, connection)| {
-            let connection = connection.map_err(|e| {
-                error!("connection error: {}", e);
-                std::process::exit(1);
-            });
-            tokio::spawn(connection);
+const PG_IN_FLIGHT_LIMIT: u32 = 480;
 
-            client
-        })
-        .map_err(map_ue!())
+pub fn connect_postgres() -> impl Future<Item = tokio_postgres::Client, Error = UserError> {
+    lazy_static! {
+        static ref CONN_COUNT: RwLock<u32> = RwLock::new(0);
+    }
+
+    poll_fn(|| match CONN_COUNT.try_read() {
+        Ok(guard) => {
+            if *guard < PG_IN_FLIGHT_LIMIT {
+                drop(guard);
+                *CONN_COUNT.write().unwrap() += 1;
+                Ok(Async::Ready(()))
+            } else {
+                Ok(Async::NotReady)
+            }
+        }
+        Err(TryLockError::WouldBlock) => Ok(Async::NotReady),
+        Err(TryLockError::Poisoned(e)) => panic!("{}", e),
+    })
+    .and_then(|_| {
+        tokio_postgres::connect(&SECRETS.postgres.connect, NoTls)
+            .map(|(client, connection)| {
+                let connection = connection
+                    .then(|res| {
+                        *CONN_COUNT.write().unwrap() -= 1;
+                        res
+                    })
+                    .map_err(|e| {
+                        error!("connection error: {}", e);
+                        std::process::exit(1);
+                    });
+                tokio::spawn(connection);
+
+                client
+            })
+            .map_err(map_ue!())
+    })
 }
 
 pub fn save_post(

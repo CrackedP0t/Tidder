@@ -125,6 +125,8 @@ fn ingest_json<R: Read + Send>(
 
     let pg_in_flight = Arc::new(RwLock::new(0u32));
 
+    let counter = Arc::new(());
+
     check_json
         .filter_map(|post| {
             let post = to_submission(post).map_err(le!()).ok()??;
@@ -157,6 +159,8 @@ fn ingest_json<R: Read + Send>(
 
             let pg_in_flight = pg_in_flight.clone();
             let end_pg_in_flight = pg_in_flight.clone();
+
+            let end_counter = counter.clone();
 
             tokio::spawn(
                 future::poll_fn(move || match pg_in_flight.try_read() {
@@ -316,10 +320,12 @@ fn ingest_json<R: Read + Send>(
                         })
                     })
                     .then(move |res| {
+
                         let (post, image_id) = res
                             .map(|tup| (tup.0, Some(tup.1)))
                             .unwrap_or_else(|post| (post, None));
                         save_post(post, image_id).then(move |res| {
+                            drop(end_counter);
                             *end_pg_in_flight.write().unwrap() -= 1;
                             res
                         })
@@ -332,7 +338,13 @@ fn ingest_json<R: Read + Send>(
                 }),
             );
         });
-    ok(())
+
+    future::poll_fn(move || if Arc::strong_count(&counter) == 1 {
+        Ok(Async::Ready(()))
+    } else {
+        Ok(Async::NotReady)
+    })
+
 }
 
 fn main() {

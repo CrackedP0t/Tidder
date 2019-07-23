@@ -146,7 +146,7 @@ fn follow_imgur(mut url: Url) -> impl Future<Item = String, Error = UserError> +
         Either::B(ok(url.into_string()))
     } else if path_start == "a" || path_start == "gallery" {
         let api_link = format!(
-            "https://imgur-apiv3.p.mashape.com/3/album/{}/images",
+            "https://imgur-apiv3.p.rapidapi.com/3/album/{}/images",
             my_url.path_segments().unwrap().next_back().unwrap()
         );
         Either::A(
@@ -156,13 +156,29 @@ fn follow_imgur(mut url: Url) -> impl Future<Item = String, Error = UserError> +
                     header::AUTHORIZATION,
                     format!("Client-ID {}", SECRETS.imgur.client_id),
                 )
-                .header("X-Mashape-Key", SECRETS.imgur.rapidapi_key.as_str())
+                .header("X-RapidAPI-Key", SECRETS.imgur.rapidapi_key.as_str())
                 .send()
                 .map_err(map_ue!("couldn't reach Imgur API"))
                 .and_then(|resp| resp.error_for_status().map_err(error_for_status_ue))
                 .and_then(|mut resp| {
-                    resp.json::<serde_json::Value>()
-                        .map_err(map_ue!("Imgur API returned invalid JSON"))
+                    if fut_try!(resp
+                        .headers()
+                        .get("x-ratelimit-requests-remaining")
+                        .ok_or(ue!(
+                            "header `x-ratelimit-requests-remaining` not sent",
+                            Source::Internal
+                        ))
+                        .and_then(|hv| hv.to_str().map_err(map_ue!()))
+                        .and_then(|s| s.parse::<i64>().map_err(map_ue!())))
+                        < 10
+                    {
+                        Either::B(err(ue!("out of Imgur API requests", Source::Internal)))
+                    } else {
+                        Either::A(
+                            resp.json::<serde_json::Value>()
+                                .map_err(map_ue!("Imgur API returned invalid JSON")),
+                        )
+                    }
                 })
                 .and_then(|json| {
                     Ok(IMGUR_GIFV_RE

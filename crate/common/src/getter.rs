@@ -144,7 +144,7 @@ fn follow_imgur(mut url: Url) -> impl Future<Item = String, Error = UserError> +
             .to_string()))
     } else if IMGUR_EXT_RE.is_match(path) || path_start == "download" {
         Either::B(ok(url.into_string()))
-    } else if path_start == "a" || path_start == "gallery" {
+    } else if path_start == "a" || path_start == "gallery" || path_start == "r" {
         Either::A(
             REQW_CLIENT
                 .get(&link)

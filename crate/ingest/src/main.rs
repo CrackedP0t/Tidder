@@ -16,18 +16,15 @@ use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::iter::Iterator;
 use std::path::Path;
 use std::sync::{Arc, RwLock, TryLockError};
+use std::time::{Duration, Instant};
 use tokio::prelude::*;
 use url::Url;
 
-use future::{err, ok};
-
-// lazy_static! {
-// static ref IN_FLIGHT_LIMITS: HashMap<&'static str, u32> =
-//     HashMap::from_iter([("imgur.com", 1)].iter().copied());
-// }
+use future::{err, ok, poll_fn};
 
 const PERMA_BLACKLIST: [&str; 0] = [];
 const IN_FLIGHT_LIMIT: u32 = 1;
+const WAIT_TIME: Duration = Duration::from_millis(50);
 
 struct Check<I> {
     iter: I,
@@ -64,10 +61,6 @@ fn get_tld(url: &Url) -> &str {
         .map(|m| m.as_str())
         .unwrap_or_else(|| url.host_str().unwrap())
 }
-
-// fn get_in_flight_limit(url: &Url) -> u32 {
-//     IN_FLIGHT_LIMITS.get(get_tld(url)).copied().unwrap_or(1)
-// }
 
 fn ingest_json<R: Read + Send>(
     title: &str,
@@ -128,7 +121,8 @@ fn ingest_json<R: Read + Send>(
         .filter_map(|post| {
             let post = to_submission(post).map_err(le!()).ok()??;
             if !post.is_self
-                && (EXT_RE.is_match(&post.url) || is_link_special(&post.url))
+                && ((EXT_RE.is_match(&post.url) && URL_RE.is_match(&post.url))
+                    || is_link_special(&post.url))
                 && match already_have {
                     None => true,
                     Some(ref mut set) => {
@@ -188,7 +182,7 @@ fn ingest_json<R: Read + Send>(
                     ok((post_url, post))
                 })
                 .and_then(move |(post_url, post)| {
-                    future::poll_fn(move || {
+                    poll_fn(move || {
                         let tld = get_tld(&post_url);
                         match in_flight.try_read() {
                             Ok(guard) => {
@@ -212,6 +206,10 @@ fn ingest_json<R: Read + Send>(
                     })
                     .map(|tld| (tld, post))
                     .and_then(move |(tld, post)| {
+                        if tld == "imgur.com" {
+                            std::thread::sleep(WAIT_TIME);
+                        }
+
                         let e_title = title.clone();
 
                         save_hash(post.url.clone(), HashDest::Images)

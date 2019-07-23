@@ -54,6 +54,8 @@ macro_rules! fut_try {
 lazy_static! {
     pub static ref EXT_RE: Regex =
         Regex::new(r"(?i)\W(?:png|jpe?g|gif|webp|p[bgpn]m|tiff?|bmp|ico|hdr)\b").unwrap();
+    pub static ref URL_RE: Regex =
+        Regex::new(r"^(?i)https?://(?:[a-z0-9.-]+|\[[0-9a-f:]+\])(?:$|[:/?#])").unwrap();
 }
 
 // Log Error, returning empty

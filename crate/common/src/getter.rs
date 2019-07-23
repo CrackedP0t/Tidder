@@ -284,7 +284,7 @@ pub fn get_tld(url: &Url) -> &str {
         .unwrap_or_else(|| url.host_str().unwrap())
 }
 
-const WAIT_TIME: Duration = Duration::from_millis(50);
+const WAIT_TIME: Duration = Duration::from_millis(150);
 
 pub fn get_hash(
     link: String,

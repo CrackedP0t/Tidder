@@ -169,20 +169,19 @@ fn ingest_json<R: Read + Send>(
                 })
                 .and_then(move |(post_url, post)| {
                     poll_fn(move || {
-                        // let tld = get_tld(&post_url);
-                        let host = post_url.host_str().unwrap();
+                        let tld = get_tld(&post_url);
                         match in_flight.try_read() {
                             Ok(guard) => {
                                 if guard
-                                    .get::<str>(&host)
+                                    .get::<str>(&tld)
                                     .map(|in_flight| *in_flight < IN_FLIGHT_LIMIT)
                                     .unwrap_or(true)
                                 {
                                     drop(guard);
                                     *(*in_flight.write().unwrap())
-                                        .entry(host.to_owned())
+                                        .entry(tld.to_owned())
                                         .or_insert(0) += 1;
-                                    Ok(Async::Ready(host.to_owned()))
+                                    Ok(Async::Ready(tld.to_owned()))
                                 } else {
                                     Ok(Async::NotReady)
                                 }
@@ -191,13 +190,13 @@ fn ingest_json<R: Read + Send>(
                             Err(TryLockError::Poisoned(e)) => panic!(e.to_string()),
                         }
                     })
-                    .map(|host| (host, post))
-                    .and_then(move |(host, post)| {
+                    .map(|tld| (tld, post))
+                    .and_then(move |(tld, post)| {
                         let e_title = title.clone();
 
                         save_hash(post.url.clone(), HashDest::Images)
                             .then(move |res| {
-                                *end_in_flight.write().unwrap().get_mut(&host).unwrap() -= 1;
+                                *end_in_flight.write().unwrap().get_mut(&tld).unwrap() -= 1;
                                 match res {
                                     Ok(o) => Ok((post, o)),
                                     Err(e) => Err((post, e)),

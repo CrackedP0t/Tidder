@@ -13,13 +13,13 @@ lazy_static! {
 pub fn new_domain_re(domain: &str) -> Result<Regex, regex::Error> {
     Regex::new(&format!(
         r"(?i)^https?://(?:[a-z0-9-.]+\.)?{}(?:[/?#:]|$)",
-        domain
+        domain.replace(".", r"\.")
     ))
 }
 
 pub fn is_link_imgur(link: &str) -> bool {
     lazy_static! {
-        static ref IMGUR_LINK_RE: Regex = new_domain_re("imgur\.com").unwrap();
+        static ref IMGUR_LINK_RE: Regex = new_domain_re("imgur.com").unwrap();
     }
 
     IMGUR_LINK_RE.is_match(link)
@@ -27,7 +27,7 @@ pub fn is_link_imgur(link: &str) -> bool {
 
 pub fn is_link_gfycat(link: &str) -> bool {
     lazy_static! {
-        static ref GFYCAT_LINK_RE: Regex = new_domain_re("gfycat\.com").unwrap();
+        static ref GFYCAT_LINK_RE: Regex = new_domain_re("gfycat.com").unwrap();
     }
 
     GFYCAT_LINK_RE.is_match(link)

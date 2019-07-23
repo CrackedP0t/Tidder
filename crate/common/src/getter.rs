@@ -1,6 +1,6 @@
 use super::*;
 
-use future::{err, ok, result, Either};
+use future::{err, ok, Either};
 use tokio::prelude::*;
 
 lazy_static! {
@@ -105,8 +105,7 @@ fn follow_gfycat(url: Url) -> impl Future<Item = String, Error = UserError> + Se
 
 fn follow_imgur(mut url: Url) -> impl Future<Item = String, Error = UserError> + Send {
     lazy_static! {
-        static ref IMGUR_SEL: Selector = Selector::parse("meta[property='og:image']").unwrap();
-        static ref IMGUR_GIFV_RE: Regex = Regex::new(r"(?i)([^.]+)\.(?:gifv|webm|mp4)$").unwrap();
+        static ref IMGUR_GIFV_RE: Regex = Regex::new(r"\.(?:gifv|webm|mp4)($|[?#])").unwrap();
         static ref IMGUR_EMPTY_RE: Regex = Regex::new(r"^/\.[[:alnum:]]+\b").unwrap();
         static ref IMGUR_EXT_RE: Regex =
             Regex::new(r"(?i)[[:alnum:]]\.(?:jpg|png)[[:alnum:]]+").unwrap();
@@ -123,12 +122,13 @@ fn follow_imgur(mut url: Url) -> impl Future<Item = String, Error = UserError> +
             .map_err(map_ue!("couldn't set new host")));
     }
 
+    let host = url.host_str().unwrap();
+
     if EXT_RE.is_match(url.as_str()) {
         return Either::B(ok(url.into_string()));
     }
 
     let path = url.path();
-    let link = url.to_string();
 
     let my_url = url.clone();
 
@@ -138,58 +138,41 @@ fn follow_imgur(mut url: Url) -> impl Future<Item = String, Error = UserError> +
         .ok_or(ue!("base Imgur URL", Source::User)))
     .to_owned();
 
-    if IMGUR_GIFV_RE.is_match(path) {
+    if host == "i.imgur.com" && IMGUR_GIFV_RE.is_match(path) {
         Either::B(ok(IMGUR_GIFV_RE
-            .replace(path, "https://i.imgur.com/$1.gif")
+            .replace(url.as_str(), ".gif$1")
             .to_string()))
     } else if IMGUR_EXT_RE.is_match(path) || path_start == "download" {
         Either::B(ok(url.into_string()))
-    } else if path_start == "a" || path_start == "gallery" || path_start == "r" {
-        std::thread::sleep(WAIT_TIME);
+    } else if path_start == "a" || path_start == "gallery" {
+        let api_link = format!(
+            "https://imgur-apiv3.p.mashape.com/3/album/{}/images",
+            my_url.path_segments().unwrap().next_back().unwrap()
+        );
         Either::A(
             REQW_CLIENT
-                .get(&link)
+                .get(&api_link)
+                .header(
+                    header::AUTHORIZATION,
+                    format!("Client-ID {}", SECRETS.imgur.client_id),
+                )
+                .header("X-Mashape-Key", SECRETS.imgur.rapidapi_key.as_str())
                 .send()
-                .map_err(map_ue!("couldn't reach Imgur"))
-                .and_then(move |resp| {
-                    if resp.status() == StatusCode::NOT_FOUND && path_start == "gallery" {
-                        Either::A(
-                            REQW_CLIENT
-                                .get(&link.replace("/gallery/", "/a/"))
-                                .send()
-                                .map_err(map_ue!("couldn't reach Imgur"))
-                                .and_then(|resp| {
-                                    resp.error_for_status().map_err(error_for_status_ue)
-                                }),
+                .map_err(map_ue!("couldn't reach Imgur API"))
+                .and_then(|resp| resp.error_for_status().map_err(error_for_status_ue))
+                .and_then(|mut resp| {
+                    resp.json::<serde_json::Value>()
+                        .map_err(map_ue!("Imgur API returned invalid JSON"))
+                })
+                .and_then(|json| {
+                    Ok(IMGUR_GIFV_RE
+                        .replace(
+                            json["data"][0]["link"]
+                                .as_str()
+                                .ok_or(ue!("Imgur API returned unexpectedly-structured JSON"))?,
+                            ".gif$1",
                         )
-                    } else {
-                        Either::B(result(resp.error_for_status().map_err(error_for_status_ue)))
-                    }
-                })
-                .and_then(|resp| {
-                    resp.into_body()
-                        .concat2()
-                        .map_err(map_ue!("couldn't retrieve Imgur page"))
-                })
-                .and_then(|chunk| {
-                    let doc_str = std::str::from_utf8(chunk.as_ref())
-                        .map_err(map_ue!("invalid UTF-8 in Imgur page"))?;
-                    let doc = Html::parse_document(&doc_str);
-
-                    let og_image = doc
-                        .select(&IMGUR_SEL)
-                        .next()
-                        .and_then(|el| el.value().attr("content"))
-                        .ok_or_else(|| ue!("couldn't extract image from Imgur album"))?;
-
-                    let mut image_url =
-                        Url::parse(og_image).map_err(map_ue!("invalid image URL from Imgur"))?;
-                    image_url.set_query(None); // Maybe take advantage of Imgur's downscaling?
-                    if IMGUR_EMPTY_RE.is_match(image_url.path()) {
-                        return Err(ue!("empty Imgur album"));
-                    }
-
-                    Ok(image_url.into_string())
+                        .to_string())
                 }),
         )
     } else {
@@ -247,7 +230,7 @@ fn follow_wikipedia(url: Url) -> impl Future<Item = String, Error = UserError> +
         REQW_CLIENT
             .get(api_url)
             .send()
-            .map_err(map_ue!("couldn't query Wikipedia API"))
+            .map_err(map_ue!("couldn't reach Wikipedia API"))
             .and_then(|mut resp| {
                 resp.json::<APIQuery>()
                     .map_err(map_ue!("Wikipedia API returned problematic JSON"))
@@ -285,8 +268,6 @@ pub fn get_tld(url: &Url) -> &str {
         .unwrap_or_else(|| url.host_str().unwrap())
 }
 
-const WAIT_TIME: Duration = Duration::from_millis(500);
-
 pub fn get_hash(
     link: String,
 ) -> impl Future<Item = (Hash, String, GetKind), Error = UserError> + Send {
@@ -310,9 +291,6 @@ pub fn get_hash(
             if let Some((hash, hash_dest, id)) = found {
                 return Either::B(ok((hash, link, GetKind::Cache(hash_dest, id))));
             }
-
-            let url = fut_try!(Url::parse(&link).map_err(map_ue!("followed to an invalid URL")));
-            let host = fut_try!(url.host_str().ok_or(ue!("URL has no host")));
 
             Either::A(
                 REQW_CLIENT
@@ -350,11 +328,10 @@ pub fn get_hash(
                                 .map(|host| host == "i.imgur.com")
                                 .unwrap_or(false)
                             {
+                                let new_ext = ct.split('/').nth(1).unwrap();
+                                let new_ext = if new_ext == "jpeg" { "jpg" } else { new_ext };
                                 link = EXT_REPLACE_RE
-                                    .replace(
-                                        &link,
-                                        format!("$1.{}", ct.split('/').nth(1).unwrap()).as_str(),
-                                    )
+                                    .replace(&link, format!("$1.{}", new_ext).as_str())
                                     .to_owned()
                                     .to_string();
                             }

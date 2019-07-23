@@ -9,16 +9,11 @@ use lazy_static::lazy_static;
 use log::LevelFilter;
 pub use log::{error, info, warn};
 use regex::Regex;
-use reqwest::{
-    header::{self, HeaderMap},
-    StatusCode,
-};
-use scraper::{Html, Selector};
+use reqwest::header::{self, HeaderMap};
 use serde::Deserialize;
 use std::borrow::Cow;
 use std::fmt::{self, Display};
 use std::string::ToString;
-use std::time::Duration;
 use tokio_postgres::{to_sql_checked, types};
 use url::{
     percent_encoding::{percent_decode, utf8_percent_encode, QUERY_ENCODE_SET},
@@ -543,6 +538,7 @@ pub mod secrets {
     pub struct Imgur {
         pub client_id: String,
         pub client_secret: String,
+        pub rapidapi_key: String,
     }
     #[derive(Debug, Deserialize)]
     pub struct Postgres {

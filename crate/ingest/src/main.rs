@@ -413,7 +413,7 @@ fn main() {
                 input_future.map_err(|e| panic!(e)).and_then(move |input| {
                     info!("Processing posts we already have");
 
-                    connect_postgres()
+                    PG_POOL.take()
                         .map_err(Error::from)
                         .and_then(move |mut client| {
                             client

@@ -284,7 +284,7 @@ pub fn get_tld(url: &Url) -> &str {
         .unwrap_or_else(|| url.host_str().unwrap())
 }
 
-const WAIT_TIME: Duration = Duration::from_millis(150);
+const WAIT_TIME: Duration = Duration::from_millis(500);
 
 pub fn get_hash(
     link: String,
@@ -391,7 +391,7 @@ fn poss_move_row(
     if hash_dest == found_hash_dest || hash_dest == HashDest::ImageCache {
         Either::B(ok((hash, hash_dest, id, true)))
     } else {
-        Either::A(connect_postgres().and_then(move |mut client| {
+        Either::A(PG_POOL.take().and_then(move |mut client| {
             client
                 .build_transaction()
                 .build(
@@ -440,7 +440,7 @@ pub fn save_hash(
                 .get(header::CACHE_CONTROL)
                 .and_then(|hv| hv.to_str().ok())
                 .and_then(|s| cache_control::with_str(s).ok());
-            Either::B(connect_postgres().and_then(move |mut client| {
+            Either::B(PG_POOL.take().and_then(move |mut client| {
                 client.build_transaction().build(
                     client
                         .prepare(

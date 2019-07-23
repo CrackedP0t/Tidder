@@ -1,7 +1,7 @@
 use cache_control::CacheControl;
 use chrono::{DateTime, NaiveDateTime};
 pub use failure::{self, format_err, Error};
-use futures::future::{err, poll_fn, Either, Future};
+use futures::future::{err, Either, Future};
 use futures::stream::Stream;
 use futures::Async;
 use image::{imageops, load_from_memory, DynamicImage};
@@ -18,9 +18,8 @@ use serde::Deserialize;
 use std::borrow::Cow;
 use std::fmt::{self, Display};
 use std::string::ToString;
-use std::sync::{RwLock, TryLockError};
 use std::time::Duration;
-use tokio_postgres::{to_sql_checked, types, NoTls};
+use tokio_postgres::{to_sql_checked, types};
 use url::{
     percent_encoding::{percent_decode, utf8_percent_encode, QUERY_ENCODE_SET},
     Url,
@@ -28,6 +27,9 @@ use url::{
 
 mod getter;
 pub use getter::*;
+
+mod pool;
+pub use pool::*;
 
 #[macro_export]
 macro_rules! fut_try {
@@ -56,6 +58,7 @@ lazy_static! {
         Regex::new(r"(?i)\W(?:png|jpe?g|gif|webp|p[bgpn]m|tiff?|bmp|ico|hdr)\b").unwrap();
     pub static ref URL_RE: Regex =
         Regex::new(r"^(?i)https?://(?:[a-z0-9.-]+|\[[0-9a-f:]+\])(?:$|[:/?#])").unwrap();
+    pub static ref PG_POOL: PgPool = PgPool::new(&SECRETS.postgres.connect);
 }
 
 // Log Error, returning empty
@@ -293,46 +296,6 @@ pub struct PushShiftSearch {
     pub hits: Hits,
 }
 
-const PG_IN_FLIGHT_LIMIT: u32 = 480;
-
-pub fn connect_postgres() -> impl Future<Item = tokio_postgres::Client, Error = UserError> {
-    lazy_static! {
-        static ref CONN_COUNT: RwLock<u32> = RwLock::new(0);
-    }
-
-    poll_fn(|| match CONN_COUNT.try_read() {
-        Ok(guard) => {
-            if *guard < PG_IN_FLIGHT_LIMIT {
-                drop(guard);
-                *CONN_COUNT.write().unwrap() += 1;
-                Ok(Async::Ready(()))
-            } else {
-                Ok(Async::NotReady)
-            }
-        }
-        Err(TryLockError::WouldBlock) => Ok(Async::NotReady),
-        Err(TryLockError::Poisoned(e)) => panic!("{}", e),
-    })
-    .and_then(|_| {
-        tokio_postgres::connect(&SECRETS.postgres.connect, NoTls)
-            .map(|(client, connection)| {
-                let connection = connection
-                    .then(|res| {
-                        *CONN_COUNT.write().unwrap() -= 1;
-                        res
-                    })
-                    .map_err(|e| {
-                        error!("connection error: {}", e);
-                        std::process::exit(1);
-                    });
-                tokio::spawn(connection);
-
-                client
-            })
-            .map_err(map_ue!())
-    })
-}
-
 pub fn save_post(
     post: Submission,
     image_id: Option<i64>,
@@ -349,7 +312,7 @@ pub fn save_post(
         .as_str(),
     );
 
-    Either::A(connect_postgres().and_then(move |mut client| {
+    Either::A(PG_POOL.take().and_then(move |mut client| {
         client
             .build_transaction()
             .build(
@@ -482,7 +445,7 @@ pub enum GetKind {
 fn get_existing(
     link: String,
 ) -> impl Future<Item = Option<(Hash, HashDest, i64)>, Error = UserError> {
-    connect_postgres().and_then(move |mut client| {
+    PG_POOL.take().and_then(move |mut client| {
         client
             .build_transaction()
             .build(

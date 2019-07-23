@@ -145,6 +145,7 @@ fn follow_imgur(mut url: Url) -> impl Future<Item = String, Error = UserError> +
     } else if IMGUR_EXT_RE.is_match(path) || path_start == "download" {
         Either::B(ok(url.into_string()))
     } else if path_start == "a" || path_start == "gallery" || path_start == "r" {
+        std::thread::sleep(WAIT_TIME);
         Either::A(
             REQW_CLIENT
                 .get(&link)
@@ -312,9 +313,6 @@ pub fn get_hash(
 
             let url = fut_try!(Url::parse(&link).map_err(map_ue!("followed to an invalid URL")));
             let host = fut_try!(url.host_str().ok_or(ue!("URL has no host")));
-            if host == "imgur.com" || host == "www.imgur.com" {
-                std::thread::sleep(WAIT_TIME);
-            }
 
             Either::A(
                 REQW_CLIENT

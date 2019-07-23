@@ -155,6 +155,8 @@ fn follow_imgur(mut url: Url) -> impl Future<Item = String, Error = UserError> +
                 .unwrap();
     }
 
+    std::thread::sleep(Duration::from_millis(100));
+
     let host = fut_try!(url.host_str().ok_or(ue!("No host in Imgur URL")));
 
     if let Some(caps) = HOST_LIMIT_RE.captures(host) {

@@ -191,7 +191,7 @@ fn follow_imgur(mut url: Url) -> impl Future<Item = String, Error = UserError> +
             Box::new(make_imgur_api_request(api_link).and_then(move |json| {
                 Ok(IMGUR_GIFV_RE
                     .replace(
-                        json["data"]["cover"]
+                        json["data"][0]["link"]
                             .as_str()
                             .ok_or(ue!("Imgur API returned unexpectedly-structured JSON"))?,
                         ".gif$1",

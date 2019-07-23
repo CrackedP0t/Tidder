@@ -358,6 +358,8 @@ pub fn get_hash(
         return Either::B(err(ue!("unsupported scheme in URL", Source::User)));
     }
 
+    let is_photobucket = get_tld(&url) == "photobucket.com";
+
     Either::A(follow_link(url).and_then(move |mut link| {
         get_existing(link.clone()).and_then(move |found| {
             if let Some((hash, hash_dest, id)) = found {
@@ -367,7 +369,14 @@ pub fn get_hash(
             Either::A(
                 REQW_CLIENT
                     .get(&link)
-                    .header(header::ACCEPT, IMAGE_MIMES.join(","))
+                    .header(header::ACCEPT, {
+                        if is_photobucket {
+                            &IMAGE_MIMES_NO_WEBP as &[&str]
+                        } else {
+                            &IMAGE_MIMES as &[&str]
+                        }
+                        .join(",")
+                    })
                     .header(
                         header::USER_AGENT,
                         "Mozilla/5.0 (X11; Linux x86_64; rv:66.0) Gecko/20100101 Firefox/66.0",

@@ -406,6 +406,20 @@ pub const IMAGE_MIMES: [&str; 12] = [
     "image/vnd.radiance",
 ];
 
+pub const IMAGE_MIMES_NO_WEBP: [&str; 11] = [
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/gif",
+    "image/x-portable-anymap",
+    "image/tiff",
+    "image/x-targa",
+    "image/x-tga",
+    "image/bmp",
+    "image/vnd.microsoft.icon",
+    "image/vnd.radiance",
+];
+
 pub fn hash_from_memory(image: &[u8]) -> Result<Hash, UserError> {
     Ok(dhash(
         // match format {

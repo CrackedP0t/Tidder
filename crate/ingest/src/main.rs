@@ -3,7 +3,6 @@
 use clap::{clap_app, crate_authors, crate_description, crate_version};
 use common::*;
 use failure::{format_err, Error};
-use lazy_static::lazy_static;
 use log::{error, info, warn};
 use regex::Regex;
 use reqwest::r#async::Client;
@@ -16,7 +15,6 @@ use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::iter::Iterator;
 use std::path::Path;
 use std::sync::{Arc, RwLock, TryLockError};
-use std::time::{Duration, Instant};
 use tokio::prelude::*;
 use url::Url;
 
@@ -24,7 +22,6 @@ use future::{err, ok, poll_fn};
 
 const PERMA_BLACKLIST: [&str; 0] = [];
 const IN_FLIGHT_LIMIT: u32 = 1;
-const WAIT_TIME: Duration = Duration::from_millis(50);
 
 struct Check<I> {
     iter: I,
@@ -49,17 +46,6 @@ where
             None => None,
         }
     }
-}
-
-fn get_tld(url: &Url) -> &str {
-    lazy_static! {
-        static ref TLD_RE: Regex = Regex::new(r"([^.]+\.[^.]+)$").unwrap();
-    }
-
-    url.domain()
-        .and_then(|s| TLD_RE.find(s))
-        .map(|m| m.as_str())
-        .unwrap_or_else(|| url.host_str().unwrap())
 }
 
 fn ingest_json<R: Read + Send>(
@@ -206,10 +192,6 @@ fn ingest_json<R: Read + Send>(
                     })
                     .map(|tld| (tld, post))
                     .and_then(move |(tld, post)| {
-                        if tld == "imgur.com" {
-                            std::thread::sleep(WAIT_TIME);
-                        }
-
                         let e_title = title.clone();
 
                         save_hash(post.url.clone(), HashDest::Images)

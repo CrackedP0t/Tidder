@@ -1,11 +1,13 @@
 use cache_control::CacheControl;
 use chrono::{DateTime, NaiveDateTime};
+pub use failure::{self, format_err, Error};
 use futures::future::{err, poll_fn, Either, Future};
 use futures::stream::Stream;
 use futures::Async;
 use image::{imageops, load_from_memory, DynamicImage};
 use lazy_static::lazy_static;
 use log::LevelFilter;
+pub use log::{error, info, warn};
 use regex::Regex;
 use reqwest::{
     header::{self, HeaderMap},
@@ -17,14 +19,12 @@ use std::borrow::Cow;
 use std::fmt::{self, Display};
 use std::string::ToString;
 use std::sync::{RwLock, TryLockError};
+use std::time::Duration;
 use tokio_postgres::{to_sql_checked, types, NoTls};
 use url::{
     percent_encoding::{percent_decode, utf8_percent_encode, QUERY_ENCODE_SET},
     Url,
 };
-
-pub use failure::{self, format_err, Error};
-pub use log::{error, info, warn};
 
 mod getter;
 pub use getter::*;

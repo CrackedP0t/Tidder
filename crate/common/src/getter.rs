@@ -273,6 +273,19 @@ fn follow_wikipedia(url: Url) -> impl Future<Item = String, Error = UserError> +
     )
 }
 
+pub fn get_tld(url: &Url) -> &str {
+    lazy_static! {
+        static ref TLD_RE: Regex = Regex::new(r"([^.]+\.[^.]+)$").unwrap();
+    }
+
+    url.domain()
+        .and_then(|s| TLD_RE.find(s))
+        .map(|m| m.as_str())
+        .unwrap_or_else(|| url.host_str().unwrap())
+}
+
+const WAIT_TIME: Duration = Duration::from_millis(50);
+
 pub fn get_hash(
     link: String,
 ) -> impl Future<Item = (Hash, String, GetKind), Error = UserError> + Send {
@@ -295,6 +308,11 @@ pub fn get_hash(
         get_existing(link.clone()).and_then(move |found| {
             if let Some((hash, hash_dest, id)) = found {
                 return Either::B(ok((hash, link, GetKind::Cache(hash_dest, id))));
+            }
+
+            let url = fut_try!(Url::parse(&link).map_err(map_ue!("followed to an invalid URL")));
+            if get_tld(&url) == "imgur.com" {
+                std::thread::sleep(WAIT_TIME);
             }
 
             Either::A(

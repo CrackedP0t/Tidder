@@ -311,7 +311,8 @@ pub fn get_hash(
             }
 
             let url = fut_try!(Url::parse(&link).map_err(map_ue!("followed to an invalid URL")));
-            if fut_try!(url.host_str().ok_or(ue!("URL has no host"))) == "imgur.com" {
+            let host = fut_try!(url.host_str().ok_or(ue!("URL has no host")));
+            if host == "imgur.com" || host == "www.imgur.com" {
                 std::thread::sleep(WAIT_TIME);
             }
 

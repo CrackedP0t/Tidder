@@ -1,11 +1,14 @@
 use super::*;
 
-use future::{err, ok, Either};
+use future::{err, ok, result, Either};
+use reqwest::{RedirectPolicy, StatusCode};
+use serde_json::Value;
+use std::time::Duration;
 use tokio::prelude::*;
 
 lazy_static! {
     static ref REQW_CLIENT: reqwest::r#async::Client = reqwest::r#async::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(Duration::from_secs(30))
         .build()
         .unwrap();
 }
@@ -103,6 +106,39 @@ fn follow_gfycat(url: Url) -> impl Future<Item = String, Error = UserError> + Se
     )
 }
 
+fn make_imgur_api_request(api_link: String) -> impl Future<Item = Value, Error = UserError> {
+    REQW_CLIENT
+        .get(&api_link)
+        .header(
+            header::AUTHORIZATION,
+            format!("Client-ID {}", SECRETS.imgur.client_id),
+        )
+        .header("X-RapidAPI-Key", SECRETS.imgur.rapidapi_key.as_str())
+        .send()
+        .map_err(map_ue!("couldn't reach Imgur API"))
+        .and_then(|resp| resp.error_for_status().map_err(error_for_status_ue))
+        .and_then(|mut resp| {
+            if fut_try!(resp
+                .headers()
+                .get("x-ratelimit-requests-remaining")
+                .ok_or(ue!(
+                    "header `x-ratelimit-requests-remaining` not sent",
+                    Source::Internal
+                ))
+                .and_then(|hv| hv.to_str().map_err(map_ue!()))
+                .and_then(|s| s.parse::<i64>().map_err(map_ue!())))
+                < 10
+            {
+                Either::B(err(ue!("out of Imgur API requests", Source::Internal)))
+            } else {
+                Either::A(
+                    resp.json::<Value>()
+                        .map_err(map_ue!("Imgur API returned invalid JSON")),
+                )
+            }
+        })
+}
+
 fn follow_imgur(mut url: Url) -> impl Future<Item = String, Error = UserError> + Send {
     lazy_static! {
         static ref IMGUR_GIFV_RE: Regex = Regex::new(r"\.(?:gifv|webm|mp4)($|[?#])").unwrap();
@@ -111,6 +147,12 @@ fn follow_imgur(mut url: Url) -> impl Future<Item = String, Error = UserError> +
             Regex::new(r"(?i)[[:alnum:]]\.(?:jpg|png)[[:alnum:]]+").unwrap();
         static ref HOST_LIMIT_RE: Regex =
             Regex::new(r"^(?i).+?\.([a-z0-9-]+\.[a-z0-9-]+\.[a-z0-9-]+)$").unwrap();
+        static ref REQW_CLIENT_NO_REDIR: reqwest::r#async::Client =
+            reqwest::r#async::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .redirect(RedirectPolicy::none())
+                .build()
+                .unwrap();
     }
 
     let host = fut_try!(url.host_str().ok_or(ue!("No host in Imgur URL")));
@@ -130,9 +172,7 @@ fn follow_imgur(mut url: Url) -> impl Future<Item = String, Error = UserError> +
 
     let path = url.path();
 
-    let my_url = url.clone();
-
-    let path_start = fut_try!(my_url
+    let path_start = fut_try!(url
         .path_segments()
         .and_then(|mut ps| ps.next())
         .ok_or(ue!("base Imgur URL", Source::User)))
@@ -144,55 +184,58 @@ fn follow_imgur(mut url: Url) -> impl Future<Item = String, Error = UserError> +
             .to_string()))
     } else if IMGUR_EXT_RE.is_match(path) || path_start == "download" {
         Either::B(ok(url.into_string()))
-    } else if path_start == "a" || path_start == "gallery" {
-        let api_link = format!(
-            "https://imgur-apiv3.p.rapidapi.com/3/album/{}/images",
-            my_url.path_segments().unwrap().next_back().unwrap()
-        );
+    } else if path_start == "a" {
+        let id = url.path_segments().unwrap().next_back().unwrap();
+        let api_link = format!("https://imgur-apiv3.p.rapidapi.com/3/album/{}/images", id);
         Either::A(
-            REQW_CLIENT
-                .get(&api_link)
-                .header(
-                    header::AUTHORIZATION,
-                    format!("Client-ID {}", SECRETS.imgur.client_id),
-                )
-                .header("X-RapidAPI-Key", SECRETS.imgur.rapidapi_key.as_str())
-                .send()
-                .map_err(map_ue!("couldn't reach Imgur API"))
-                .and_then(|resp| resp.error_for_status().map_err(error_for_status_ue))
-                .and_then(|mut resp| {
-                    if fut_try!(resp
-                        .headers()
-                        .get("x-ratelimit-requests-remaining")
-                        .ok_or(ue!(
-                            "header `x-ratelimit-requests-remaining` not sent",
-                            Source::Internal
-                        ))
-                        .and_then(|hv| hv.to_str().map_err(map_ue!()))
-                        .and_then(|s| s.parse::<i64>().map_err(map_ue!())))
-                        < 10
-                    {
-                        Either::B(err(ue!("out of Imgur API requests", Source::Internal)))
-                    } else {
-                        Either::A(
-                            resp.json::<serde_json::Value>()
-                                .map_err(map_ue!("Imgur API returned invalid JSON")),
-                        )
-                    }
-                })
-                .and_then(|json| {
-                    Ok(IMGUR_GIFV_RE
-                        .replace(
-                            json["data"][0]["link"]
-                                .as_str()
-                                .ok_or(ue!("Imgur API returned unexpectedly-structured JSON"))?,
-                            ".gif$1",
-                        )
-                        .to_string())
-                }),
+            Box::new(make_imgur_api_request(api_link).and_then(move |json| {
+                Ok(IMGUR_GIFV_RE
+                    .replace(
+                        json["data"]["cover"]
+                            .as_str()
+                            .ok_or(ue!("Imgur API returned unexpectedly-structured JSON"))?,
+                        ".gif$1",
+                    )
+                    .to_string())
+            })) as Box<dyn Future<Item = _, Error = _> + Send>,
         )
+    } else if path_start == "gallery" {
+        let id = url.path_segments().unwrap().next_back().unwrap().to_owned();
+        let image_link = format!("https://i.imgur.com/{}.jpg", id);
+
+        Either::A(Box::new(
+            REQW_CLIENT_NO_REDIR
+                .head(&image_link)
+                .send()
+                .map_err(map_ue!("couldn't reach Imgur image servers"))
+                .and_then(move |resp| {
+                    let resp_url = resp.url().as_str();
+                    if resp.status() == StatusCode::FOUND {
+                        let api_link =
+                            format!("https://imgur-apiv3.p.rapidapi.com/3/gallery/album/{}", id);
+                        Either::A(make_imgur_api_request(api_link).and_then(|json| {
+                            let to = IMGUR_GIFV_RE
+                                .replace(
+                                    json["data"]["images"][0]["link"].as_str().ok_or(ue!(
+                                        "Imgur API returned unexpectedly-structured JSON"
+                                    ))?,
+                                    ".gif$1",
+                                )
+                                .to_string();
+                            Ok(to)
+                        }))
+                    } else {
+                        Either::B(result(
+                            resp.error_for_status_ref()
+                                .map(|_| resp_url.to_string())
+                                .map_err(error_for_status_ue),
+                        ))
+                    }
+                }),
+        ))
     } else {
-        Either::B(ok(format!("https://i.imgur.com/{}.jpg", path_start)))
+        let id = url.path_segments().unwrap().next_back().unwrap();
+        Either::B(ok(format!("https://i.imgur.com/{}.jpg", id)))
     }
 }
 

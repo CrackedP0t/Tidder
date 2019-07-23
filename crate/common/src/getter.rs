@@ -239,6 +239,13 @@ fn follow_imgur(mut url: Url) -> impl Future<Item = String, Error = UserError> +
         ))
     } else {
         let id = url.path_segments().unwrap().next_back().unwrap();
+
+        let id = if let Some(loc) = id.find(',') {
+            id.split_at(loc).0
+        } else {
+            id
+        };
+
         Either::B(ok(format!("https://i.imgur.com/{}.jpg", id)))
     }
 }

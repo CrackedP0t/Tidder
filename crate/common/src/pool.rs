@@ -5,7 +5,7 @@ use tokio_postgres::{Client, NoTls};
 
 use super::*;
 
-const CONN_LIMIT: u64 = 80;
+const CONN_LIMIT: u64 = 480;
 
 pub struct PgPool {
     conn_string: &'static str,

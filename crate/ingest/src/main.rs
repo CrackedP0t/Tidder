@@ -470,6 +470,10 @@ fn main() {
                         }
 
                         info!("Done ingesting {}", &path);
+
+                        loop {
+                            std::thread::sleep(std::time::Duration::from_secs(1));
+                        }
                     })
                 })
         })

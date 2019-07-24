@@ -474,7 +474,7 @@ fn main() {
                 })
         })
     })
-        .map_err(|_| ());
+    .map_err(|_| ());
 
     let runtime = tokio::runtime::Runtime::new().expect("failed to start new Runtime");
     runtime.block_on_all(future).ok();

@@ -1,4 +1,4 @@
-use futures::future::{ok, poll_fn, Either, Future};
+use futures::future::{ok, loop_fn, Loop, Either, Future};
 use log::error;
 use std::sync::RwLock;
 use tokio_postgres::{Client, NoTls};
@@ -23,7 +23,7 @@ impl PgPool {
     }
 
     pub fn take(&'static self) -> impl Future<Item = PgHandle, Error = UserError> {
-        poll_fn(move ||
+        loop_fn((), move |_|
         //         match self.pool.try_write() {
         //     Ok(mut pool_guard) => match pool_guard.pop() {
         //         Some(client) => Ok(Async::Ready(Some(client))),
@@ -51,13 +51,13 @@ impl PgPool {
                 // }
 
                 match self.pool.write().unwrap().pop() {
-                    Some(client) => Ok(Async::Ready(Some(client))),
+                    Some(client) => Ok(Loop::Break(Some(client))),
                     None => {
                         if *self.count.read().unwrap() < CONN_LIMIT {
                             *self.count.write().unwrap() += 1;
-                            Ok(Async::Ready(None))
+                            Ok(Loop::Break(None))
                         } else {
-                            Ok(Async::NotReady)
+                            Ok(Loop::Continue(()))
                         }
                     }
                 })

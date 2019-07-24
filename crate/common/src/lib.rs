@@ -3,7 +3,6 @@ use chrono::{DateTime, NaiveDateTime};
 pub use failure::{self, format_err, Error};
 use futures::future::{err, Either, Future};
 use futures::stream::Stream;
-use futures::Async;
 use image::{imageops, load_from_memory, DynamicImage};
 use lazy_static::lazy_static;
 use log::LevelFilter;

@@ -286,6 +286,10 @@ fn ingest_json<R: Read + Send>(
             );
         });
 
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+
     ok(())
 }
 
@@ -470,10 +474,6 @@ fn main() {
                         }
 
                         info!("Done ingesting {}", &path);
-
-                        loop {
-                            std::thread::sleep(std::time::Duration::from_secs(1));
-                        }
                     })
                 })
         })

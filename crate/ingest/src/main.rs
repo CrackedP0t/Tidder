@@ -284,7 +284,7 @@ fn ingest_json<R: Read + Send>(
                     std::process::exit(1);
                 }),
             );
-        });
+        })
 }
 
 fn main() {

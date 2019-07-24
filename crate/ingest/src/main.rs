@@ -321,179 +321,179 @@ fn main() {
             (@arg NO_SKIP_MONTHS: -M --("no-skip-months") "Don't skip past months we already have")
             (@arg VERBOSE: -v --verbose "Verbose logging")
             (@arg NO_DELETE: -D --("no-delete") "Don't delete archive files when done")
-            (@arg PATHS: +required +multiple "The URLs or paths of the files to ingest")
+            (@arg PATH: +required "The URL or path of the file to ingest")
     )
     .get_matches();
 
     let verbose = matches.is_present("VERBOSE");
     let no_delete = matches.is_present("NO_DELETE");
+    let path = matches.value_of("PATH").unwrap().to_string();
 
     tokio::run(
-        stream::iter_ok(matches.values_of_lossy("PATHS").unwrap())
-            .and_then(move |path| {
-                let month: i32 = MONTH_RE
-                    .captures(&path)
-                    .and_then(|caps| caps.get(1))
-                    .ok_or_else(|| format_err!("couldn't find month in {}", path))
-                    .and_then(|m| m.as_str().parse().map_err(Error::from))
-                    .unwrap();
+        future::lazy(move || {
+            // stream::iter_ok(matches.values_of_lossy("PATHS").unwrap())
+            //     .and_then(move |path| {
+            let month: i32 = MONTH_RE
+                .captures(&path)
+                .and_then(|caps| caps.get(1))
+                .ok_or_else(|| format_err!("couldn't find month in {}", path))
+                .and_then(|m| m.as_str().parse().map_err(Error::from))
+                .unwrap();
 
-                let year: i32 = YEAR_RE
-                    .find(&path)
-                    .ok_or_else(|| format_err!("couldn't find year in {}", path))
-                    .and_then(|m| m.as_str().parse().map_err(Error::from))
-                    .unwrap();
+            let year: i32 = YEAR_RE
+                .find(&path)
+                .ok_or_else(|| format_err!("couldn't find year in {}", path))
+                .and_then(|m| m.as_str().parse().map_err(Error::from))
+                .unwrap();
 
-                let month_f = f64::from(month);
-                let year_f = f64::from(year);
+            let month_f = f64::from(month);
+            let year_f = f64::from(year);
 
-                info!("Ingesting {}", &path);
+            info!("Ingesting {}", path);
 
-                let (input_future, arch_path): (Box<Future<Item = File, Error = Error> + Send>, _) =
-                    if path.starts_with("http://") || path.starts_with("https://") {
-                        let arch_path = std::env::var("HOME").map_err(Error::from).unwrap()
-                            + "/archives/"
-                            + Url::parse(&path)
-                                .map_err(Error::from)
-                                .unwrap()
-                                .path_segments()
-                                .ok_or_else(|| format_err!("cannot-be-a-base-url"))
-                                .unwrap()
-                                .next_back()
-                                .ok_or_else(|| format_err!("no last path segment"))
-                                .unwrap();
+            let (input_future, arch_path): (Box<Future<Item = File, Error = Error> + Send>, _) =
+                if path.starts_with("http://") || path.starts_with("https://") {
+                    let arch_path = std::env::var("HOME").map_err(Error::from).unwrap()
+                        + "/archives/"
+                        + Url::parse(&path)
+                            .map_err(Error::from)
+                            .unwrap()
+                            .path_segments()
+                            .ok_or_else(|| format_err!("cannot-be-a-base-url"))
+                            .unwrap()
+                            .next_back()
+                            .ok_or_else(|| format_err!("no last path segment"))
+                            .unwrap();
 
-                        let arch_file = if Path::exists(Path::new(&arch_path)) {
-                            info!("Found existing archive file");
+                    let arch_file = if Path::exists(Path::new(&arch_path)) {
+                        info!("Found existing archive file");
 
-                            Box::new(future::result(
-                                OpenOptions::new()
-                                    .read(true)
-                                    .open(&arch_path)
-                                    .map_err(Error::from),
-                            )) as _
-                        } else {
-                            info!("Downloading archive file");
-                            let arch_file = OpenOptions::new()
-                                .create_new(true)
+                        Box::new(future::result(
+                            OpenOptions::new()
                                 .read(true)
-                                .write(true)
                                 .open(&arch_path)
-                                .map_err(Error::from)
-                                .unwrap();
-
-                            Box::new(REQW_CLIENT.get(&path).send().map_err(Error::from).and_then(
-                                move |resp| {
-                                    resp.into_body()
-                                        .map_err(Error::from)
-                                        .fold(arch_file, |mut arch_file, chunk| {
-                                            io::copy(&mut chunk.as_ref(), &mut arch_file)
-                                                .map(move |_| arch_file)
-                                                .map_err(Error::from)
-                                        })
-                                        .and_then(|mut arch_file| {
-                                            arch_file
-                                                .seek(SeekFrom::Start(0))
-                                                .map_err(Error::from)?;
-
-                                            Ok(arch_file)
-                                        })
-                                },
-                            )) as _
-                        };
-
-                        (arch_file, Some(arch_path))
+                                .map_err(Error::from),
+                        )) as _
                     } else {
-                        (
-                            Box::new(future::result(File::open(&path).map_err(Error::from))) as _,
-                            None,
-                        )
+                        info!("Downloading archive file");
+                        let arch_file = OpenOptions::new()
+                            .create_new(true)
+                            .read(true)
+                            .write(true)
+                            .open(&arch_path)
+                            .map_err(Error::from)
+                            .unwrap();
+
+                        Box::new(REQW_CLIENT.get(&path).send().map_err(Error::from).and_then(
+                            move |resp| {
+                                resp.into_body()
+                                    .map_err(Error::from)
+                                    .fold(arch_file, |mut arch_file, chunk| {
+                                        io::copy(&mut chunk.as_ref(), &mut arch_file)
+                                            .map(move |_| arch_file)
+                                            .map_err(Error::from)
+                                    })
+                                    .and_then(|mut arch_file| {
+                                        arch_file.seek(SeekFrom::Start(0)).map_err(Error::from)?;
+
+                                        Ok(arch_file)
+                                    })
+                            },
+                        )) as _
                     };
 
-                input_future.map_err(|e| panic!(e)).and_then(move |input| {
-                    info!("Processing posts we already have");
+                    (arch_file, Some(arch_path))
+                } else {
+                    (
+                        Box::new(future::result(File::open(&path).map_err(Error::from))) as _,
+                        None,
+                    )
+                };
 
-                    PG_POOL
-                        .take()
-                        .map_err(Error::from)
-                        .and_then(move |mut client| {
-                            client
-                                .prepare(
-                                    "SELECT reddit_id_int FROM posts \
-                                     WHERE EXTRACT(month FROM created_utc) = $1 \
-                                     AND EXTRACT(year FROM created_utc) = $2",
+            input_future.map_err(|e| panic!(e)).and_then(move |input| {
+                info!("Processing posts we already have");
+
+                PG_POOL
+                    .take()
+                    .map_err(Error::from)
+                    .and_then(move |mut client| {
+                        client
+                            .prepare(
+                                "SELECT reddit_id_int FROM posts \
+                                 WHERE EXTRACT(month FROM created_utc) = $1 \
+                                 AND EXTRACT(year FROM created_utc) = $2",
+                            )
+                            .and_then(move |stmt| {
+                                client.query(&stmt, &[&month_f, &year_f]).fold(
+                                    BTreeSet::new(),
+                                    |mut already_have, row| {
+                                        already_have.insert(row.get(0));
+                                        ok(already_have)
+                                    },
                                 )
-                                .and_then(move |stmt| {
-                                    client.query(&stmt, &[&month_f, &year_f]).fold(
-                                        BTreeSet::new(),
-                                        |mut already_have, row| {
-                                            already_have.insert(row.get(0));
-                                            ok(already_have)
-                                        },
-                                    )
-                                })
-                                .map_err(Error::from)
-                        })
-                        .map_err(|e| panic!(e))
-                        .and_then(move |already_have| {
-                            let already_have_len = already_have.len();
-                            info!(
-                                "Already have {} post{}",
-                                already_have_len,
-                                if already_have_len == 1 { "" } else { "s" }
-                            );
+                            })
+                            .map_err(Error::from)
+                    })
+                    .map_err(|e| panic!(e))
+                    .and_then(move |already_have| {
+                        let already_have_len = already_have.len();
+                        info!(
+                            "Already have {} post{}",
+                            already_have_len,
+                            if already_have_len == 1 { "" } else { "s" }
+                        );
 
-                            let already_have = if already_have_len > 0 {
-                                Some(already_have)
+                        let already_have = if already_have_len > 0 {
+                            Some(already_have)
+                        } else {
+                            None
+                        };
+
+                        let input = BufReader::new(input);
+
+                        let title = format!("{:02}-{}", month, year);
+
+                        let ingest_fut: Box<dyn future::Future<Item = (), Error = ()> + Send> =
+                            if path.ends_with("bz2") {
+                                Box::new(ingest_json(
+                                    &title,
+                                    already_have,
+                                    bzip2::bufread::BzDecoder::new(input),
+                                    verbose,
+                                )) as _
+                            } else if path.ends_with("xz") {
+                                Box::new(ingest_json(
+                                    &title,
+                                    already_have,
+                                    xz2::bufread::XzDecoder::new(input),
+                                    verbose,
+                                )) as _
+                            } else if path.ends_with("zst") {
+                                Box::new(ingest_json(
+                                    &title,
+                                    already_have,
+                                    zstd::stream::read::Decoder::new(input)
+                                        .map_err(Error::from)
+                                        .unwrap(),
+                                    verbose,
+                                )) as _
                             } else {
-                                None
+                                Box::new(ingest_json(&title, already_have, input, verbose)) as _
                             };
 
-                            let input = BufReader::new(input);
-
-                            let title = format!("{:02}-{}", month, year);
-
-                            let ingest_fut: Box<dyn future::Future<Item = (), Error = ()> + Send> =
-                                if path.ends_with("bz2") {
-                                    Box::new(ingest_json(
-                                        &title,
-                                        already_have,
-                                        bzip2::bufread::BzDecoder::new(input),
-                                        verbose,
-                                    )) as _
-                                } else if path.ends_with("xz") {
-                                    Box::new(ingest_json(
-                                        &title,
-                                        already_have,
-                                        xz2::bufread::XzDecoder::new(input),
-                                        verbose,
-                                    )) as _
-                                } else if path.ends_with("zst") {
-                                    Box::new(ingest_json(
-                                        &title,
-                                        already_have,
-                                        zstd::stream::read::Decoder::new(input)
-                                            .map_err(Error::from)
-                                            .unwrap(),
-                                        verbose,
-                                    )) as _
-                                } else {
-                                    Box::new(ingest_json(&title, already_have, input, verbose)) as _
-                                };
-
-                            ingest_fut.map(move |_| {
-                                if !no_delete {
-                                    if let Some(arch_path) = arch_path {
-                                        remove_file(arch_path).map_err(Error::from).unwrap();
-                                    }
+                        ingest_fut.map(move |_| {
+                            if !no_delete {
+                                if let Some(arch_path) = arch_path {
+                                    remove_file(arch_path).map_err(Error::from).unwrap();
                                 }
+                            }
 
-                                info!("Done ingesting {}", &path);
-                            })
+                            info!("Done ingesting {}", &path);
                         })
-                })
+                    })
             })
-            .for_each(|_| ok(()))
-            .map_err(|_| ()),
+        })
+        // .for_each(|_| ok(()))
+        .map_err(|_| ()),
     );
 }

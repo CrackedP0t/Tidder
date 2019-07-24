@@ -286,6 +286,8 @@ fn ingest_json<R: Read + Send>(
             );
         });
 
+    println!("Done");
+
     loop {
         std::thread::sleep(std::time::Duration::from_secs(1));
     }

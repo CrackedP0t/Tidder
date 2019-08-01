@@ -150,9 +150,10 @@ fn ingest_json<R: Read + Send>(
                         }
                     };
 
+                    let blacklist_guard = blacklist.read().unwrap();
                     if post_url
                         .domain()
-                        .map(|domain| blacklist.read().unwrap().contains(domain))
+                        .map(|domain| blacklist_guard.contains(domain))
                         .unwrap_or(false)
                     {
                         if verbose {
@@ -160,6 +161,7 @@ fn ingest_json<R: Read + Send>(
                         }
                         return err(post);
                     }
+                    drop(blacklist_guard);
 
                     ok((post_url, post))
                 })
@@ -174,11 +176,12 @@ fn ingest_json<R: Read + Send>(
                                     .unwrap_or(true)
                                 {
                                     drop(guard);
-                                    *(*in_flight.write().unwrap())
-                                        .entry(tld.to_owned())
-                                        .or_insert(0) += 1;
+                                    let mut write_guard = in_flight.write().unwrap();
+                                    *(write_guard.entry(tld.to_owned()).or_insert(0)) += 1;
+                                    drop(write_guard);
                                     Ok(Async::Ready(tld.to_owned()))
                                 } else {
+                                    drop(guard);
                                     Ok(Async::NotReady)
                                 }
                             }
@@ -285,12 +288,6 @@ fn ingest_json<R: Read + Send>(
                 }),
             );
         });
-
-    println!("Done");
-
-    loop {
-        std::thread::sleep(std::time::Duration::from_secs(1));
-    }
 
     ok(())
 }

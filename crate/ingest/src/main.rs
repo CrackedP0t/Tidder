@@ -101,6 +101,10 @@ fn ingest_json<R: Read + Send>(
 
     let in_flight = Arc::new(RwLock::new(HashMap::<String, u32>::new()));
 
+    const MAX_SPAWNED: u32 = 8;
+
+    let all_spawned = Arc::new(RwLock::new(0u32));
+
     check_json
         .filter_map(|post| {
             let post = to_submission(post).map_err(le!()).ok()??;
@@ -131,6 +135,21 @@ fn ingest_json<R: Read + Send>(
 
             let in_flight = in_flight.clone();
             let end_in_flight = in_flight.clone();
+
+            while {
+                let all_spawned_lock = all_spawned.read().unwrap();
+                let maxed_out = *all_spawned_lock >= MAX_SPAWNED;
+                drop(all_spawned_lock);
+                maxed_out
+            } {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+
+            let mut all_spawned_lock = all_spawned.write().unwrap();
+            *all_spawned_lock += 1;
+            drop(all_spawned_lock);
+
+            let end_all_spawned = all_spawned.clone();
 
             tokio::spawn(
                 future::lazy(move || {
@@ -279,7 +298,12 @@ fn ingest_json<R: Read + Send>(
                     let (post, image_id) = res
                         .map(|tup| (tup.0, Some(tup.1)))
                         .unwrap_or_else(|post| (post, None));
-                    save_post(post, image_id)
+                    save_post(post, image_id).then(move |res| {
+                        let mut all_spawned_lock = end_all_spawned.write().unwrap();
+                        *all_spawned_lock -= 1;
+                        drop(all_spawned_lock);
+                        res
+                    })
                 })
                 .map(|_| ())
                 .map_err(|e| {

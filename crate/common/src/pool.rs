@@ -1,7 +1,8 @@
-use futures::future::{ok, loop_fn, Loop, Either, Future};
+use futures::future::{loop_fn, ok, Either, Future, Loop};
 use log::error;
+use std::collections::HashMap;
 use std::sync::RwLock;
-use tokio_postgres::{Client, NoTls};
+use tokio_postgres::{Client, NoTls, Statement};
 
 use super::*;
 
@@ -10,7 +11,7 @@ const CONN_LIMIT: u64 = 480;
 pub struct PgPool {
     conn_string: &'static str,
     count: RwLock<u64>,
-    pool: RwLock<Vec<Client>>,
+    pool: RwLock<Vec<(Client, HashMap<&'static str, Statement>)>>,
 }
 
 impl PgPool {
@@ -63,10 +64,11 @@ impl PgPool {
                         }
                     }
                 })
-        .and_then(move |maybe_client| match maybe_client {
-            Some(client) => Either::A(ok(PgHandle {
+        .and_then(move |maybe_pair| match maybe_pair {
+            Some(pair) => Either::A(ok(PgHandle {
                 parent: self,
-                inner: Some(client),
+                prepared: Some(pair.1),
+                inner: Some(pair.0),
             })),
             None => Either::B(
                 tokio_postgres::connect(self.conn_string, NoTls)
@@ -84,6 +86,7 @@ impl PgPool {
 
                         PgHandle {
                             parent: self,
+                            prepared: Some(HashMap::new()),
                             inner: Some(client),
                         }
                     })
@@ -92,19 +95,39 @@ impl PgPool {
         })
     }
 
-    pub fn give(&self, client: Client) {
-        self.pool.write().unwrap().push(client);
+    pub fn give(&self, pair: (Client, HashMap<&'static str, Statement>)) {
+        self.pool.write().unwrap().push(pair);
     }
 }
 
 pub struct PgHandle {
     parent: &'static PgPool,
+    prepared: Option<HashMap<&'static str, Statement>>,
     inner: Option<Client>,
+}
+
+impl PgHandle {
+    pub fn cache_prepared(
+        &mut self,
+        query: &'static str,
+    ) -> impl Future<Item = Statement, Error = UserError> + '_ {
+        let prepared = self.prepared.as_mut().unwrap();
+
+        if let Some(statement) = prepared.get(query) {
+            return Either::B(ok(statement.clone()));
+        }
+
+        Either::A(self.inner.as_mut().unwrap().prepare(query).map_err(map_ue!()).map(move |statement| {
+            prepared.insert(query, statement.clone());
+            statement
+        }))
+    }
 }
 
 impl Drop for PgHandle {
     fn drop(&mut self) {
-        self.parent.give(self.inner.take().unwrap())
+        self.parent
+            .give((self.inner.take().unwrap(), self.prepared.take().unwrap()))
     }
 }
 

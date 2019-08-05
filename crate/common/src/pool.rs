@@ -53,7 +53,9 @@ impl PgPool {
                 match self.pool.write().unwrap().pop() {
                     Some(client) => Ok(Loop::Break(Some(client))),
                     None => {
-                        if *self.count.read().unwrap() < CONN_LIMIT {
+                        let count_read = self.count.read().unwrap();
+                        if *count_read < CONN_LIMIT {
+                            drop(count_read);
                             *self.count.write().unwrap() += 1;
                             Ok(Loop::Break(None))
                         } else {

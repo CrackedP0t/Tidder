@@ -27,7 +27,7 @@ const IN_FLIGHT_LIMIT: u32 = 1;
 lazy_static! {
     static ref CUSTOM_LIMITS: HashMap<&'static str, Option<u32>> = {
         let mut map = HashMap::new();
-        map.insert("imgur.com", Some(4));
+        map.insert("imgur.com", Some(8));
         map
     };
 }

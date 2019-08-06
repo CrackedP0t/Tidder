@@ -25,9 +25,9 @@ const BANNED_TLDS: [&str; 1] = ["fbcdn.net"];
 const IN_FLIGHT_LIMIT: u32 = 1;
 
 lazy_static! {
-    static ref CUSTOM_LIMITS: HashMap<&'static str, u32> = {
+    static ref CUSTOM_LIMITS: HashMap<&'static str, Option<u32>> = {
         let mut map = HashMap::new();
-        map.insert("imgur.com", 4);
+        map.insert("imgur.com", None);
         map
     };
 }
@@ -204,14 +204,24 @@ fn ingest_json<R: Read + Send>(
                         let tld = get_tld(&post_url);
                         match in_flight.try_read() {
                             Ok(guard) => {
-                                if guard
-                                    .get::<str>(&tld)
-                                    .map(|in_flight| {
-                                        in_flight
-                                            < CUSTOM_LIMITS.get(&tld).unwrap_or(&IN_FLIGHT_LIMIT)
+                                let custom_limit: Option<&Option<_>> = CUSTOM_LIMITS.get(&tld);
+
+                                let limit = match custom_limit {
+                                    None => Some(IN_FLIGHT_LIMIT),
+                                    Some(&Some(limit)) => Some(limit),
+                                    Some(&None) => None,
+                                };
+
+                                let ready = limit
+                                    .map(|limit| {
+                                        guard
+                                            .get::<str>(&tld)
+                                            .map(|in_flight| *in_flight < limit)
+                                            .unwrap_or(true)
                                     })
-                                    .unwrap_or(true)
-                                {
+                                    .unwrap_or(true);
+
+                                if ready {
                                     drop(guard);
                                     let mut write_guard = in_flight.write().unwrap();
                                     *(write_guard.entry(tld.to_owned()).or_insert(0)) += 1;

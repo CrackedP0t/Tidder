@@ -357,7 +357,6 @@ fn main() {
             (version: crate_version!())
             (author: crate_authors!(","))
             (about: crate_description!())
-            (@arg NO_SKIP_MONTHS: -M --("no-skip-months") "Don't skip past months we already have")
             (@arg VERBOSE: -v --verbose "Verbose logging")
             (@arg NO_DELETE: -D --("no-delete") "Don't delete archive files when done")
             (@arg PATH: +required "The URL or path of the file to ingest")

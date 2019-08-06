@@ -1,5 +1,9 @@
 #!/bin/bash
 
+set -e
+
+~/.cargo/bin/cargo build --bin ingest --release
+
 for URL in $(< ingest/todo.txt); do
-    ~/.cargo/bin/cargo run --release --bin ingest -- -DMv $URL
+    target/release/ingest -Dv $URL
 done

@@ -20,7 +20,7 @@ use url::Url;
 
 use future::{err, ok, poll_fn};
 
-const PERMA_BLACKLIST: [&str; 0] = [];
+const BANNED_TLDS: [&str; 1] = ["fbcdn.net"];
 const IN_FLIGHT_LIMIT: u32 = 1;
 
 struct Check<I> {
@@ -94,10 +94,7 @@ fn ingest_json<R: Read + Send>(
         }))
     };
 
-    let mut blacklist = HashSet::<Cow<str>>::new();
-    blacklist.extend(PERMA_BLACKLIST.iter().map(|s| Cow::Borrowed(*s)));
-
-    let blacklist = Arc::new(RwLock::new(blacklist));
+    let blacklist = Arc::new(RwLock::new(HashSet::<String>::new()));
 
     let in_flight = Arc::new(RwLock::new(HashMap::<String, u32>::new()));
 
@@ -168,6 +165,13 @@ fn ingest_json<R: Read + Send>(
                             return err(post);
                         }
                     };
+
+                    let tld = get_tld(&post_url);
+                    if BANNED_TLDS.contains(&tld) {
+                        warn!("{}: {}: {} has a banned domain name", title, post.id, post.url);
+                        return err(post);
+                    }
+
 
                     let blacklist_guard = blacklist.read().unwrap();
                     if post_url
@@ -282,7 +286,7 @@ fn ingest_json<R: Read + Send>(
                                                         blacklist
                                                             .write()
                                                             .unwrap()
-                                                            .insert(Cow::Owned(domain.to_string()));
+                                                            .insert(domain.to_string());
                                                     }
                                                 }
                                             }

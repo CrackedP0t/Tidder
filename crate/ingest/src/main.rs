@@ -3,6 +3,7 @@
 use clap::{clap_app, crate_authors, crate_description, crate_version};
 use common::*;
 use failure::{format_err, Error};
+use lazy_static::lazy_static;
 use log::{error, info, warn};
 use regex::Regex;
 use reqwest::r#async::Client;
@@ -22,6 +23,14 @@ use future::{err, ok, poll_fn};
 
 const BANNED_TLDS: [&str; 1] = ["fbcdn.net"];
 const IN_FLIGHT_LIMIT: u32 = 1;
+
+lazy_static! {
+    static ref CUSTOM_LIMITS: HashMap<&'static str, u32> = {
+        let mut map = HashMap::new();
+        map.insert("imgur.com", 4);
+        map
+    };
+}
 
 struct Check<I> {
     iter: I,
@@ -168,10 +177,12 @@ fn ingest_json<R: Read + Send>(
 
                     let tld = get_tld(&post_url);
                     if BANNED_TLDS.contains(&tld) {
-                        warn!("{}: {}: {} has a banned domain name", title, post.id, post.url);
+                        warn!(
+                            "{}: {}: {} has a banned domain name",
+                            title, post.id, post.url
+                        );
                         return err(post);
                     }
-
 
                     let blacklist_guard = blacklist.read().unwrap();
                     if post_url
@@ -195,7 +206,10 @@ fn ingest_json<R: Read + Send>(
                             Ok(guard) => {
                                 if guard
                                     .get::<str>(&tld)
-                                    .map(|in_flight| *in_flight < IN_FLIGHT_LIMIT)
+                                    .map(|in_flight| {
+                                        in_flight
+                                            < CUSTOM_LIMITS.get(&tld).unwrap_or(&IN_FLIGHT_LIMIT)
+                                    })
                                     .unwrap_or(true)
                                 {
                                     drop(guard);

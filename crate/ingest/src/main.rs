@@ -101,7 +101,7 @@ fn ingest_json<R: Read + Send>(
 
     let in_flight = Arc::new(RwLock::new(HashMap::<String, u32>::new()));
 
-    const MAX_SPAWNED: u32 = 8;
+    const MAX_SPAWNED: u32 = 128;
 
     let all_spawned = Arc::new(RwLock::new(0u32));
 
@@ -142,7 +142,7 @@ fn ingest_json<R: Read + Send>(
                 drop(all_spawned_lock);
                 maxed_out
             } {
-                std::thread::sleep(std::time::Duration::from_millis(1));
+                std::thread::sleep(std::time::Duration::from_micros(1));
             }
 
             let mut all_spawned_lock = all_spawned.write().unwrap();

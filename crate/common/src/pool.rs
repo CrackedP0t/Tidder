@@ -107,7 +107,7 @@ pub struct PgHandle {
 }
 
 impl PgHandle {
-    pub fn cache_prepared(
+    pub fn cache_prepare(
         &mut self,
         query: &'static str,
     ) -> impl Future<Item = Statement, Error = UserError> + '_ {

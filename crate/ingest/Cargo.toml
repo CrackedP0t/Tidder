@@ -24,6 +24,7 @@ macros = { path = "../macros" }
 futures = "0.1.28"
 url = "1.7.2"
 tokio-executor = "0.1.8"
+chrono = { version = "0.4.7", features = ["serde"] }
 
 [dependencies.reqwest]
 version = "0.9.19"

@@ -263,7 +263,7 @@ pub struct Submission {
     pub id_int: i64,
     pub id: String,
     pub author: Option<String>,
-    pub created_utc: i64,
+    pub created_utc: NaiveDateTime,
     pub is_self: bool,
     pub over_18: bool,
     pub permalink: String,
@@ -328,7 +328,7 @@ pub fn save_post(
                                 &post.url,
                                 &post.permalink,
                                 &post.author,
-                                &(NaiveDateTime::from_timestamp(post.created_utc, 0)),
+                                &post.created_utc,
                                 &post.score,
                                 &post.subreddit,
                                 &post.title,
@@ -533,7 +533,7 @@ pub fn setup_logging() {
         .chain(std::io::stderr())
         .chain(
             fern::log_file(format!(
-                "output_{}.log",
+                "/tmp/tidder_output_{}.log",
                 chrono::Local::now().format("%Y-%m-%d_%H:%M:%S")
             ))
             .unwrap(),

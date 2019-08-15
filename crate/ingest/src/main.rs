@@ -1,5 +1,6 @@
 #![recursion_limit = "128"]
 
+use chrono::NaiveDateTime;
 use clap::{clap_app, crate_authors, crate_description, crate_version};
 use common::*;
 use failure::{format_err, Error};
@@ -58,13 +59,10 @@ where
 }
 
 fn ingest_json<R: Read + Send>(
-    title: &str,
     mut already_have: Option<BTreeSet<i64>>,
     json_stream: R,
     verbose: bool,
 ) -> impl Future<Item = (), Error = ()> {
-    let title = Arc::new(title.to_string());
-
     let json_iter = Deserializer::from_reader(json_stream).into_iter::<Value>();
 
     info!("Starting ingestion!");
@@ -83,15 +81,18 @@ fn ingest_json<R: Read + Send>(
                 .map_err(|e| format_err!("Couldn't parse number from ID '{}': {}", &id, e))?,
             id,
             author: from_value(post["author"].take()).map_err(Error::from)?,
-            created_utc: match post["created_utc"].take() {
-                Value::Number(n) => n
-                    .as_i64()
-                    .ok_or_else(|| format_err!("'created_utc' is not a valid i64"))?,
-                Value::String(n) => n
-                    .parse()
-                    .map_err(|e| format_err!("'created_utc' can't be parsed as an i64: {}", e))?,
-                _ => return Err(format_err!("'created_utc' is not a number or string")),
-            },
+            created_utc: NaiveDateTime::from_timestamp(
+                match post["created_utc"].take() {
+                    Value::Number(n) => n
+                        .as_i64()
+                        .ok_or_else(|| format_err!("'created_utc' is not a valid i64"))?,
+                    Value::String(n) => n.parse().map_err(|e| {
+                        format_err!("'created_utc' can't be parsed as an i64: {}", e)
+                    })?,
+                    _ => return Err(format_err!("'created_utc' is not a number or string")),
+                },
+                0,
+            ),
             is_self: from_value(post["is_self"].take()).map_err(Error::from)?,
             over_18: from_value(post["over_18"].take()).map_err(Error::from)?,
             permalink: from_value(post["permalink"].take()).map_err(Error::from)?,
@@ -134,8 +135,6 @@ fn ingest_json<R: Read + Send>(
             }
         })
         .for_each(|mut post: Submission| {
-            let lazy_title = title.clone();
-            let title = title.clone();
             let lazy_blacklist = blacklist.clone();
             let blacklist = blacklist.clone();
 
@@ -159,7 +158,6 @@ fn ingest_json<R: Read + Send>(
 
             tokio::spawn(
                 future::lazy(move || {
-                    let title = lazy_title;
                     let blacklist = lazy_blacklist;
                     post.url = post
                         .url
@@ -170,16 +168,19 @@ fn ingest_json<R: Read + Send>(
                     let post_url = match Url::parse(&post.url) {
                         Ok(url) => url,
                         Err(e) => {
-                            warn!("{}: {}: {} is invalid: {}", title, post.id, post.url, e);
+                            warn!(
+                                "{}: {}: {} is invalid: {}",
+                                post.created_utc, post.id, post.url, e
+                            );
                             return err(post);
                         }
                     };
 
                     let tld = get_tld(&post_url);
-                    if BANNED_TLDS.contains(&tld) {
+                    if verbose && BANNED_TLDS.contains(&tld) {
                         warn!(
                             "{}: {}: {} has a banned domain name",
-                            title, post.id, post.url
+                            post.created_utc, post.id, post.url
                         );
                         return err(post);
                     }
@@ -191,7 +192,10 @@ fn ingest_json<R: Read + Send>(
                         .unwrap_or(false)
                     {
                         if verbose {
-                            warn!("{}: {}: {} is blacklisted", title, post.id, post.url);
+                            warn!(
+                                "{}: {}: {} is blacklisted",
+                                post.created_utc, post.id, post.url
+                            );
                         }
                         return err(post);
                     }
@@ -238,8 +242,6 @@ fn ingest_json<R: Read + Send>(
                     })
                     .map(|tld| (tld, post))
                     .and_then(move |(tld, post)| {
-                        let e_title = title.clone();
-
                         save_hash(post.url.clone(), HashDest::Images)
                             .then(move |res| {
                                 *end_in_flight.write().unwrap().get_mut(&tld).unwrap() -= 1;
@@ -253,12 +255,12 @@ fn ingest_json<R: Read + Send>(
                                     if exists {
                                         info!(
                                             "{}: {}: {} already exists",
-                                            title, post.id, post.url
+                                            post.created_utc, post.id, post.url
                                         );
                                     } else {
                                         info!(
                                             "{}: {}: {} successfully hashed",
-                                            title, post.id, post.url
+                                            post.created_utc, post.id, post.url
                                         );
                                     }
                                 }
@@ -270,7 +272,7 @@ fn ingest_json<R: Read + Send>(
                                     Source::Internal => {
                                         error!(
                                             "{}: {}: {}: {}{}{}{}",
-                                            e_title,
+                                            post.created_utc,
                                             post.id,
                                             post.url,
                                             ue.file.unwrap_or(""),
@@ -289,7 +291,7 @@ fn ingest_json<R: Read + Send>(
                                     _ => {
                                         warn!(
                                             "{}: {}: {} failed: {}",
-                                            e_title, post.id, post.url, ue.error
+                                            post.created_utc, post.id, post.url, ue.error
                                         );
                                         if let Some(e) = ue.error.downcast_ref::<reqwest::Error>() {
                                             if e.is_timeout()
@@ -301,7 +303,7 @@ fn ingest_json<R: Read + Send>(
                                                 if is_link_special(&post.url) {
                                                     error!(
                                                         "{}: {}: {}: Special link timed out",
-                                                        e_title, post.id, post.url
+                                                        post.created_utc, post.id, post.url
                                                     );
                                                     std::process::exit(1);
                                                 }
@@ -486,26 +488,21 @@ fn main() {
 
                     let input = BufReader::new(input);
 
-                    let title = format!("{:02}-{}", month, year);
-
                     let ingest_fut: Box<dyn future::Future<Item = (), Error = ()> + Send> =
                         if path.ends_with("bz2") {
                             Box::new(ingest_json(
-                                &title,
                                 already_have,
                                 bzip2::bufread::BzDecoder::new(input),
                                 verbose,
                             )) as _
                         } else if path.ends_with("xz") {
                             Box::new(ingest_json(
-                                &title,
                                 already_have,
                                 xz2::bufread::XzDecoder::new(input),
                                 verbose,
                             )) as _
                         } else if path.ends_with("zst") {
                             Box::new(ingest_json(
-                                &title,
                                 already_have,
                                 zstd::stream::read::Decoder::new(input)
                                     .map_err(Error::from)
@@ -513,7 +510,7 @@ fn main() {
                                 verbose,
                             )) as _
                         } else {
-                            Box::new(ingest_json(&title, already_have, input, verbose)) as _
+                            Box::new(ingest_json(already_have, input, verbose)) as _
                         };
 
                     ingest_fut.map(move |_| {

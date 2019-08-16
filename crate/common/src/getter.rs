@@ -38,7 +38,7 @@ pub fn is_link_gfycat(link: &str) -> bool {
 
 lazy_static! {
     static ref WIKIPEDIA_FILE_RE: Regex =
-               Regex::new(r"(?i)(?:^|\.)(?:wikipedia|wiktionary|wikiquote|wikibooks|wikisource|wikinews|wikiversity|wikispecies|mediawiki|wikidata|wikivoyage|wikimedia).org(?-i)/wiki/((?i:Image|File):[^#?]+)").unwrap();
+               Regex::new(r"(?i)^(?:[^.]+\.)?(?:wikipedia|wiktionary|wikiquote|wikibooks|wikisource|wikinews|wikiversity|wikispecies|mediawiki|wikidata|wikivoyage|wikimedia).org(?-i)/wiki/((?i:Image|File):[^#?]+)").unwrap();
 }
 
 pub fn is_wikipedia_file(link: &str) -> bool {
@@ -575,5 +575,38 @@ mod tests {
                 .unwrap(),
             "http://i.imgur.com/3EqtHIK.jpg"
         );
+    }
+
+    #[test]
+    fn wikipedia_files() {
+        assert!(is_wikipedia_file("https://commons.wikimedia.org/wiki/File:Kalidas_1931_Songbook.JPG"));
+        assert!(!is_wikipedia_file("http://en.www.wikipedia.org/wiki/File:Virtual-Boy-Set.png"));
+    }
+
+    #[test]
+    fn imgur_links() {
+        assert!(is_link_imgur("https://i.imgur.com/3EqtHIK.jpg"));
+        assert!(is_link_imgur("https://imgur.com/3EqtHIK"));
+        assert!(is_link_imgur("http://imgur.com/3EqtHIK"));
+        assert!(is_link_imgur("https://imgur.com"));
+        assert!(!is_link_imgur("https://notimgur.com/3EqtHIK"));
+        assert!(!is_link_imgur("http://www.valuatemysite.com/www.imgur.com"));
+        assert!(is_link_imgur("https://sub-domain.imgur.com"));
+        assert!(is_link_imgur("https://imgur.com?query=string"));
+        assert!(is_link_imgur("HTTPS://IMGUR.COM/3EqtHIK"));
+        assert!(is_link_imgur("https://imgur.com#fragment"));
+        assert!(is_link_imgur("https://imgur.com:443"));
+        assert!(!is_link_imgur("http://rir.li/http://i.imgur.com/oGqNH.jpg"));
+    }
+    #[test]
+    fn gfycat_links() {
+        assert!(is_link_gfycat(
+            "https://gfycat.com/excellentclumsyjanenschia-dog"
+        ));
+        assert!(is_link_gfycat("https://gfycat.com"));
+        assert!(is_link_gfycat("https://developers.gfycat.com/api/"));
+        assert!(!is_link_gfycat(
+            "https://notgfycat.com/excellentclumsyjanenschia-dog"
+        ));
     }
 }

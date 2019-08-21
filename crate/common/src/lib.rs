@@ -558,9 +558,17 @@ pub mod secrets {
         pub connect: String,
     }
     #[derive(Debug, Deserialize)]
+    pub struct Reddit {
+        pub client_id: String,
+        pub client_secret: String,
+        pub username: String,
+        pub password: String
+    }
+    #[derive(Debug, Deserialize)]
     pub struct Secrets {
         pub imgur: Imgur,
         pub postgres: Postgres,
+        pub reddit: Reddit
     }
 
     pub fn load() -> Result<Secrets, Error> {

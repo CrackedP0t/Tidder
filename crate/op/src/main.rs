@@ -1,4 +1,5 @@
 use clap::clap_app;
+use common::*;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
@@ -32,11 +33,14 @@ fn post(id: String) -> Result<(), Box<Error>> {
 
     let mut auth_resp = client
         .post("https://www.reddit.com/api/v1/access_token")
-        .basic_auth("***REMOVED***", Some("***REMOVED***"))
+        .basic_auth(
+            &SECRETS.reddit.client_id,
+            Some(&SECRETS.reddit.client_secret),
+        )
         .query(&[
             ("grant_type", "password"),
-            ("username", "***REMOVED***"),
-            ("password", "***REMOVED***"),
+            ("username", &SECRETS.reddit.username),
+            ("password", &SECRETS.reddit.password),
         ])
         .send()?
         .error_for_status()?;
@@ -66,31 +70,32 @@ fn post(id: String) -> Result<(), Box<Error>> {
 }
 
 fn hash(links: Vec<String>) -> Result<(), Box<Error>> {
-    use common::*;
     use futures::{
         future::{ok, Future},
         stream::{iter_ok, Stream},
     };
 
     tokio::run(
-        iter_ok::<_, ()>(links.into_iter()).fold(None, |last, arg| {
-            get_hash(arg.clone()).then(move |res| {
-                let (hash, link, _get_kind) = match res {
-                    Ok(res) => res,
-                    Err(e) => {
-                        println!("{} failed: {}", arg, e);
-                        return ok(last);
+        iter_ok::<_, ()>(links.into_iter())
+            .fold(None, |last, arg| {
+                get_hash(arg.clone()).then(move |res| {
+                    let (hash, link, _get_kind) = match res {
+                        Ok(res) => res,
+                        Err(e) => {
+                            println!("{} failed: {}", arg, e);
+                            return ok(last);
+                        }
+                    };
+                    let mut out = format!("{}: {}", link, hash);
+                    if let Some(last) = last {
+                        out = format!("{} ({})", out, distance(hash, last));
                     }
-                };
-                let mut out = format!("{}: {}", link, hash);
-                if let Some(last) = last {
-                    out = format!("{} ({})", out, distance(hash, last));
-                }
-                println!("{}", out);
+                    println!("{}", out);
 
-                ok(Some(hash))
+                    ok(Some(hash))
+                })
             })
-        }).map(|_| ())
+            .map(|_| ()),
     );
     Ok(())
 }
@@ -111,7 +116,13 @@ fn get_op() -> Result<Op, Box<Error>> {
 
     let op = match op_name {
         "post" => Op::Post(op_matches.value_of("ID").unwrap().to_string()),
-        "hash" => Op::Hash(op_matches.values_of("LINKS").unwrap().map(|l| l.to_owned()).collect()),
+        "hash" => Op::Hash(
+            op_matches
+                .values_of("LINKS")
+                .unwrap()
+                .map(|l| l.to_owned())
+                .collect(),
+        ),
         unknown => {
             return Err(Box::new(StrError::new(format!(
                 "Unknown subcommand '{}'",

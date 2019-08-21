@@ -347,6 +347,8 @@ pub fn get_hash(
         static ref EXT_REPLACE_RE: Regex = Regex::new(r"^(.+?)\.[[:alnum:]]+$").unwrap();
     }
 
+    dbg!(&link);
+
     if link.len() > 2000 {
         return Either::B(err(ue!("URL too long", Source::User)));
     }

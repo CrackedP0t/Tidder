@@ -141,10 +141,10 @@ fn make_imgur_api_request(api_link: String) -> impl Future<Item = Value, Error =
 
 fn follow_imgur(mut url: Url) -> impl Future<Item = String, Error = UserError> + Send {
     lazy_static! {
-        static ref IMGUR_GIFV_RE: Regex = Regex::new(r"\.(?:gifv|webm|mp4)($|[?#])").unwrap();
-        static ref IMGUR_EMPTY_RE: Regex = Regex::new(r"^/\.[[:alnum:]]+\b").unwrap();
-        static ref IMGUR_EXT_RE: Regex =
-            Regex::new(r"(?i)[[:alnum:]]\.(?:jpg|png)[[:alnum:]]+").unwrap();
+        static ref ID_RE: Regex = Regex::new(r"^[[:alnum:]]+").unwrap();
+        static ref GIFV_RE: Regex = Regex::new(r"\.(?:gifv|webm|mp4)($|[?#])").unwrap();
+        static ref EMPTY_RE: Regex = Regex::new(r"^/\.[[:alnum:]]+\b").unwrap();
+        static ref EXT_RE: Regex = Regex::new(r"(?i)[[:alnum:]]\.(?:jpg|png)[[:alnum:]]+").unwrap();
         static ref HOST_LIMIT_RE: Regex =
             Regex::new(r"^(?i).+?\.([a-z0-9-]+\.[a-z0-9-]+\.[a-z0-9-]+)$").unwrap();
         static ref REQW_CLIENT_NO_REDIR: reqwest::r#async::Client =
@@ -154,8 +154,6 @@ fn follow_imgur(mut url: Url) -> impl Future<Item = String, Error = UserError> +
                 .build()
                 .unwrap();
     }
-
-    // std::thread::sleep(Duration::from_millis(20));
 
     let host = fut_try!(url.host_str().ok_or(ue!("No host in Imgur URL")));
 
@@ -180,18 +178,16 @@ fn follow_imgur(mut url: Url) -> impl Future<Item = String, Error = UserError> +
         .ok_or(ue!("base Imgur URL", Source::User)))
     .to_owned();
 
-    if host == "i.imgur.com" && IMGUR_GIFV_RE.is_match(path) {
-        Either::B(ok(IMGUR_GIFV_RE
-            .replace(url.as_str(), ".gif$1")
-            .to_string()))
-    } else if IMGUR_EXT_RE.is_match(path) || path_start == "download" {
+    if host == "i.imgur.com" && GIFV_RE.is_match(path) {
+        Either::B(ok(GIFV_RE.replace(url.as_str(), ".gif$1").to_string()))
+    } else if EXT_RE.is_match(path) || path_start == "download" {
         Either::B(ok(url.into_string()))
     } else if path_start == "a" {
         let id = url.path_segments().unwrap().next_back().unwrap();
         let api_link = format!("https://imgur-apiv3.p.rapidapi.com/3/album/{}/images", id);
         Either::A(
             Box::new(make_imgur_api_request(api_link).and_then(move |json| {
-                Ok(IMGUR_GIFV_RE
+                Ok(GIFV_RE
                     .replace(
                         json["data"].get(0).ok_or(ue!("Imgur album is empty"))?["link"]
                             .as_str()
@@ -216,7 +212,7 @@ fn follow_imgur(mut url: Url) -> impl Future<Item = String, Error = UserError> +
                         let api_link =
                             format!("https://imgur-apiv3.p.rapidapi.com/3/gallery/album/{}", id);
                         Either::A(make_imgur_api_request(api_link).and_then(|json| {
-                            let to = IMGUR_GIFV_RE
+                            let to = GIFV_RE
                                 .replace(
                                     json["data"]["images"]
                                         .get(0)
@@ -240,13 +236,13 @@ fn follow_imgur(mut url: Url) -> impl Future<Item = String, Error = UserError> +
                 }),
         ))
     } else {
-        let id = url.path_segments().unwrap().next_back().unwrap();
-
-        let id = if let Some(loc) = id.find(',') {
-            id.split_at(loc).0
-        } else {
-            id
-        };
+        let id = fut_try!(url
+            .path_segments()
+            .unwrap()
+            .next_back()
+            .and_then(|seg| ID_RE.find(seg))
+            .ok_or(ue!("Couldn't find Imgur ID")))
+        .as_str();
 
         Either::B(ok(format!("https://i.imgur.com/{}.jpg", id)))
     }
@@ -579,8 +575,12 @@ mod tests {
 
     #[test]
     fn wikipedia_files() {
-        assert!(is_wikipedia_file("https://commons.wikimedia.org/wiki/File:Kalidas_1931_Songbook.JPG"));
-        assert!(!is_wikipedia_file("http://en.www.wikipedia.org/wiki/File:Virtual-Boy-Set.png"));
+        assert!(is_wikipedia_file(
+            "https://commons.wikimedia.org/wiki/File:Kalidas_1931_Songbook.JPG"
+        ));
+        assert!(!is_wikipedia_file(
+            "http://en.www.wikipedia.org/wiki/File:Virtual-Boy-Set.png"
+        ));
     }
 
     #[test]

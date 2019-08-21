@@ -4,6 +4,7 @@ use std::fmt::{self, Display, Formatter};
 
 enum Op {
     Post(String),
+    Hash(Vec<String>),
 }
 
 #[derive(Debug)]
@@ -32,13 +33,19 @@ fn post(id: String) -> Result<(), Box<Error>> {
     let mut auth_resp = client
         .post("https://www.reddit.com/api/v1/access_token")
         .basic_auth("***REMOVED***", Some("***REMOVED***"))
-        .query(&[("grant_type", "password"), ("username", "***REMOVED***"), ("password", "***REMOVED***")])
+        .query(&[
+            ("grant_type", "password"),
+            ("username", "***REMOVED***"),
+            ("password", "***REMOVED***"),
+        ])
         .send()?
         .error_for_status()?;
 
     let json = auth_resp.json::<Value>()?;
 
-    let access_token = json["access_token"].as_str().ok_or_else(|| StrError::new("Access token not found"))?;
+    let access_token = json["access_token"]
+        .as_str()
+        .ok_or_else(|| StrError::new("Access token not found"))?;
 
     let link = format!("https://oauth.reddit.com/by_id/t3_{}", id);
 
@@ -58,10 +65,43 @@ fn post(id: String) -> Result<(), Box<Error>> {
     Ok(())
 }
 
+fn hash(links: Vec<String>) -> Result<(), Box<Error>> {
+    use common::*;
+    use futures::{
+        future::{ok, Future},
+        stream::{iter_ok, Stream},
+    };
+
+    tokio::run(
+        iter_ok::<_, ()>(links.into_iter()).fold(None, |last, arg| {
+            get_hash(arg.clone()).then(move |res| {
+                let (hash, link, _get_kind) = match res {
+                    Ok(res) => res,
+                    Err(e) => {
+                        println!("{} failed: {}", arg, e);
+                        return ok(last);
+                    }
+                };
+                let mut out = format!("{}: {}", link, hash);
+                if let Some(last) = last {
+                    out = format!("{} ({})", out, distance(hash, last));
+                }
+                println!("{}", out);
+
+                ok(Some(hash))
+            })
+        }).map(|_| ())
+    );
+    Ok(())
+}
+
 fn get_op() -> Result<Op, Box<Error>> {
     let matches = clap_app!(op =>
         (@subcommand post =>
-         (@arg ID: +required "Reddit's ID for the post")
+            (@arg ID: +required "Reddit's ID for the post")
+        )
+        (@subcommand hash =>
+            (@arg LINKS: +required ... "The links you wish to hash")
         )
     )
     .get_matches();
@@ -71,6 +111,7 @@ fn get_op() -> Result<Op, Box<Error>> {
 
     let op = match op_name {
         "post" => Op::Post(op_matches.value_of("ID").unwrap().to_string()),
+        "hash" => Op::Hash(op_matches.values_of("LINKS").unwrap().map(|l| l.to_owned()).collect()),
         unknown => {
             return Err(Box::new(StrError::new(format!(
                 "Unknown subcommand '{}'",
@@ -87,5 +128,6 @@ fn main() -> Result<(), Box<Error>> {
 
     match op {
         Op::Post(id) => post(id),
+        Op::Hash(links) => hash(links),
     }
 }

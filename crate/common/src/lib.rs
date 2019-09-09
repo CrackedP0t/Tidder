@@ -359,7 +359,7 @@ impl types::ToSql for Hash {
         &self,
         t: &types::Type,
         w: &mut Vec<u8>,
-    ) -> Result<types::IsNull, Box<std::error::Error + Sync + Send>> {
+    ) -> Result<types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
         (self.0 as i64).to_sql(t, w)
     }
 

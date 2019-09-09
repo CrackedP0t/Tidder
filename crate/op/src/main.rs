@@ -25,7 +25,7 @@ impl Display for StrError {
 
 impl Error for StrError {}
 
-fn post(id: String) -> Result<(), Box<Error>> {
+fn post(id: String) -> Result<(), Box<dyn Error>> {
     use reqwest::{header::USER_AGENT, Client};
     use serde_json::Value;
 
@@ -69,7 +69,7 @@ fn post(id: String) -> Result<(), Box<Error>> {
     Ok(())
 }
 
-fn hash(links: Vec<String>) -> Result<(), Box<Error>> {
+fn hash(links: Vec<String>) -> Result<(), Box<dyn Error>> {
     use futures::{
         future::{ok, Future},
         stream::{iter_ok, Stream},
@@ -100,7 +100,7 @@ fn hash(links: Vec<String>) -> Result<(), Box<Error>> {
     Ok(())
 }
 
-fn get_op() -> Result<Op, Box<Error>> {
+fn get_op() -> Result<Op, Box<dyn Error>> {
     let matches = clap_app!(op =>
         (@subcommand post =>
             (@arg ID: +required "Reddit's ID for the post")
@@ -134,7 +134,7 @@ fn get_op() -> Result<Op, Box<Error>> {
     Ok(op)
 }
 
-fn main() -> Result<(), Box<Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
     let op = get_op()?;
 
     match op {

@@ -388,7 +388,7 @@ fn main() {
 
         info!("Ingesting {}", path);
 
-        let (input_future, arch_path): (Box<Future<Item = File, Error = Error> + Send>, _) =
+        let (input_future, arch_path): (Box<dyn Future<Item = File, Error = Error> + Send>, _) =
             if path.starts_with("http://") || path.starts_with("https://") {
                 let arch_path = std::env::var("HOME").map_err(Error::from).unwrap()
                     + "/archives/"

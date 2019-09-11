@@ -28,7 +28,8 @@ const IN_FLIGHT_LIMIT: u32 = 1;
 lazy_static! {
     static ref CUSTOM_LIMITS: HashMap<&'static str, Option<u32>> = {
         let mut map = HashMap::new();
-        map.insert("imgur.com", Some(5));
+        map.insert("imgur.com", Some(3));
+        map.insert("i.imgur.com", Some(7));
         map
     };
 }
@@ -208,7 +209,9 @@ fn ingest_json<R: Read + Send>(
                         let tld = get_tld(&post_url);
                         match in_flight.try_read() {
                             Ok(guard) => {
-                                let custom_limit: Option<&Option<_>> = CUSTOM_LIMITS.get(&tld);
+                                let custom_limit: Option<&Option<_>> = post_url
+                                    .host_str()
+                                    .and_then(|host| CUSTOM_LIMITS.get(&host));
 
                                 let limit = match custom_limit {
                                     None => Some(IN_FLIGHT_LIMIT),

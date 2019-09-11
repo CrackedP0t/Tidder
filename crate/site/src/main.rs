@@ -1,15 +1,17 @@
-#![recursion_limit="128"]
+#![recursion_limit = "128"]
 
 use common::*;
 use fallible_iterator::FallibleIterator;
 use gotham::{
+    handler::{HandlerFuture, IntoResponse},
+    middleware::logger::RequestLogger,
+    pipeline::{new_pipeline, single::single_pipeline},
     router::builder::*,
     state::{FromState, State},
-    handler::{HandlerFuture, IntoResponse},
 };
 use gotham_derive::{StateData, StaticResponseExtender};
 use hyper::{self, Body, HeaderMap, StatusCode};
-
+use log::Level;
 use futures::{
     future::{err, ok, Either},
     Future, Stream,
@@ -210,7 +212,7 @@ lazy_static! {
         PostgresConnectionManager::new(SECRETS.postgres.connect.parse().unwrap(), NoTls)
     )
     .unwrap();
-    static ref TERA: Tera = match Tera::new("site/templates/*") {
+    static ref TERA: Tera = match Tera::new(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/*")) {
         Ok(mut t) => {
             t.register_filter("tern", utils::tern);
             t.register_filter("plural", utils::pluralize);
@@ -460,33 +462,35 @@ fn post_search(headers: &HeaderMap, body: Body) -> Search {
 }
 
 fn get_response(mut state: State) -> Box<HandlerFuture> {
-    Box::new(get_search(SearchQuery::take_from(&mut state)).then(|search| {
-        let search = search.unwrap();
-        let out = Context::from_serialize(&search)
-            .and_then(|context| TERA.render("search.html", context))
-            .map_err(le!());
+    Box::new(
+        get_search(SearchQuery::take_from(&mut state)).then(|search| {
+            let search = search.unwrap();
+            let out = Context::from_serialize(&search)
+                .and_then(|context| TERA.render("search.html", context))
+                .map_err(le!());
 
-        let (page, status) = match out {
-            Ok(page) => (
-                page,
-                search
-                    .error
-                    .map(|ue| {
-                        warn!("{}", ue.error);
-                        ue.status_code()
-                    })
-                    .unwrap_or(StatusCode::OK),
-            ),
-            Err(_) => (
-                "<h1>Error 500: Internal Server Error</h1>".to_string(),
-                StatusCode::INTERNAL_SERVER_ERROR,
-            ),
-        };
+            let (page, status) = match out {
+                Ok(page) => (
+                    page,
+                    search
+                        .error
+                        .map(|ue| {
+                            warn!("{}", ue.error);
+                            ue.status_code()
+                        })
+                        .unwrap_or(StatusCode::OK),
+                ),
+                Err(_) => (
+                    "<h1>Error 500: Internal Server Error</h1>".to_string(),
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                ),
+            };
 
-        let response = (status, mime::TEXT_HTML_UTF_8, page).into_response(&state);
+            let response = (status, mime::TEXT_HTML_UTF_8, page).into_response(&state);
 
-        ok((state, response))
-    }))
+            ok((state, response))
+        }),
+    )
 }
 
 fn post_response(mut state: State) -> (State, (StatusCode, Mime, String)) {
@@ -516,10 +520,12 @@ fn post_response(mut state: State) -> (State, (StatusCode, Mime, String)) {
 }
 
 fn run_server() {
-    setup_logging();
+    setup_logging!();
     TERA::initialize(&TERA);
 
-    let router = build_simple_router(|route| {
+    let (chain, pipelines) = single_pipeline(new_pipeline().add(RequestLogger::new(Level::Info)).build());
+
+    let router = build_router(chain, pipelines, |route| {
         route
             .get("/")
             .with_query_string_extractor::<SearchQuery>()

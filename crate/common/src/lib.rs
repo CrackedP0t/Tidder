@@ -498,33 +498,34 @@ fn error_for_status_ue(e: reqwest::Error) -> UserError {
     UserError::new(msg, e)
 }
 
-pub fn setup_logging() {
+pub fn setup_logging(name: &str) {
     fern::Dispatch::new()
         .format(|out, message, record| {
             let level = record.level();
             out.finish(format_args!(
-                "{}[{}{}] {}",
-                chrono::Local::now().format("[%Y-%m-%d %H:%M:%S]"),
+                "[{}]{}[{}] {}",
+                chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
                 if level != LevelFilter::Info && level != LevelFilter::Warn {
                     match record.file() {
-                        Some(file) => format!(
-                            ":{}{}",
+                        Some(file) => Cow::Owned(format!(
+                            "[{}{}]",
                             file,
                             match record.line() {
-                                Some(line) => format!("#{}", line),
-                                None => "".to_string(),
+                                Some(line) => Cow::Owned(format!("#{}", line)),
+                                None => Cow::Borrowed("")
                             }
-                        ),
-                        None => "".to_string(),
+                        )),
+                        None => Cow::Borrowed("")
                     }
                 } else {
-                    "".to_string()
+                    Cow::Borrowed("")
                 },
                 record.level(),
                 message
             ))
         })
         .level(LevelFilter::Warn)
+        .level_for("gotham", LevelFilter::Info)
         .level_for("site", LevelFilter::Info)
         .level_for("watcher", LevelFilter::Info)
         .level_for("hasher", LevelFilter::Info)
@@ -533,13 +534,21 @@ pub fn setup_logging() {
         .chain(std::io::stderr())
         .chain(
             fern::log_file(format!(
-                "/tmp/tidder_output_{}.log",
+                "/var/log/tidder/{}_{}.log",
+                name,
                 chrono::Local::now().format("%Y-%m-%d_%H:%M:%S")
             ))
             .unwrap(),
         )
         .apply()
         .unwrap();
+}
+
+#[macro_export]
+macro_rules! setup_logging {
+    () => {
+        common::setup_logging(env!("CARGO_PKG_NAME"))
+    }
 }
 
 pub mod secrets {

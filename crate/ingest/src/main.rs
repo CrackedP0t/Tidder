@@ -353,7 +353,7 @@ fn main() {
         static ref YEAR_RE: Regex = Regex::new(r"\d\d\d\d").unwrap();
     }
 
-    setup_logging();
+    setup_logging!();
     let matches = clap_app!(
         ingest =>
             (version: crate_version!())

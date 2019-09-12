@@ -149,7 +149,7 @@ fn follow_imgur(mut url: Url) -> impl Future<Item = String, Error = UserError> +
             Regex::new(r"^(?i).+?\.([a-z0-9-]+\.[a-z0-9-]+\.[a-z0-9-]+)$").unwrap();
         static ref REQW_CLIENT_NO_REDIR: reqwest::r#async::Client =
             reqwest::r#async::Client::builder()
-                .timeout(Duration::from_secs(30))
+                .timeout(Duration::from_secs(45))
                 .redirect(RedirectPolicy::none())
                 .build()
                 .unwrap();

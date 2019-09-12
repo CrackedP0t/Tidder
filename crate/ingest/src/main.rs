@@ -298,14 +298,17 @@ fn ingest_json<R: Read + Send>(
                                         );
                                         if let Some(e) = ue.error.downcast_ref::<reqwest::Error>() {
                                             if e.is_timeout()
+                                                || e.is_server_error()
                                                 || e.get_ref()
-                                                    .and_then(|e| e.downcast_ref::<hyper::Error>())
-                                                    .map(hyper::Error::is_connect)
+                                                    .and_then(|e| {
+                                                        e.downcast_ref::<hyper::Error>()
+                                                            .map(hyper::Error::is_connect)
+                                                    })
                                                     .unwrap_or(false)
                                             {
                                                 if is_link_special(&post.url) {
                                                     error!(
-                                                        "{}: {}: {}: Special link timed out",
+                                                        "{}: {}: {}: Special link server error",
                                                         post.created_utc, post.id, post.url
                                                     );
                                                     std::process::exit(1);

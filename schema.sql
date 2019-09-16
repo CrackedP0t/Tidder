@@ -2,8 +2,8 @@
 -- PostgreSQL database dump
 --
 
--- Dumped from database version 11.4
--- Dumped by pg_dump version 11.4
+-- Dumped from database version 11.5
+-- Dumped by pg_dump version 11.5
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -116,8 +116,12 @@ CREATE TABLE public.posts (
     title character varying NOT NULL,
     nsfw boolean NOT NULL,
     spoiler boolean DEFAULT false NOT NULL,
-    image_id bigint NOT NULL,
-    reddit_id_int bigint NOT NULL
+    image_id bigint,
+    reddit_id_int bigint NOT NULL,
+    thumbnail_width integer,
+    thumbnail character varying,
+    thumbnail_height integer,
+    updated timestamp without time zone
 );
 
 
@@ -260,6 +264,48 @@ CREATE INDEX posts_subreddit_idx ON public.posts USING btree (subreddit);
 
 ALTER TABLE ONLY public.posts
     ADD CONSTRAINT posts_image_id_fkey FOREIGN KEY (image_id) REFERENCES public.images(id);
+
+
+--
+-- Name: SEQUENCE image_cache_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.image_cache_id_seq TO site;
+
+
+--
+-- Name: TABLE image_cache; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.image_cache TO site;
+
+
+--
+-- Name: TABLE images; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.images TO site;
+
+
+--
+-- Name: SEQUENCE images_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.images_id_seq TO site;
+
+
+--
+-- Name: TABLE posts; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE public.posts TO site;
+
+
+--
+-- Name: SEQUENCE posts_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT ALL ON SEQUENCE public.posts_id_seq TO site;
 
 
 --

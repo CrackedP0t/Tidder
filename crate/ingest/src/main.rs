@@ -77,7 +77,8 @@ fn ingest_json<R: Read + Send>(
             return Ok(None);
         }
         let id: String = from_value(post["id"].take()).map_err(Error::from)?;
-        Ok(Some(Submission {
+
+        let mut sub = Submission {
             id_int: i64::from_str_radix(&id, 36)
                 .map_err(|e| format_err!("Couldn't parse number from ID '{}': {}", &id, e))?,
             id,
@@ -100,9 +101,21 @@ fn ingest_json<R: Read + Send>(
             score: from_value(post["score"].take()).map_err(Error::from)?,
             spoiler: from_value(post["spoiler"].take()).map_err(Error::from)?,
             subreddit: from_value(post["subreddit"].take()).map_err(Error::from)?,
+            thumbnail: from_value(post["thumbnail"].take()).map_err(Error::from)?,
+            thumbnail_width: from_value(post["thumbnail_width"].take()).map_err(Error::from)?,
+            thumbnail_height: from_value(post["thumbnail_height"].take()).map_err(Error::from)?,
             title: from_value(post["title"].take()).map_err(Error::from)?,
+            updated: None,
             url: from_value(post["url"].take()).map_err(Error::from)?,
-        }))
+        };
+
+        if sub.thumbnail.as_ref().map(|t| !t.starts_with("http")).unwrap_or(true) {
+            sub.thumbnail = None;
+            sub.thumbnail_width = None;
+            sub.thumbnail_height = None;
+        }
+
+        Ok(Some(sub))
     };
 
     let blacklist = Arc::new(RwLock::new(HashSet::<String>::new()));
@@ -332,7 +345,7 @@ fn ingest_json<R: Read + Send>(
                 })
                 .then(move |res| {
                     let (post, image_id) = res
-                        .map(|tup| (tup.0, Some(tup.1)))
+                        .map(|(post, image_id)| (post, Some(image_id)))
                         .unwrap_or_else(|post| (post, None));
                     save_post(post, image_id).then(move |res| {
                         let mut all_spawned_lock = end_all_spawned.write().unwrap();

@@ -271,6 +271,10 @@ pub struct Submission {
     pub spoiler: Option<bool>,
     pub subreddit: String,
     pub title: String,
+    pub thumbnail: Option<String>,
+    pub thumbnail_width: Option<i32>,
+    pub thumbnail_height: Option<i32>,
+    pub updated: Option<NaiveDateTime>,
     pub url: String,
 }
 
@@ -315,9 +319,10 @@ pub fn save_post(
                         "INSERT INTO posts \
                          (reddit_id, link, permalink, author, \
                          created_utc, score, subreddit, title, nsfw, \
-                         spoiler, image_id, reddit_id_int) \
+                         spoiler, image_id, reddit_id_int, \
+                         thumbnail, thumbnail_width, thumbnail_height) \
                          VALUES ($1, $2, $3, $4, $5, $6, $7, \
-                         $8, $9, $10, $11, $12) \
+                         $8, $9, $10, $11, $12, $13, $14, $15) \
                          ON CONFLICT DO NOTHING",
                     )
                     .and_then(move |stmt| {
@@ -336,6 +341,9 @@ pub fn save_post(
                                 &post.spoiler.unwrap_or(false),
                                 &image_id,
                                 &i64::from_str_radix(&reddit_id, 36).unwrap(),
+                                &post.thumbnail,
+                                &post.thumbnail_width,
+                                &post.thumbnail_height
                             ],
                         )
                     })

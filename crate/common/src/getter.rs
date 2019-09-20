@@ -110,16 +110,24 @@ fn make_imgur_api_request(api_link: String) -> impl Future<Item = Value, Error =
     lazy_static! {
         static ref API_CLIENT: reqwest::r#async::Client = reqwest::r#async::Client::builder()
             .timeout(Duration::from_secs(60))
+            .default_headers({
+                let mut headers = HeaderMap::new();
+                headers.insert(
+                    "X-RapidAPI-Key",
+                    HeaderValue::from_static(SECRETS.imgur.rapidapi_key.as_str()),
+                );
+                headers.insert(
+                    header::AUTHORIZATION,
+                    HeaderValue::from_str(&format!("Client-ID {}", SECRETS.imgur.client_id))
+                        .unwrap(),
+                );
+                headers
+            })
             .build()
             .unwrap();
     }
     API_CLIENT
         .get(&api_link)
-        .header(
-            header::AUTHORIZATION,
-            format!("Client-ID {}", SECRETS.imgur.client_id),
-        )
-        .header("X-RapidAPI-Key", SECRETS.imgur.rapidapi_key.as_str())
         .send()
         .map_err(map_ue!("couldn't reach Imgur API"))
         .and_then(|resp| resp.error_for_status().map_err(error_for_status_ue))

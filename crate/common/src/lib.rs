@@ -8,7 +8,7 @@ use lazy_static::lazy_static;
 use log::LevelFilter;
 pub use log::{error, info, warn};
 use regex::Regex;
-use reqwest::header::{self, HeaderMap};
+use reqwest::header::{self, HeaderMap, HeaderValue};
 use serde::Deserialize;
 use std::borrow::Cow;
 use std::fmt::{self, Display};

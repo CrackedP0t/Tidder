@@ -42,7 +42,10 @@ impl Banned {
     }
 }
 
-const BANNED: [Banned; 2] = [Banned::TLD("fbcdn.net"), Banned::Full("http://i.imgur.com/JwhvGDV.jpg")];
+const BANNED: [Banned; 2] = [
+    Banned::TLD("fbcdn.net"),
+    Banned::Full("http://i.imgur.com/JwhvGDV.jpg"),
+];
 const IN_FLIGHT_LIMIT: u32 = 1;
 
 lazy_static! {
@@ -215,12 +218,8 @@ fn ingest_json<R: Read + Send>(
                         }
                     };
 
-                    // let tld = get_tld(&post_url);
                     if verbose && BANNED.iter().any(|banned| banned.matches(&post_url)) {
-                        warn!(
-                            "{}: {}: {} is banned",
-                            post.created_utc, post.id, post.url
-                        );
+                        warn!("{}: {}: {} is banned", post.created_utc, post.id, post.url);
                         return err(post);
                     }
 

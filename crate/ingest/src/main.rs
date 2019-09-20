@@ -22,7 +22,27 @@ use url::Url;
 
 use future::{err, ok, poll_fn};
 
-const BANNED_TLDS: [&str; 1] = ["fbcdn.net"];
+pub enum Banned {
+    TLD(&'static str),
+    Host(&'static str),
+    Full(&'static str),
+}
+
+impl Banned {
+    pub fn matches(&self, url: &Url) -> bool {
+        use Banned::*;
+        match self {
+            TLD(tld) => get_tld(url) == *tld,
+            Host(host) => url
+                .host_str()
+                .map(|host_str| host_str == *host)
+                .unwrap_or(false),
+            Full(link) => url.as_str() == *link,
+        }
+    }
+}
+
+const BANNED: [Banned; 2] = [Banned::TLD("fbcdn.net"), Banned::Full("http://i.imgur.com/JwhvGDV.jpg")];
 const IN_FLIGHT_LIMIT: u32 = 1;
 
 lazy_static! {
@@ -109,7 +129,12 @@ fn ingest_json<R: Read + Send>(
             url: from_value(post["url"].take()).map_err(Error::from)?,
         };
 
-        if sub.thumbnail.as_ref().map(|t| !t.starts_with("http")).unwrap_or(true) {
+        if sub
+            .thumbnail
+            .as_ref()
+            .map(|t| !t.starts_with("http"))
+            .unwrap_or(true)
+        {
             sub.thumbnail = None;
             sub.thumbnail_width = None;
             sub.thumbnail_height = None;
@@ -190,10 +215,10 @@ fn ingest_json<R: Read + Send>(
                         }
                     };
 
-                    let tld = get_tld(&post_url);
-                    if verbose && BANNED_TLDS.contains(&tld) {
+                    // let tld = get_tld(&post_url);
+                    if verbose && BANNED.iter().any(|banned| banned.matches(&post_url)) {
                         warn!(
-                            "{}: {}: {} has a banned domain name",
+                            "{}: {}: {} is banned",
                             post.created_utc, post.id, post.url
                         );
                         return err(post);

@@ -346,8 +346,8 @@ fn ingest_json<R: Read + Send>(
                                             {
                                                 if is_link_special(&post.url) {
                                                     error!(
-                                                        "{}: {}: {}: Special link server error",
-                                                        post.created_utc, post.id, post.url
+                                                        "{}: {}: {}: Special link server error: {:?}",
+                                                        post.created_utc, post.id, post.url, e
                                                     );
                                                     std::process::exit(1);
                                                 }

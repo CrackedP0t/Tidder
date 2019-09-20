@@ -36,6 +36,14 @@ pub fn is_link_gfycat(link: &str) -> bool {
     GFYCAT_LINK_RE.is_match(link)
 }
 
+pub fn is_link_gifsound(link: &str) -> bool {
+    lazy_static! {
+        static ref GIFSOUND_LINK_RE: Regex = new_domain_re("gifsound.com").unwrap();
+    }
+
+    GIFSOUND_LINK_RE.is_match(link)
+}
+
 lazy_static! {
     static ref WIKIPEDIA_FILE_RE: Regex =
                Regex::new(r"(?i)^(?:[^.]+\.)?(?:wikipedia|wiktionary|wikiquote|wikibooks|wikisource|wikinews|wikiversity|wikispecies|mediawiki|wikidata|wikivoyage|wikimedia).org(?-i)/wiki/((?i:Image|File):[^#?]+)").unwrap();
@@ -46,7 +54,7 @@ pub fn is_wikipedia_file(link: &str) -> bool {
 }
 
 pub fn is_link_special(link: &str) -> bool {
-    is_link_imgur(link) || is_link_gfycat(link) || is_wikipedia_file(link)
+    is_link_imgur(link) || is_link_gfycat(link) || is_wikipedia_file(link) || is_link_gifsound(link)
 }
 
 pub fn is_link_important(link: &str) -> bool {
@@ -58,6 +66,8 @@ pub fn follow_link(url: Url) -> impl Future<Item = String, Error = UserError> + 
         Box::new(follow_imgur(url)) as _
     } else if is_wikipedia_file(url.as_str()) {
         Box::new(follow_wikipedia(url)) as Box<dyn Future<Item = _, Error = _> + Send>
+    } else if is_link_gifsound(url.as_str()) {
+        Box::new(follow_gifsound(url)) as _
     } else if EXT_RE.is_match(url.as_str()) {
         Box::new(ok(url.into_string())) as _
     } else if is_link_gfycat(url.as_str()) {
@@ -66,6 +76,19 @@ pub fn follow_link(url: Url) -> impl Future<Item = String, Error = UserError> + 
         Box::new(ok(url.into_string())) as _
     }
     .map(|link: String| utf8_percent_encode(link.as_str(), QUERY_ENCODE_SET).collect::<String>())
+}
+
+fn follow_gifsound(url: Url) -> impl Future<Item = String, Error = UserError> + Send {
+    for (key, value) in url.query_pairs() {
+        if key == "gif" {
+            return ok(if value.starts_with("http://") || value.starts_with("https://") {
+                value.to_string()
+            } else {
+                format!("http://{}", value)
+            })
+        }
+    }
+    err(ue!("GifSound URL without GIF"))
 }
 
 fn follow_gfycat(url: Url) -> impl Future<Item = String, Error = UserError> + Send {

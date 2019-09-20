@@ -82,7 +82,7 @@ fn hash(links: Vec<String>) -> Result<(), Box<dyn Error>> {
                     let (hash, link, _get_kind) = match res {
                         Ok(res) => res,
                         Err(e) => {
-                            println!("{} failed: {}", arg, e);
+                            println!("{} failed: {:?}", arg, e);
                             return ok(last);
                         }
                     };

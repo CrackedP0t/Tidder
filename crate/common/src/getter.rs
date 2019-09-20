@@ -115,12 +115,9 @@ fn make_imgur_api_request(api_link: String) -> impl Future<Item = Value, Error =
                 let mut headers = HeaderMap::new();
                 headers.insert(
                     "X-RapidAPI-Key",
-                    HeaderValue::from_static(SECRETS.imgur.rapidapi_key.as_str()),
+                    HeaderValue::from_static(&SECRETS.imgur.rapidapi_key),
                 );
-                headers.insert(
-                    header::AUTHORIZATION,
-                    HeaderValue::from_static(CLIENT_ID.as_str()),
-                );
+                headers.insert(header::AUTHORIZATION, HeaderValue::from_static(&CLIENT_ID));
                 headers
             })
             .build()

@@ -42,8 +42,9 @@ impl Banned {
     }
 }
 
-const BANNED: [Banned; 2] = [
+const BANNED: [Banned; 3] = [
     Banned::TLD("fbcdn.net"),
+    Banned::TLD("livememe.com"),
     Banned::Full("http://i.imgur.com/JwhvGDV.jpg"),
 ];
 const IN_FLIGHT_LIMIT: u32 = 1;

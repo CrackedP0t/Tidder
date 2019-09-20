@@ -226,8 +226,8 @@ fn ingest_json<R: Read + Send>(
 
                     let blacklist_guard = blacklist.read().unwrap();
                     if post_url
-                        .domain()
-                        .map(|domain| blacklist_guard.contains(domain))
+                        .host_str()
+                        .map(|host| blacklist_guard.contains(host))
                         .unwrap_or(false)
                     {
                         if verbose {
@@ -352,11 +352,11 @@ fn ingest_json<R: Read + Send>(
                                                     std::process::exit(1);
                                                 }
                                                 if let Ok(url) = Url::parse(&post.url) {
-                                                    if let Some(domain) = url.domain() {
+                                                    if let Some(host) = url.host_str() {
                                                         blacklist
                                                             .write()
                                                             .unwrap()
-                                                            .insert(domain.to_string());
+                                                            .insert(host.to_string());
                                                     }
                                                 }
                                             }

@@ -108,6 +108,7 @@ fn follow_gfycat(url: Url) -> impl Future<Item = String, Error = UserError> + Se
 
 fn make_imgur_api_request(api_link: String) -> impl Future<Item = Value, Error = UserError> {
     lazy_static! {
+        static ref CLIENT_ID: String = format!("Client-ID {}", SECRETS.imgur.client_id);
         static ref API_CLIENT: reqwest::r#async::Client = reqwest::r#async::Client::builder()
             .timeout(Duration::from_secs(60))
             .default_headers({
@@ -118,8 +119,7 @@ fn make_imgur_api_request(api_link: String) -> impl Future<Item = Value, Error =
                 );
                 headers.insert(
                     header::AUTHORIZATION,
-                    HeaderValue::from_str(&format!("Client-ID {}", SECRETS.imgur.client_id))
-                        .unwrap(),
+                    HeaderValue::from_static(CLIENT_ID.as_str()),
                 );
                 headers
             })

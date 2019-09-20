@@ -88,7 +88,7 @@ fn follow_gifsound(url: Url) -> impl Future<Item = String, Error = UserError> + 
             })
         }
     }
-    err(ue!("GifSound URL without GIF"))
+    err(ue!("GifSound URL without GIF", Source::User))
 }
 
 fn follow_gfycat(url: Url) -> impl Future<Item = String, Error = UserError> + Send {

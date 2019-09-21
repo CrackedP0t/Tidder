@@ -54,7 +54,7 @@ pub fn is_wikipedia_file(link: &str) -> bool {
 }
 
 pub fn is_link_special(link: &str) -> bool {
-    is_link_imgur(link) || is_link_gfycat(link) || is_wikipedia_file(link) || is_link_gifsound(link)
+    is_link_imgur(link) || is_link_gfycat(link) || is_wikipedia_file(link)
 }
 
 pub fn is_link_important(link: &str) -> bool {

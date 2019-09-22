@@ -1,6 +1,5 @@
 #![recursion_limit = "128"]
 
-use chrono::NaiveDateTime;
 use clap::{clap_app, crate_authors, crate_description, crate_version};
 use common::*;
 use failure::{format_err, Error};
@@ -8,8 +7,7 @@ use lazy_static::lazy_static;
 use log::{error, info, warn};
 use regex::Regex;
 use reqwest::r#async::Client;
-use serde_json::from_value;
-use serde_json::{Deserializer, Value};
+use serde_json::Deserializer;
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::{remove_file, File, OpenOptions};
@@ -89,65 +87,6 @@ fn ingest_json<R: Read + Send>(
     json_stream: R,
     verbose: bool,
 ) -> impl Future<Item = (), Error = ()> {
-    let json_iter = Deserializer::from_reader(json_stream).into_iter::<Value>();
-
-    info!("Starting ingestion!");
-
-    let check_json = Check::new(json_iter);
-
-    // That's a lot of allocation...
-    let to_submission = |mut post: Value| -> Result<Option<Submission>, Error> {
-        let promo = post["promoted"].take();
-        if !promo.is_null() && from_value(promo).map_err(Error::from)? {
-            return Ok(None);
-        }
-        let id: String = from_value(post["id"].take()).map_err(Error::from)?;
-
-        let mut sub = Submission {
-            id_int: i64::from_str_radix(&id, 36)
-                .map_err(|e| format_err!("Couldn't parse number from ID '{}': {}", &id, e))?,
-            id,
-            author: from_value(post["author"].take()).map_err(Error::from)?,
-            created_utc: NaiveDateTime::from_timestamp(
-                match post["created_utc"].take() {
-                    Value::Number(n) => n
-                        .as_i64()
-                        .ok_or_else(|| format_err!("'created_utc' is not a valid i64"))?,
-                    Value::String(n) => n.parse().map_err(|e| {
-                        format_err!("'created_utc' can't be parsed as an i64: {}", e)
-                    })?,
-                    _ => return Err(format_err!("'created_utc' is not a number or string")),
-                },
-                0,
-            ),
-            is_self: from_value(post["is_self"].take()).map_err(Error::from)?,
-            over_18: from_value(post["over_18"].take()).map_err(Error::from)?,
-            permalink: from_value(post["permalink"].take()).map_err(Error::from)?,
-            score: from_value(post["score"].take()).map_err(Error::from)?,
-            spoiler: from_value(post["spoiler"].take()).map_err(Error::from)?,
-            subreddit: from_value(post["subreddit"].take()).map_err(Error::from)?,
-            thumbnail: from_value(post["thumbnail"].take()).map_err(Error::from)?,
-            thumbnail_width: from_value(post["thumbnail_width"].take()).map_err(Error::from)?,
-            thumbnail_height: from_value(post["thumbnail_height"].take()).map_err(Error::from)?,
-            title: from_value(post["title"].take()).map_err(Error::from)?,
-            updated: None,
-            url: from_value(post["url"].take()).map_err(Error::from)?,
-        };
-
-        if sub
-            .thumbnail
-            .as_ref()
-            .map(|t| !t.starts_with("http"))
-            .unwrap_or(true)
-        {
-            sub.thumbnail = None;
-            sub.thumbnail_width = None;
-            sub.thumbnail_height = None;
-        }
-
-        Ok(Some(sub))
-    };
-
     let blacklist = Arc::new(RwLock::new(HashSet::<String>::new()));
 
     let in_flight = Arc::new(RwLock::new(HashMap::<String, u32>::new()));
@@ -156,10 +95,18 @@ fn ingest_json<R: Read + Send>(
 
     let all_spawned = Arc::new(RwLock::new(0u32));
 
+    let json_iter = Deserializer::from_reader(json_stream)
+        .into_iter::<Submission>()
+        .map(|res| res.map_err(map_ue!()).and_then(|sub| sub.finalize()));
+
+    let check_json = Check::new(json_iter);
+
+    info!("Starting ingestion!");
+
     check_json
-        .filter_map(|post| {
-            let post = to_submission(post).map_err(le!()).ok()??;
-            if !post.is_self
+        .filter(|post| {
+            !post.is_self
+                && post.promoted.map(|promoted| !promoted).unwrap_or(true)
                 && ((EXT_RE.is_match(&post.url) && URL_RE.is_match(&post.url))
                     || is_link_special(&post.url))
                 && match already_have {
@@ -172,11 +119,6 @@ fn ingest_json<R: Read + Send>(
                         !had
                     }
                 }
-            {
-                Some(post)
-            } else {
-                None
-            }
         })
         .for_each(|mut post: Submission| {
             let lazy_blacklist = blacklist.clone();

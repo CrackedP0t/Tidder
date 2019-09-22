@@ -260,13 +260,16 @@ pub const DEFAULT_DISTANCE: i64 = 1;
 
 #[derive(Deserialize, Debug)]
 pub struct Submission {
+    #[serde(default)]
     pub id_int: i64,
     pub id: String,
     pub author: Option<String>,
+    #[serde(deserialize_with = "de_sub::created_utc")]
     pub created_utc: NaiveDateTime,
     pub is_self: bool,
     pub over_18: bool,
     pub permalink: String,
+    pub promoted: Option<bool>,
     pub score: i64,
     pub spoiler: Option<bool>,
     pub subreddit: String,
@@ -274,8 +277,68 @@ pub struct Submission {
     pub thumbnail: Option<String>,
     pub thumbnail_width: Option<i32>,
     pub thumbnail_height: Option<i32>,
+    #[serde(default)]
     pub updated: Option<NaiveDateTime>,
     pub url: String,
+}
+
+impl Submission {
+    pub fn finalize(mut self) -> Result<Self, UserError> {
+        self.id_int = i64::from_str_radix(&self.id, 36).map_err(|e| {
+            UserError::new_source(
+                format!("Couldn't parse number from ID '{}'", self.id),
+                Source::Internal,
+                e,
+            )
+        })?;
+
+        Ok(self)
+    }
+}
+
+mod de_sub {
+    use super::*;
+    use serde::de::{self, Deserializer, Unexpected, Visitor};
+
+    pub fn created_utc<'de, D>(des: D) -> Result<NaiveDateTime, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct CreatedUTC;
+        impl<'de> Visitor<'de> for CreatedUTC {
+            type Value = NaiveDateTime;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                write!(formatter, "a number, possibly inside a string")
+            }
+
+            fn visit_u64<E>(self, secs: u64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                self.visit_i64(secs as i64)
+            }
+
+            fn visit_i64<E>(self, secs: i64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(NaiveDateTime::from_timestamp(secs, 0))
+            }
+
+            fn visit_str<E>(self, secs: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                let secs = secs
+                    .parse()
+                    .map_err(|_e| E::invalid_value(Unexpected::Str(secs), &self))?;
+                self.visit_i64(secs)
+            }
+        }
+
+        des.deserialize_any(CreatedUTC)
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -343,7 +406,7 @@ pub fn save_post(
                                 &i64::from_str_radix(&reddit_id, 36).unwrap(),
                                 &post.thumbnail,
                                 &post.thumbnail_width,
-                                &post.thumbnail_height
+                                &post.thumbnail_height,
                             ],
                         )
                     })
@@ -520,10 +583,10 @@ pub fn setup_logging(name: &str) {
                             file,
                             match record.line() {
                                 Some(line) => Cow::Owned(format!("#{}", line)),
-                                None => Cow::Borrowed("")
+                                None => Cow::Borrowed(""),
                             }
                         )),
-                        None => Cow::Borrowed("")
+                        None => Cow::Borrowed(""),
                     }
                 } else {
                     Cow::Borrowed("")
@@ -556,7 +619,7 @@ pub fn setup_logging(name: &str) {
 macro_rules! setup_logging {
     () => {
         common::setup_logging(env!("CARGO_PKG_NAME"))
-    }
+    };
 }
 
 pub mod secrets {
@@ -579,13 +642,13 @@ pub mod secrets {
         pub client_id: String,
         pub client_secret: String,
         pub username: String,
-        pub password: String
+        pub password: String,
     }
     #[derive(Debug, Deserialize)]
     pub struct Secrets {
         pub imgur: Imgur,
         pub postgres: Postgres,
-        pub reddit: Reddit
+        pub reddit: Reddit,
     }
 
     pub fn load() -> Result<Secrets, Error> {

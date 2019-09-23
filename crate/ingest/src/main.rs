@@ -9,9 +9,10 @@ use regex::Regex;
 use reqwest::r#async::Client;
 use serde_json::Deserializer;
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::fs::{remove_file, File, OpenOptions};
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
+use std::iter::FromIterator;
 use std::iter::Iterator;
 use std::path::Path;
 use std::sync::{Arc, RwLock, TryLockError};
@@ -47,6 +48,7 @@ const BANNED: [Banned; 4] = [
     Banned::Full("http://i.imgur.com/4nmJMzR.jpg"),
 ];
 const IN_FLIGHT_LIMIT: u32 = 1;
+const NO_BLACKLIST: [&str; 1] = ["gifsound.com"];
 
 lazy_static! {
     static ref CUSTOM_LIMITS: HashMap<&'static str, Option<u32>> = {
@@ -87,7 +89,9 @@ fn ingest_json<R: Read + Send>(
     json_stream: R,
     verbose: bool,
 ) -> impl Future<Item = (), Error = ()> {
-    let blacklist = Arc::new(RwLock::new(HashSet::<String>::new()));
+    let blacklist = Arc::new(RwLock::new(HashMap::<String, bool>::from_iter(
+        NO_BLACKLIST.iter().map(|h| (h.to_string(), false)),
+    )));
 
     let in_flight = Arc::new(RwLock::new(HashMap::<String, u32>::new()));
 
@@ -170,7 +174,7 @@ fn ingest_json<R: Read + Send>(
                     let blacklist_guard = blacklist.read().unwrap();
                     if post_url
                         .host_str()
-                        .map(|host| blacklist_guard.contains(host))
+                        .and_then(|host| blacklist_guard.get(host).copied())
                         .unwrap_or(false)
                     {
                         if verbose {
@@ -299,7 +303,7 @@ fn ingest_json<R: Read + Send>(
                                                         blacklist
                                                             .write()
                                                             .unwrap()
-                                                            .insert(host.to_string());
+                                                            .insert(host.to_string(), true);
                                                     }
                                                 }
                                             }

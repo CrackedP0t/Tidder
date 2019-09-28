@@ -21,6 +21,7 @@ tokio = "0.1.22"
 macros = { path = "../macros" }
 futures = "0.1.28"
 serde_json = "1.0.40"
+packed_simd = "0.3.3"
 
 [dependencies.reqwest]
 version = "0.9.19"

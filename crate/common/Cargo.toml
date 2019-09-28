@@ -16,7 +16,7 @@ serde = { version = "1.0.92", features = ["derive"] }
 tokio-postgres = { version = "0.4.0-rc.3", features = ["with-chrono-0_4"] }
 toml = "0.5.1"
 url = "1.7.2"
-image = "0.21.2"
+image = "0.22.2"
 tokio = "0.1.22"
 macros = { path = "../macros" }
 futures = "0.1.28"

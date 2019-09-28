@@ -607,7 +607,7 @@ mod tests {
             follow_imgur(Url::parse("http://www.i.imgur.com/3EqtHIK.jpg").unwrap())
                 .wait()
                 .unwrap(),
-            "http://i.imgur.com/3EqtHIK.jpg"
+            "https://i.imgur.com/3EqtHIK.jpg"
         );
     }
 

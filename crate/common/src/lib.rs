@@ -3,7 +3,6 @@ use chrono::{DateTime, NaiveDateTime};
 pub use failure::{self, format_err, Error};
 use futures::future::{err, Either, Future};
 use futures::stream::Stream;
-use image::{imageops, load_from_memory, DynamicImage};
 use lazy_static::lazy_static;
 use log::LevelFilter;
 pub use log::{error, info, warn};
@@ -11,9 +10,7 @@ use regex::Regex;
 use reqwest::header::{self, HeaderMap, HeaderValue};
 use serde::Deserialize;
 use std::borrow::Cow;
-use std::fmt::{self, Display};
 use std::string::ToString;
-use tokio_postgres::{to_sql_checked, types};
 use url::{
     percent_encoding::{percent_decode, utf8_percent_encode, QUERY_ENCODE_SET},
     Url,
@@ -24,6 +21,9 @@ pub use getter::*;
 
 mod pool;
 pub use pool::*;
+
+mod hash;
+pub use hash::*;
 
 #[macro_export]
 macro_rules! fut_try {
@@ -241,14 +241,14 @@ pub mod user_error {
             |e| UserError {
                 file: Some(file!()),
                 line: Some(line!()),
-                ..UserError::new($msg, Error::from(e))
+                ..UserError::new($msg, failure::Error::from(e))
             }
         };
         ($msg:expr, $source:expr) => {
             |e| UserError {
                 file: Some(file!()),
                 line: Some(line!()),
-                ..UserError::new_source($msg, $source, Error::from(e))
+                ..UserError::new_source($msg, $source, failure::Error::from(e))
             }
         };
     }
@@ -299,6 +299,7 @@ impl Submission {
 mod de_sub {
     use super::*;
     use serde::de::{self, Deserializer, Unexpected, Visitor};
+    use std::fmt::{self, Formatter};
 
     pub fn created_utc<'de, D>(des: D) -> Result<NaiveDateTime, D::Error>
     where
@@ -308,7 +309,7 @@ mod de_sub {
         impl<'de> Visitor<'de> for CreatedUTC {
             type Value = NaiveDateTime;
 
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            fn expecting(&self, formatter: &mut Formatter) -> fmt::Result {
                 write!(formatter, "a number, possibly inside a string")
             }
 
@@ -416,51 +417,6 @@ pub fn save_post(
     }))
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct Hash(u64);
-
-impl Display for Hash {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        Display::fmt(&self.0, f)
-    }
-}
-
-impl types::ToSql for Hash {
-    fn to_sql(
-        &self,
-        t: &types::Type,
-        w: &mut Vec<u8>,
-    ) -> Result<types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
-        (self.0 as i64).to_sql(t, w)
-    }
-
-    fn accepts(t: &types::Type) -> bool {
-        i64::accepts(t)
-    }
-
-    to_sql_checked!();
-}
-
-pub fn dhash(img: DynamicImage) -> Hash {
-    let small_img = imageops::thumbnail(&img.to_luma(), 9, 8);
-
-    let mut hash: u64 = 0;
-
-    for y in 0..8 {
-        for x in 0..8 {
-            let bit = ((small_img.get_pixel(x, y)[0] > small_img.get_pixel(x + 1, y)[0]) as u64)
-                << (x + y * 8);
-            hash |= bit;
-        }
-    }
-
-    Hash(hash)
-}
-
-pub fn distance(a: Hash, b: Hash) -> u32 {
-    (a.0 ^ b.0).count_ones()
-}
-
 pub const IMAGE_MIMES: [&str; 12] = [
     "image/png",
     "image/jpeg",
@@ -490,16 +446,6 @@ pub const IMAGE_MIMES_NO_WEBP: [&str; 11] = [
     "image/vnd.radiance",
 ];
 
-pub fn hash_from_memory(image: &[u8]) -> Result<Hash, UserError> {
-    Ok(dhash(
-        // match format {
-        //     Some(format) => load_from_memory_with_format(&file, format),
-        // None =>
-        load_from_memory(&image)
-            // }
-            .map_err(map_ue!("invalid image"))?,
-    ))
-}
 
 #[derive(Copy, Debug, Clone, Eq, PartialEq)]
 pub enum HashDest {

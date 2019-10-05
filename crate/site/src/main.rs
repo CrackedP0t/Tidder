@@ -2,6 +2,10 @@
 
 use common::*;
 use fallible_iterator::FallibleIterator;
+use futures::{
+    future::{err, ok, Either},
+    Future, Stream,
+};
 use gotham::{
     handler::{HandlerFuture, IntoResponse},
     middleware::logger::RequestLogger,
@@ -11,12 +15,8 @@ use gotham::{
 };
 use gotham_derive::{StateData, StaticResponseExtender};
 use hyper::{self, Body, HeaderMap, StatusCode};
-use log::Level;
-use futures::{
-    future::{err, ok, Either},
-    Future, Stream,
-};
 use lazy_static::{lazy_static, LazyStatic};
+use log::Level;
 use mime::Mime;
 use multipart::server::Multipart;
 use postgres::NoTls;
@@ -523,7 +523,8 @@ fn run_server() {
     setup_logging!();
     TERA::initialize(&TERA);
 
-    let (chain, pipelines) = single_pipeline(new_pipeline().add(RequestLogger::new(Level::Info)).build());
+    let (chain, pipelines) =
+        single_pipeline(new_pipeline().add(RequestLogger::new(Level::Info)).build());
 
     let router = build_router(chain, pipelines, |route| {
         route

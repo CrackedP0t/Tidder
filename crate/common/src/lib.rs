@@ -1,8 +1,8 @@
 use cache_control::CacheControl;
 use chrono::{DateTime, NaiveDateTime};
 pub use failure::{self, format_err, Error};
-use futures::future::{err, Either, Future};
-use futures::stream::Stream;
+use futures_util::future::FutureExt;
+use futures_util::try_stream::TryStreamExt;
 use lazy_static::lazy_static;
 use log::LevelFilter;
 pub use log::{error, info, warn};
@@ -19,40 +19,17 @@ use url::{
 mod getter;
 pub use getter::*;
 
-mod pool;
-pub use pool::*;
+// mod pool;
+// pub use pool::*;
 
 mod hash;
 pub use hash::*;
-
-#[macro_export]
-macro_rules! fut_try {
-    ($res:expr) => {
-        match $res {
-            Ok(r) => r,
-            Err(e) => return Either::B(err(e)),
-        }
-    };
-    ($res:expr, ) => {
-        match $res {
-            Ok(r) => r,
-            Err(e) => return err(e),
-        }
-    };
-    ($res:expr, $wrap:path) => {
-        match $res {
-            Ok(r) => r,
-            Err(e) => return $wrap(err(e)),
-        }
-    };
-}
 
 lazy_static! {
     pub static ref EXT_RE: Regex =
         Regex::new(r"(?i)\W(?:png|jpe?g|gif|webp|p[bgpn]m|tiff?|bmp|ico|hdr)\b").unwrap();
     pub static ref URL_RE: Regex =
         Regex::new(r"^(?i)https?://(?:[a-z0-9.-]+|\[[0-9a-f:]+\])(?:$|[:/?#])").unwrap();
-    pub static ref PG_POOL: PgPool = PgPool::new(&SECRETS.postgres.connect);
 }
 
 // Log Error, returning empty
@@ -187,22 +164,22 @@ pub mod user_error {
     //     }
     // }
 
-    // impl<E> From<E> for UserError
-    // where
-    //     E: std::error::Error + Send + Sync + 'static,
-    // {
-    //     fn from(error: E) -> Self {
-    //         Self::from_std(error)
-    //     }
-    // }
-
-    impl From<tokio_postgres::error::Error> for UserError {
-        fn from(error: tokio_postgres::error::Error) -> Self {
+    impl<E> From<E> for UserError
+    where
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        fn from(error: E) -> Self {
             Self::from_std(error)
         }
     }
 
-    impl std::error::Error for UserError {}
+    // impl From<tokio_postgres::error::Error> for UserError {
+    //     fn from(error: tokio_postgres::error::Error) -> Self {
+    //         Self::from_std(error)
+    //     }
+    // }
+
+    // impl std::error::Error for UserError {}
 
     impl Display for UserError {
         fn fmt(&self, f: &mut Formatter) -> fmt::Result {
@@ -358,63 +335,57 @@ pub struct PushShiftSearch {
     pub hits: Hits,
 }
 
-pub fn save_post(
-    post: Submission,
-    image_id: Option<i64>,
-) -> impl Future<Item = bool, Error = UserError> {
+pub async fn save_post(post: Submission, image_id: Option<i64>) -> Result<bool, UserError> {
     lazy_static! {
         static ref ID_RE: Regex = Regex::new(r"/comments/([^/]+)/").unwrap();
     }
 
     let reddit_id = String::from(
-        fut_try!(ID_RE
+        ID_RE
             .captures(&post.permalink)
             .and_then(|cap| cap.get(1))
-            .ok_or_else(|| ue!("Couldn't find ID in permalink")))
-        .as_str(),
+            .ok_or_else(|| ue!("Couldn't find ID in permalink"))?
+            .as_str(),
     );
 
-    Either::A(PG_POOL.take().and_then(move |mut client| {
-        client
-            .build_transaction()
-            .build(
-                client
-                    .prepare(
-                        "INSERT INTO posts \
-                         (reddit_id, link, permalink, author, \
-                         created_utc, score, subreddit, title, nsfw, \
-                         spoiler, image_id, reddit_id_int, \
-                         thumbnail, thumbnail_width, thumbnail_height) \
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, \
-                         $8, $9, $10, $11, $12, $13, $14, $15) \
-                         ON CONFLICT DO NOTHING",
-                    )
-                    .and_then(move |stmt| {
-                        client.execute(
-                            &stmt,
-                            &[
-                                &reddit_id,
-                                &post.url,
-                                &post.permalink,
-                                &post.author,
-                                &post.created_utc,
-                                &post.score,
-                                &post.subreddit,
-                                &post.title,
-                                &post.over_18,
-                                &post.spoiler.unwrap_or(false),
-                                &image_id,
-                                &i64::from_str_radix(&reddit_id, 36).unwrap(),
-                                &post.thumbnail,
-                                &post.thumbnail_width,
-                                &post.thumbnail_height,
-                            ],
-                        )
-                    })
-                    .map(|modified| modified > 0),
-            )
-            .map_err(map_ue!())
-    }))
+    let mut client = pg_connect().await?;
+    let mut trans = client.transaction().await?;
+    let stmt = trans
+        .prepare(
+            "INSERT INTO posts \
+             (reddit_id, link, permalink, author, \
+             created_utc, score, subreddit, title, nsfw, \
+             spoiler, image_id, reddit_id_int, \
+             thumbnail, thumbnail_width, thumbnail_height) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, \
+             $8, $9, $10, $11, $12, $13, $14, $15) \
+             ON CONFLICT DO NOTHING",
+        )
+        .await?;
+    let modified = trans
+        .execute(
+            &stmt,
+            &[
+                &reddit_id,
+                &post.url,
+                &post.permalink,
+                &post.author,
+                &post.created_utc,
+                &post.score,
+                &post.subreddit,
+                &post.title,
+                &post.over_18,
+                &post.spoiler.unwrap_or(false),
+                &image_id,
+                &i64::from_str_radix(&reddit_id, 36).unwrap(),
+                &post.thumbnail,
+                &post.thumbnail_width,
+                &post.thumbnail_height,
+            ],
+        )
+        .await?;
+
+    Ok(modified > 0)
 }
 
 pub const IMAGE_MIMES: [&str; 12] = [
@@ -446,7 +417,6 @@ pub const IMAGE_MIMES_NO_WEBP: [&str; 11] = [
     "image/vnd.radiance",
 ];
 
-
 #[derive(Copy, Debug, Clone, Eq, PartialEq)]
 pub enum HashDest {
     Images,
@@ -462,48 +432,50 @@ impl HashDest {
     }
 }
 
-pub enum GetKind {
-    Cache(HashDest, i64),
-    Request(HeaderMap),
+pub async fn pg_connect() -> Result<tokio_postgres::Client, UserError> {
+    let (client, connection) =
+        tokio_postgres::connect(&SECRETS.postgres.connect, tokio_postgres::NoTls)
+            .await
+            .map_err(map_ue!())?;
+
+    tokio::spawn(connection.map(|r| {
+        if let Err(e) = r {
+            error!("Postgres connection error: {}", e);
+            std::process::exit(1);
+        }
+    }));
+
+    Ok(client)
 }
 
-fn get_existing(
-    link: String,
-) -> impl Future<Item = Option<(Hash, HashDest, i64)>, Error = UserError> {
-    PG_POOL.take().and_then(move |mut client| {
-        client
-            .build_transaction()
-            .build(
-                client
-                    .prepare(
-                        "SELECT hash, id, 'images' as table_name \
-                         FROM images WHERE link = $1 \
-                         UNION \
-                         SELECT hash, id, 'image_cache' as table_name \
-                         FROM image_cache WHERE link = $1",
-                    )
-                    .and_then(move |stmt| {
-                        client
-                            .query(&stmt, &[&link])
-                            .into_future()
-                            .map_err(|(e, _)| e)
-                            .map(|(row, _)| {
-                                row.map(|row| {
-                                    (
-                                        Hash(row.get::<_, i64>("hash") as u64),
-                                        match row.get("table_name") {
-                                            "images" => HashDest::Images,
-                                            "image_cache" => HashDest::ImageCache,
-                                            _ => unreachable!(),
-                                        },
-                                        row.get("id"),
-                                    )
-                                })
-                            })
-                    }),
-            )
-            .map_err(map_ue!())
-    })
+async fn get_existing(link: &str) -> Result<Option<(Hash, HashDest, i64)>, UserError> {
+    let mut client = pg_connect().await?;
+    let mut trans = client.transaction().await.map_err(map_ue!())?;
+    let stmt = trans
+        .prepare(
+            "SELECT hash, id, 'images' as table_name \
+             FROM images WHERE link = $1 \
+             UNION \
+             SELECT hash, id, 'image_cache' as table_name \
+             FROM image_cache WHERE link = $1",
+        )
+        .await?;
+    let rows = trans
+        .query(&stmt, &[&link])
+        .try_collect::<Vec<_>>()
+        .await?;
+
+    Ok(rows.first().map(|row| {
+        (
+            Hash(row.get::<_, i64>("hash") as u64),
+            match row.get("table_name") {
+                "images" => HashDest::Images,
+                "image_cache" => HashDest::ImageCache,
+                _ => unreachable!(),
+            },
+            row.get("id"),
+        )
+    }))
 }
 
 fn error_for_status_ue(e: reqwest::Error) -> UserError {

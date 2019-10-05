@@ -117,10 +117,17 @@ impl PgHandle {
             return Either::B(ok(statement.clone()));
         }
 
-        Either::A(self.inner.as_mut().unwrap().prepare(query).map_err(map_ue!()).map(move |statement| {
-            prepared.insert(query, statement.clone());
-            statement
-        }))
+        Either::A(
+            self.inner
+                .as_mut()
+                .unwrap()
+                .prepare(query)
+                .map_err(map_ue!())
+                .map(move |statement| {
+                    prepared.insert(query, statement.clone());
+                    statement
+                }),
+        )
     }
 }
 

@@ -181,7 +181,6 @@ pub mod user_error {
         UserError::new(msg, e)
     }
 
-
     #[macro_export]
     macro_rules! ue {
         ($msg:expr) => {
@@ -457,7 +456,10 @@ async fn get_existing(link: &str) -> Result<Option<(Hash, HashDest, i64)>, UserE
              FROM image_cache WHERE link = $1",
         )
         .await?;
-    let rows = client.query(&stmt, &[&link]).try_collect::<Vec<_>>().await?;
+    let rows = client
+        .query(&stmt, &[&link])
+        .try_collect::<Vec<_>>()
+        .await?;
 
     Ok(rows.first().map(|row| {
         (

@@ -15,7 +15,7 @@ use serde_json::Deserializer;
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
 use std::fs::{remove_file, File, OpenOptions};
-use std::io::{Write, BufReader, Read, Seek, SeekFrom};
+use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::iter::FromIterator;
 use std::iter::Iterator;
 use std::path::Path;
@@ -85,10 +85,7 @@ where
     }
 }
 
-async fn ingest_json<R: Read + Send>(
-    mut already_have: Option<BTreeSet<i64>>,
-    json_stream: R,
-) {
+async fn ingest_json<R: Read + Send>(mut already_have: Option<BTreeSet<i64>>, json_stream: R) {
     let blacklist = Arc::new(RwLock::new(HashMap::<String, bool>::from_iter(
         NO_BLACKLIST.iter().map(|h| (h.to_string(), false)),
     )));
@@ -196,7 +193,7 @@ async fn ingest_json<R: Read + Send>(
                             Err(TryLockError::WouldBlock) => Poll::Pending,
                             Err(TryLockError::Poisoned(e)) => panic!(e.to_string()),
                         })
-                            .await;
+                        .await;
 
                         let res = save_hash(post.url.clone(), HashDest::Images).await;
 
@@ -204,22 +201,22 @@ async fn ingest_json<R: Read + Send>(
 
                         res
                     }
-                    Err(e) => Err(e)
+                    Err(e) => Err(e),
                 };
 
                 let image_id = match save_res {
                     Ok((_hash, _hash_dest, image_id, exists)) => {
-                            if exists {
-                                info!(
-                                    "{}: {}: {} already exists",
-                                    post.created_utc, post.id, post.url
-                                );
-                            } else {
-                                info!(
-                                    "{}: {}: {} successfully hashed",
-                                    post.created_utc, post.id, post.url
-                                );
-                            }
+                        if exists {
+                            info!(
+                                "{}: {}: {} already exists",
+                                post.created_utc, post.id, post.url
+                            );
+                        } else {
+                            info!(
+                                "{}: {}: {} successfully hashed",
+                                post.created_utc, post.id, post.url
+                            );
+                        }
 
                         Some(image_id)
                     }
@@ -349,11 +346,7 @@ async fn main() -> Result<(), Error> {
                     .write(true)
                     .open(&arch_path)?;
 
-                let resp = REQW_CLIENT
-                    .get(&path)
-                    .send()
-                    .await?
-                    .error_for_status()?;
+                let resp = REQW_CLIENT.get(&path).send().await?.error_for_status()?;
                 let bytes = resp.bytes().await?;
 
                 arch_file.write_all(&bytes)?;
@@ -405,10 +398,7 @@ async fn main() -> Result<(), Error> {
     if path.ends_with("bz2") {
         ingest_json(already_have, bzip2::bufread::BzDecoder::new(input)).await;
     } else if path.ends_with("xz") {
-        ingest_json(
-            already_have,
-            xz2::bufread::XzDecoder::new(input),
-        ).await;
+        ingest_json(already_have, xz2::bufread::XzDecoder::new(input)).await;
     } else if path.ends_with("zst") {
         ingest_json(
             already_have,

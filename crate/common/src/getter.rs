@@ -117,14 +117,14 @@ async fn follow_gfycat(url: Url) -> Result<String, UserError> {
     }
 
     let resp = REQW_CLIENT
-        .get(&{format!(
+        .get(&format!(
             "https://api.gfycat.com/v1/gfycats/{}",
             GFY_ID_SEL
                 .captures(url.path())
                 .and_then(|c| c.get(1))
                 .map(|m| m.as_str())
                 .ok_or_else(|| ue!("couldn't find Gfycat ID in link", Source::User))?
-        )})
+        ))
         .send()
         .map_err(map_ue!("couldn't reach Gfycat API"))
         .await?
@@ -151,7 +151,7 @@ async fn make_imgur_api_request(api_link: String) -> Result<Value, UserError> {
                 );
                 headers.insert(
                     header::AUTHORIZATION,
-                    {format!("Client-ID {}", SECRETS.imgur.client_id)}
+                    format!("Client-ID {}", SECRETS.imgur.client_id)
                         .parse()
                         .unwrap(),
                 );
@@ -231,7 +231,7 @@ async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
         Ok(url.into_string())
     } else if path_start == "a" {
         let id = url.path_segments().unwrap().next_back().unwrap();
-        let api_link = {format!("https://imgur-apiv3.p.rapidapi.com/3/album/{}/images", id)};
+        let api_link = format!("https://imgur-apiv3.p.rapidapi.com/3/album/{}/images", id);
         let json = make_imgur_api_request(api_link).await?;
         Ok(GIFV_RE
             .replace(
@@ -252,7 +252,7 @@ async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
             .await?;
         let resp_url = resp.url().as_str();
         if resp.status() == StatusCode::FOUND {
-            let api_link = {format!("https://imgur-apiv3.p.rapidapi.com/3/gallery/album/{}", id)};
+            let api_link = format!("https://imgur-apiv3.p.rapidapi.com/3/gallery/album/{}", id);
             let json = make_imgur_api_request(api_link).await?;
             Ok(GIFV_RE
                 .replace(
@@ -313,10 +313,10 @@ async fn follow_wikipedia(url: Url) -> Result<String, UserError> {
         .map_err(map_ue!("couldn't decode title", Source::User))?;
 
     let api_url = Url::parse_with_params(
-        &
-            ("https://".to_string() +
-            url.domain().ok_or(ue!("no domain in Wikipedia URL"))? + "/w/api.php")
-        ,
+        &format!(
+            "https://{}/w/api.php",
+            url.domain().ok_or(ue!("no domain in Wikipedia URL"))?
+        ),
         &[
             ("action", "query"),
             ("format", "json"),
@@ -550,7 +550,7 @@ pub async fn save_hash(
                                 headers
                                     .get(header::EXPIRES)
                                     .and_then(|hv| hv.to_str().ok())
-                                     .and_then(|s| DateTime::parse_from_rfc2822(s).ok())
+                                    .and_then(|s| DateTime::parse_from_rfc2822(s).ok())
                                     .map(|dt| dt.naive_utc())
                             }),
                         &headers.get(header::ETAG).and_then(|hv| hv.to_str().ok()),
@@ -577,7 +577,6 @@ pub async fn save_hash(
             }
         }
     }
-
 }
 
 #[cfg(test)]

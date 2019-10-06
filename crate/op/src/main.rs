@@ -27,7 +27,8 @@ async fn post(id: String) -> Result<(), Error> {
             ("username", &SECRETS.reddit.username),
             ("password", &SECRETS.reddit.password),
         ])
-        .send().await?
+        .send()
+        .await?
         .error_for_status()?;
 
     let json = auth_resp.json::<Value>().await?;
@@ -43,7 +44,8 @@ async fn post(id: String) -> Result<(), Error> {
         .query(&[("raw_json", "1")])
         .header(USER_AGENT, "Tidder 0.0.1")
         .bearer_auth(access_token)
-        .send().await?
+        .send()
+        .await?
         .error_for_status()?;
 
     let post = &resp.json::<Value>().await?["data"]["children"][0]["data"];
@@ -56,24 +58,25 @@ async fn post(id: String) -> Result<(), Error> {
 async fn hash(links: Vec<String>) -> Result<(), Error> {
     futures::stream::iter(links.into_iter())
         .fold(None, async move |last, arg| -> Option<Hash> {
-                let res = get_hash(arg.clone()).await;
+            let res = get_hash(arg.clone()).await;
 
-                let (hash, link, _get_kind) = match res {
-                    Ok(res) => res,
-                    Err(e) => {
-                        println!("{} failed: {:?}", arg, e);
-                        return last;
-                    }
-                };
-
-                let mut out = format!("{}: {}", link, hash);
-                if let Some(last) = last {
-                    out = format!("{} ({})", out, distance(hash, last));
+            let (hash, link, _get_kind) = match res {
+                Ok(res) => res,
+                Err(e) => {
+                    println!("{} failed: {:?}", arg, e);
+                    return last;
                 }
-                println!("{}", out);
+            };
 
-                Some(hash)
-        }).await;
+            let mut out = format!("{}: {}", link, hash);
+            if let Some(last) = last {
+                out = format!("{} ({})", out, distance(hash, last));
+            }
+            println!("{}", out);
+
+            Some(hash)
+        })
+        .await;
 
     Ok(())
 }
@@ -101,12 +104,7 @@ fn get_op() -> Result<Op, Error> {
                 .map(|l| l.to_owned())
                 .collect(),
         ),
-        unknown => {
-            return Err(format_err!(
-                "Unknown subcommand '{}'",
-                unknown
-            ))
-        }
+        unknown => return Err(format_err!("Unknown subcommand '{}'", unknown)),
     };
 
     Ok(op)

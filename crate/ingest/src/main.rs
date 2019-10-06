@@ -285,11 +285,6 @@ async fn ingest_json<R: Read + Send>(
                     );
                     std::process::exit(1);
                 }
-
-                info!(
-                        "{}: {}: {} successfully saved",
-                        post.created_utc, post.id, post.url
-                    );
             });
         })
 }

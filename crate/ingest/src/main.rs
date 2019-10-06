@@ -77,9 +77,12 @@ where
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.iter.next() {
-            Some(res) => res.map(Some).map_err(le!()).unwrap_or(None),
-            None => None,
+        loop {
+            match self.iter.next() {
+                None => return None,
+                Some(Err(e)) => warn!("Error deserializing: {}", e),
+                Some(Ok(v)) => return Some(v)
+            }
         }
     }
 }

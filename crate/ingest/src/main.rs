@@ -1,8 +1,12 @@
+#![feature(async_closure)]
 #![recursion_limit = "128"]
 
 use clap::{clap_app, crate_authors, crate_description, crate_version};
 use common::*;
 use failure::{format_err, Error};
+use future::poll_fn;
+use futures::prelude::*;
+use futures::task::Poll;
 use lazy_static::lazy_static;
 use log::{error, info, warn};
 use regex::Regex;
@@ -11,12 +15,11 @@ use serde_json::Deserializer;
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
 use std::fs::{remove_file, File, OpenOptions};
-use std::io::{self, BufReader, Read, Seek, SeekFrom};
+use std::io::{Write, BufReader, Read, Seek, SeekFrom};
 use std::iter::FromIterator;
 use std::iter::Iterator;
 use std::path::Path;
 use std::sync::{Arc, RwLock, TryLockError};
-use tokio::prelude::*;
 use url::Url;
 
 pub enum Banned {
@@ -93,9 +96,7 @@ async fn ingest_json<R: Read + Send>(
 
     let in_flight = Arc::new(RwLock::new(HashMap::<String, u32>::new()));
 
-    const MAX_SPAWNED: u32 = 128;
-
-    let all_spawned = Arc::new(RwLock::new(0u32));
+    // const MAX_SPAWNED: u32 = 128;
 
     let json_iter = Deserializer::from_reader(json_stream)
         .into_iter::<Submission>()
@@ -129,23 +130,8 @@ async fn ingest_json<R: Read + Send>(
             let in_flight = in_flight.clone();
             let end_in_flight = in_flight.clone();
 
-            while {
-                let all_spawned_lock = all_spawned.read().unwrap();
-                let maxed_out = *all_spawned_lock >= MAX_SPAWNED;
-                drop(all_spawned_lock);
-                maxed_out
-            } {
-                std::thread::sleep(std::time::Duration::from_micros(1));
-            }
-
-            let mut all_spawned_lock = all_spawned.write().unwrap();
-            *all_spawned_lock += 1;
-            drop(all_spawned_lock);
-
-            let end_all_spawned = all_spawned.clone();
-
-            tokio::spawn(
-                future::lazy(move || {
+            tokio::spawn(async move {
+                let post_url_res = (|| {
                     let blacklist = lazy_blacklist;
                     post.url = post
                         .url
@@ -153,20 +139,10 @@ async fn ingest_json<R: Read + Send>(
                         .replace("&lt;", "<")
                         .replace("&gt;", ">");
 
-                    let post_url = match Url::parse(&post.url) {
-                        Ok(url) => url,
-                        Err(e) => {
-                            warn!(
-                                "{}: {}: {} is invalid: {}",
-                                post.created_utc, post.id, post.url, e
-                            );
-                            return err(post);
-                        }
-                    };
+                    let post_url = Url::parse(&post.url).map_err(map_ue!("invalid URL"))?;
 
-                    if verbose && BANNED.iter().any(|banned| banned.matches(&post_url)) {
-                        warn!("{}: {}: {} is banned", post.created_utc, post.id, post.url);
-                        return err(post);
+                    if BANNED.iter().any(|banned| banned.matches(&post_url)) {
+                        return Err(ue!("banned host"));
                     }
 
                     let blacklist_guard = blacklist.read().unwrap();
@@ -175,27 +151,23 @@ async fn ingest_json<R: Read + Send>(
                         .and_then(|host| blacklist_guard.get(host).copied())
                         .unwrap_or(false)
                     {
-                        if verbose {
-                            warn!(
-                                "{}: {}: {} is blacklisted",
-                                post.created_utc, post.id, post.url
-                            );
-                        }
-                        return err(post);
+                        return Err(ue!("blacklisted host"));
                     }
                     drop(blacklist_guard);
 
-                    ok((post_url, post))
-                })
-                .and_then(move |(post_url, post)| {
-                    poll_fn(move || {
-                        let tld = get_tld(&post_url);
-                        match in_flight.try_read() {
-                            Ok(guard) => {
-                                let custom_limit: Option<&Option<_>> = post_url
-                                    .host_str()
-                                    .and_then(|host| CUSTOM_LIMITS.get(&host));
+                    Ok(post_url)
+                })();
 
+                let save_res = match post_url_res {
+                    Ok(post_url) => {
+                        let tld = get_tld(&post_url);
+
+                        let custom_limit: Option<&Option<_>> = post_url
+                            .host_str()
+                            .and_then(|host| CUSTOM_LIMITS.get(&host));
+
+                        poll_fn(move |_| match in_flight.try_read() {
+                            Ok(guard) => {
                                 let limit = match custom_limit {
                                     None => Some(IN_FLIGHT_LIMIT),
                                     Some(&Some(limit)) => Some(limit),
@@ -216,123 +188,109 @@ async fn ingest_json<R: Read + Send>(
                                     let mut write_guard = in_flight.write().unwrap();
                                     *(write_guard.entry(tld.to_owned()).or_insert(0)) += 1;
                                     drop(write_guard);
-                                    Ok(Async::Ready(tld.to_owned()))
+                                    Poll::Ready(tld.to_owned())
                                 } else {
                                     drop(guard);
-                                    Ok(Async::NotReady)
+                                    Poll::Pending
                                 }
                             }
-                            Err(TryLockError::WouldBlock) => Ok(Async::NotReady),
+                            Err(TryLockError::WouldBlock) => Poll::Pending,
                             Err(TryLockError::Poisoned(e)) => panic!(e.to_string()),
-                        }
-                    })
-                    .map(|tld| (tld, post))
-                    .and_then(move |(tld, post)| {
-                        save_hash(post.url.clone(), HashDest::Images)
-                            .then(move |res| {
-                                *end_in_flight.write().unwrap().get_mut(&tld).unwrap() -= 1;
-                                match res {
-                                    Ok(o) => Ok((post, o)),
-                                    Err(e) => Err((post, e)),
-                                }
-                            })
-                            .map(move |(post, (_hash, _hash_dest, image_id, exists))| {
-                                if verbose {
-                                    if exists {
-                                        info!(
-                                            "{}: {}: {} already exists",
-                                            post.created_utc, post.id, post.url
-                                        );
-                                    } else {
-                                        info!(
-                                            "{}: {}: {} successfully hashed",
-                                            post.created_utc, post.id, post.url
-                                        );
-                                    }
-                                }
+                        })
+                            .await;
 
-                                (post, image_id)
-                            })
-                            .map_err(move |(post, ue)| {
-                                match ue.source {
-                                    Source::Internal => {
-                                        error!(
-                                            "{}: {}: {}: {}{}{}{}",
-                                            post.created_utc,
-                                            post.id,
-                                            post.url,
-                                            ue.file.unwrap_or(""),
-                                            ue.line
-                                                .map(|line| Cow::Owned(format!("#{}", line)))
-                                                .unwrap_or(Cow::Borrowed("")),
-                                            if ue.file.is_some() || ue.line.is_some() {
-                                                ": "
-                                            } else {
-                                                ""
-                                            },
-                                            ue.error
-                                        );
-                                        std::process::exit(1);
-                                    }
-                                    _ => {
-                                        warn!(
-                                            "{}: {}: {} failed: {}",
-                                            post.created_utc, post.id, post.url, ue.error
-                                        );
-                                        if let Some(e) = ue.error.downcast_ref::<reqwest::Error>() {
-                                            if e.is_timeout()
-                                                || e.is_server_error()
-                                                || e.get_ref()
-                                                    .and_then(|e| {
-                                                        e.downcast_ref::<hyper::Error>()
-                                                            .map(hyper::Error::is_connect)
-                                                    })
-                                                    .unwrap_or(false)
-                                            {
-                                                if is_link_special(&post.url) {
-                                                    error!(
-                                                        "{}: {}: {}: Special link server error: {:?}",
-                                                        post.created_utc, post.id, post.url, e
-                                                    );
-                                                    std::process::exit(1);
-                                                }
-                                                if let Ok(url) = Url::parse(&post.url) {
-                                                    if let Some(host) = url.host_str() {
-                                                        blacklist
-                                                            .write()
-                                                            .unwrap()
-                                                            .insert(host.to_string(), true);
-                                                    }
-                                                }
+                        let res = save_hash(post.url.clone(), HashDest::Images).await;
+
+                        *end_in_flight.write().unwrap().get_mut(tld).unwrap() -= 1;
+
+                        res
+                    }
+                    Err(e) => Err(e)
+                };
+
+
+                let image_id = match save_res {
+                    Ok((_hash, _hash_dest, image_id, exists)) => {
+                        if verbose {
+                            if exists {
+                                info!(
+                                    "{}: {}: {} already exists",
+                                    post.created_utc, post.id, post.url
+                                );
+                            } else {
+                                info!(
+                                    "{}: {}: {} successfully hashed",
+                                    post.created_utc, post.id, post.url
+                                );
+                            }
+                        }
+
+                        Some(image_id)
+                    }
+                    Err(ue) => {
+                        match ue.source {
+                            Source::Internal => {
+                                error!(
+                                    "{}: {}: {}: {}{}{}{}",
+                                    post.created_utc,
+                                    post.id,
+                                    post.url,
+                                    ue.file.unwrap_or(""),
+                                    ue.line
+                                        .map(|line| Cow::Owned(format!("#{}", line)))
+                                        .unwrap_or(Cow::Borrowed("")),
+                                    if ue.file.is_some() || ue.line.is_some() {
+                                        ": "
+                                    } else {
+                                        ""
+                                    },
+                                    ue.error
+                                );
+                                std::process::exit(1);
+                            }
+                            _ => {
+                                warn!(
+                                    "{}: {}: {} failed: {}",
+                                    post.created_utc, post.id, post.url, ue.error
+                                );
+                                if let Some(e) = ue.error.downcast_ref::<reqwest::Error>() {
+                                    if e.is_timeout()
+                                        || std::error::Error::downcast_ref::<hyper::Error>(e)
+                                            .map(hyper::Error::is_connect)
+                                            .unwrap_or(false)
+                                    {
+                                        if is_link_special(&post.url) {
+                                            error!(
+                                                "{}: {}: {}: Special link server error: {:?}",
+                                                post.created_utc, post.id, post.url, e
+                                            );
+                                            std::process::exit(1);
+                                        }
+                                        if let Ok(url) = Url::parse(&post.url) {
+                                            if let Some(host) = url.host_str() {
+                                                blacklist
+                                                    .write()
+                                                    .unwrap()
+                                                    .insert(host.to_string(), true);
                                             }
                                         }
                                     }
-                                };
+                                }
+                            }
+                        }
+                        None
+                    }
+                };
 
-                                post
-                            })
-                    })
-                })
-                .then(move |res| {
-                    let (post, image_id) = res
-                        .map(|(post, image_id)| (post, Some(image_id)))
-                        .unwrap_or_else(|post| (post, None));
-                    save_post(post, image_id).then(move |res| {
-                        let mut all_spawned_lock = end_all_spawned.write().unwrap();
-                        *all_spawned_lock -= 1;
-                        drop(all_spawned_lock);
-                        res
-                    })
-                })
-                .map(|_| ())
-                .map_err(|e| {
-                    error!("Saving post failed: {}", e);
+                if let Err(e) = save_post(&post, image_id).await {
+                    error!(
+                        "{}: {}: {} failed to save: {}",
+                        post.created_utc, post.id, post.url, e
+                    );
                     std::process::exit(1);
-                }),
-            );
-        });
-
-    ok(())
+                }
+            });
+        })
 }
 
 #[tokio::main]
@@ -363,12 +321,12 @@ async fn main() -> Result<(), Error> {
         .captures(&path)
         .and_then(|caps| caps.get(1))
         .ok_or_else(|| format_err!("couldn't find month in {}", path))
-        .and_then(|m| m.as_str().parse()?;
+        .and_then(|m| m.as_str().parse().map_err(Error::from))?;
 
     let year: i32 = YEAR_RE
         .find(&path)
         .ok_or_else(|| format_err!("couldn't find year in {}", path))
-        .and_then(|m| m.as_str().parse()?;
+        .and_then(|m| m.as_str().parse().map_err(Error::from))?;
 
     let month_f = f64::from(month);
     let year_f = f64::from(year);
@@ -391,14 +349,21 @@ async fn main() -> Result<(), Error> {
                 OpenOptions::new().read(true).open(&arch_path)?
             } else {
                 info!("Downloading archive file");
-                let arch_file = OpenOptions::new()
+                let mut arch_file = OpenOptions::new()
                     .create_new(true)
                     .read(true)
                     .write(true)
                     .open(&arch_path)?;
 
-                let resp = REQW_CLIENT.get(&path).await?;
+                let resp = REQW_CLIENT
+                    .get(&path)
+                    .send()
+                    .await?
+                    .error_for_status()?;
                 let bytes = resp.bytes().await?;
+
+                arch_file.write_all(&bytes)?;
+
                 arch_file.seek(SeekFrom::Start(0))?;
 
                 arch_file
@@ -411,7 +376,7 @@ async fn main() -> Result<(), Error> {
 
     info!("Processing posts we already have");
 
-    let client = PG_POOL.take()?;
+    let mut client = pg_connect().await.unwrap();
     let stmt = client
         .prepare(
             "SELECT reddit_id_int FROM posts \
@@ -422,9 +387,9 @@ async fn main() -> Result<(), Error> {
 
     let already_have = client
         .query(&stmt, &[&month_f, &year_f])
-        .try_fold(BTreeSet::new(), |mut already_have, row| {
+        .try_fold(BTreeSet::new(), async move |mut already_have, row| {
             already_have.insert(row.get(0));
-            ok(already_have)
+            Ok(already_have)
         })
         .await?;
 
@@ -441,16 +406,16 @@ async fn main() -> Result<(), Error> {
         None
     };
 
-    let input = BufReader::new(input);
+    let input = BufReader::new(input_file);
 
     if path.ends_with("bz2") {
         ingest_json(already_have, bzip2::bufread::BzDecoder::new(input), verbose).await;
     } else if path.ends_with("xz") {
-        Box::new(ingest_json(
+        ingest_json(
             already_have,
             xz2::bufread::XzDecoder::new(input),
             verbose,
-        )) as _
+        ).await;
     } else if path.ends_with("zst") {
         ingest_json(
             already_have,
@@ -471,4 +436,6 @@ async fn main() -> Result<(), Error> {
     }
 
     info!("Done ingesting {}", &path);
+
+    Ok(())
 }

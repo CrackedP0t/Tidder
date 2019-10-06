@@ -1,8 +1,7 @@
 use cache_control::CacheControl;
 use chrono::{DateTime, NaiveDateTime};
 pub use failure::{self, format_err, Error};
-use futures_util::future::FutureExt;
-use futures_util::try_stream::TryStreamExt;
+use futures::prelude::*;
 use lazy_static::lazy_static;
 use log::LevelFilter;
 pub use log::{error, info, warn};
@@ -65,7 +64,6 @@ pub mod user_error {
     #[derive(Debug, Serialize)]
     pub struct UserError {
         pub user_msg: Cow<'static, str>,
-        // #[serde(serialize_with = "UserError::serialize_status_code")]
         pub source: Source,
         #[serde(skip)]
         pub error: Error,
@@ -76,13 +74,6 @@ pub mod user_error {
     }
 
     impl UserError {
-        // #[allow(clippy::trivially_copy_pass_by_ref)]
-        // pub fn serialize_status_code<S>(sc: &SC, ser: S) -> Result<S::Ok, S::Error>
-        // where
-        //     S: Serializer,
-        // {
-        //     ser.serialize_u16(sc.as_u16())
-        // }
         pub fn new<M: Into<Cow<'static, str>> + Sync + Send, E: Into<Error>>(
             user_msg: M,
             error: E,
@@ -173,12 +164,6 @@ pub mod user_error {
         }
     }
 
-    // impl From<tokio_postgres::error::Error> for UserError {
-    //     fn from(error: tokio_postgres::error::Error) -> Self {
-    //         Self::from_std(error)
-    //     }
-    // }
-
     // impl std::error::Error for UserError {}
 
     impl Display for UserError {
@@ -186,6 +171,16 @@ pub mod user_error {
             Display::fmt(&self.error, f)
         }
     }
+
+    pub fn error_for_status_ue(e: reqwest::Error) -> UserError {
+        let msg = match e.status() {
+            None => Cow::Borrowed("request failed"),
+            Some(sc) => Cow::Owned(format!("recieved error status from host: {}", sc)),
+        };
+
+        UserError::new(msg, e)
+    }
+
 
     #[macro_export]
     macro_rules! ue {
@@ -335,7 +330,7 @@ pub struct PushShiftSearch {
     pub hits: Hits,
 }
 
-pub async fn save_post(post: Submission, image_id: Option<i64>) -> Result<bool, UserError> {
+pub async fn save_post(post: &Submission, image_id: Option<i64>) -> Result<bool, UserError> {
     lazy_static! {
         static ref ID_RE: Regex = Regex::new(r"/comments/([^/]+)/").unwrap();
     }
@@ -460,10 +455,7 @@ async fn get_existing(link: &str) -> Result<Option<(Hash, HashDest, i64)>, UserE
              FROM image_cache WHERE link = $1",
         )
         .await?;
-    let rows = trans
-        .query(&stmt, &[&link])
-        .try_collect::<Vec<_>>()
-        .await?;
+    let rows = trans.query(&stmt, &[&link]).try_collect::<Vec<_>>().await?;
 
     Ok(rows.first().map(|row| {
         (
@@ -478,41 +470,32 @@ async fn get_existing(link: &str) -> Result<Option<(Hash, HashDest, i64)>, UserE
     }))
 }
 
-fn error_for_status_ue(e: reqwest::Error) -> UserError {
-    let msg = match e.status() {
-        None => Cow::Borrowed("couldn't download image"),
-        Some(sc) => Cow::Owned(format!("recieved error status from image host: {}", sc)),
-    };
-
-    UserError::new(msg, e)
-}
-
 pub fn setup_logging(name: &str) {
     fern::Dispatch::new()
-        .format(|out, message, record| {
-            let level = record.level();
-            out.finish(format_args!(
-                "[{}]{}[{}] {}",
-                chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
-                if level != LevelFilter::Info && level != LevelFilter::Warn {
-                    match record.file() {
-                        Some(file) => Cow::Owned(format!(
-                            "[{}{}]",
-                            file,
-                            match record.line() {
-                                Some(line) => Cow::Owned(format!("#{}", line)),
-                                None => Cow::Borrowed(""),
-                            }
-                        )),
-                        None => Cow::Borrowed(""),
-                    }
-                } else {
-                    Cow::Borrowed("")
-                },
-                record.level(),
-                message
-            ))
-        })
+        // .format(|out, message, record| {
+        //     let level = record.level();
+        //     out.finish(format_args!(
+        //         "[{}]{}[{}] {}",
+        //         chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+        //         if level != LevelFilter::Info && level != LevelFilter::Warn {
+        //             match record.file() {
+        //                 Some(file) => Cow::Owned(format!(
+        //                     "[{}{}]",
+        //                     file,
+        //                     match record.line() {
+        //                         Some(line) => Cow::Owned(format!("#{}", line)),
+        //                         None => Cow::Borrowed(""),
+        //                     }
+        //                 )),
+        //                 None => Cow::Borrowed(""),
+        //             }
+        //         } else {
+        //             Cow::Borrowed("")
+        //         },
+        //         record.level(),
+        //         message
+        //     ))
+        // })
         .level(LevelFilter::Warn)
         .level_for("gotham", LevelFilter::Info)
         .level_for("site", LevelFilter::Info)

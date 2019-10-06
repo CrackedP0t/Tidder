@@ -21,7 +21,6 @@ tokio = "0.2.0-alpha.6"
 macros = { path = "../macros" }
 serde_json = "1.0.40"
 futures-preview = "0.3.0-alpha.19"
-futures-util-preview = "0.3.0-alpha.19"
 
 [dependencies.reqwest]
 git = "https://github.com/seanmonstar/reqwest"

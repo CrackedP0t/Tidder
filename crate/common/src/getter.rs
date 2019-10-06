@@ -1,9 +1,16 @@
 use super::*;
 
-use futures::prelude::*;
 use reqwest::{RedirectPolicy, StatusCode};
 use serde_json::Value;
 use std::time::Duration;
+
+macro_rules! format {
+    ($($arg:tt)*) => {{
+        #[allow(clippy::let_and_return)]
+        let res = std::fmt::format(format_args!($($arg)*));
+        res
+    }}
+}
 
 lazy_static! {
     static ref REQW_CLIENT: reqwest::Client = reqwest::Client::builder()
@@ -110,14 +117,14 @@ async fn follow_gfycat(url: Url) -> Result<String, UserError> {
     }
 
     let resp = REQW_CLIENT
-        .get(&format!(
+        .get(&{format!(
             "https://api.gfycat.com/v1/gfycats/{}",
             GFY_ID_SEL
                 .captures(url.path())
                 .and_then(|c| c.get(1))
                 .map(|m| m.as_str())
                 .ok_or_else(|| ue!("couldn't find Gfycat ID in link", Source::User))?
-        ))
+        )})
         .send()
         .map_err(map_ue!("couldn't reach Gfycat API"))
         .await?
@@ -144,7 +151,7 @@ async fn make_imgur_api_request(api_link: String) -> Result<Value, UserError> {
                 );
                 headers.insert(
                     header::AUTHORIZATION,
-                    format!("Client-ID {}", SECRETS.imgur.client_id)
+                    {format!("Client-ID {}", SECRETS.imgur.client_id)}
                         .parse()
                         .unwrap(),
                 );
@@ -224,7 +231,7 @@ async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
         Ok(url.into_string())
     } else if path_start == "a" {
         let id = url.path_segments().unwrap().next_back().unwrap();
-        let api_link = format!("https://imgur-apiv3.p.rapidapi.com/3/album/{}/images", id);
+        let api_link = {format!("https://imgur-apiv3.p.rapidapi.com/3/album/{}/images", id)};
         let json = make_imgur_api_request(api_link).await?;
         Ok(GIFV_RE
             .replace(
@@ -245,7 +252,7 @@ async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
             .await?;
         let resp_url = resp.url().as_str();
         if resp.status() == StatusCode::FOUND {
-            let api_link = format!("https://imgur-apiv3.p.rapidapi.com/3/gallery/album/{}", id);
+            let api_link = {format!("https://imgur-apiv3.p.rapidapi.com/3/gallery/album/{}", id)};
             let json = make_imgur_api_request(api_link).await?;
             Ok(GIFV_RE
                 .replace(
@@ -306,10 +313,10 @@ async fn follow_wikipedia(url: Url) -> Result<String, UserError> {
         .map_err(map_ue!("couldn't decode title", Source::User))?;
 
     let api_url = Url::parse_with_params(
-        &format!(
-            "https://{}/w/api.php",
-            url.domain().ok_or(ue!("no domain in Wikipedia URL"))?
-        ),
+        &
+            ("https://".to_string() +
+            url.domain().ok_or(ue!("no domain in Wikipedia URL"))? + "/w/api.php")
+        ,
         &[
             ("action", "query"),
             ("format", "json"),
@@ -450,17 +457,13 @@ pub async fn get_hash(link: String) -> Result<(Hash, String, GetKind), UserError
 
     let headers = resp.headers().to_owned();
     let hash = hash_from_memory(
-            &resp
-                .bytes()
-                .map_err(map_ue!("couldn't download image", Source::External))
-                .await?,
-        )?;
+        &resp
+            .bytes()
+            .map_err(map_ue!("couldn't download image", Source::External))
+            .await?,
+    )?;
 
-    Ok((
-        hash,
-        link,
-        GetKind::Request(headers),
-    ))
+    Ok((hash, link, GetKind::Request(headers)))
 }
 
 async fn poss_move_row(
@@ -485,10 +488,7 @@ async fn poss_move_row(
             )
             .await?;
 
-        let rows = trans
-            .query(&stmt, &[&id])
-            .try_collect::<Vec<_>>()
-            .await?;
+        let rows = trans.query(&stmt, &[&id]).try_collect::<Vec<_>>().await?;
         let new_id = rows[0].get::<_, i64>("id");
 
         let stmt = trans
@@ -521,14 +521,14 @@ pub async fn save_hash(
             let mut trans = client.transaction().await?;
             let stmt = trans
                 .prepare(
-                    format!(
+                    {format!(
                         "INSERT INTO {} (link, hash, no_store, no_cache, expires, \
                          etag, must_revalidate, retrieved_on) \
                          VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
                          ON CONFLICT DO NOTHING \
                          RETURNING id",
                         hash_dest.table_name()
-                    )
+                    )}
                     .as_str(),
                 )
                 .await?;
@@ -547,7 +547,7 @@ pub async fn save_hash(
                                 headers
                                     .get(header::EXPIRES)
                                     .and_then(|hv| hv.to_str().ok())
-                                    .and_then(|s| DateTime::parse_from_rfc2822(s).ok())
+                                     .and_then(|s| DateTime::parse_from_rfc2822(s).ok())
                                     .map(|dt| dt.naive_utc())
                             }),
                         &headers.get(header::ETAG).and_then(|hv| hv.to_str().ok()),
@@ -572,6 +572,7 @@ pub async fn save_hash(
             }
         }
     }
+
 }
 
 #[cfg(test)]

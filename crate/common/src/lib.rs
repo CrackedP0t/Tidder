@@ -438,6 +438,8 @@ pub async fn pg_connect() -> Result<tokio_postgres::Client, UserError> {
         if let Err(e) = r {
             error!("Postgres connection error: {}", e);
             std::process::exit(1);
+        } else {
+            info!("Connection closed!");
         }
     }));
 

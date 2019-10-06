@@ -430,16 +430,19 @@ impl HashDest {
 
 pub async fn pg_connect() -> Result<tokio_postgres::Client, UserError> {
     let (client, connection) =
-        tokio_postgres::connect(&SECRETS.postgres.connect, tokio_postgres::NoTls)
-            .await
-            .map_err(map_ue!())?;
+        match tokio_postgres::connect(&SECRETS.postgres.connect, tokio_postgres::NoTls)
+        .await {
+            Ok(c) => c,
+            Err(e) => {
+                error!("{:?}", e);
+                std::process::exit(1)
+            }
+        };
 
     tokio::spawn(connection.map(|r| {
         if let Err(e) = r {
             error!("Postgres connection error: {}", e);
-            std::process::exit(1);
-        } else {
-            info!("Connection closed!");
+            std::process::exit(1)
         }
     }));
 

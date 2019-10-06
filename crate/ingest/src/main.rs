@@ -88,7 +88,7 @@ where
 }
 
 async fn ingest_json<R: Read + Send>(mut already_have: Option<BTreeSet<i64>>, json_stream: R) {
-    const MAX_SPAWNED: u32 = 128;
+    const MAX_SPAWNED: u32 = 512;
 
     let blacklist = Arc::new(RwLock::new(HashSet::<String>::new()));
 

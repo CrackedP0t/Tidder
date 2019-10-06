@@ -1,12 +1,13 @@
-use futures::future::{loop_fn, ok, Either, Future, Loop};
+use super::*;
+use future::poll_fn;
+use futures::prelude::*;
+use futures::task::Poll;
 use log::error;
 use std::collections::HashMap;
 use std::sync::RwLock;
 use tokio_postgres::{Client, NoTls, Statement};
 
-use super::*;
-
-const CONN_LIMIT: u64 = 480;
+const CONN_LIMIT: u64 = 2048;
 
 pub struct PgPool {
     conn_string: &'static str,
@@ -23,8 +24,8 @@ impl PgPool {
         }
     }
 
-    pub fn take(&'static self) -> impl Future<Item = PgHandle, Error = UserError> {
-        loop_fn((), move |_|
+    pub async fn take(&'static self) -> Result<PgHandle, UserError> {
+        let maybe_pair = poll_fn(move |_|
         //         match self.pool.try_write() {
         //     Ok(mut pool_guard) => match pool_guard.pop() {
         //         Some(client) => Ok(Async::Ready(Some(client))),
@@ -52,47 +53,44 @@ impl PgPool {
                 // }
 
                 match self.pool.write().unwrap().pop() {
-                    Some(client) => Ok(Loop::Break(Some(client))),
+                    Some(pair) => Poll::Ready(Some(pair)),
                     None => {
                         let count_read = self.count.read().unwrap();
                         if *count_read < CONN_LIMIT {
                             drop(count_read);
                             *self.count.write().unwrap() += 1;
-                            Ok(Loop::Break(None))
+                            Poll::Ready(None)
                         } else {
-                            Ok(Loop::Continue(()))
+                            Poll::Pending
                         }
                     }
                 })
-        .and_then(move |maybe_pair| match maybe_pair {
-            Some(pair) => Either::A(ok(PgHandle {
+        .await;
+
+        match maybe_pair {
+            Some(pair) => Ok(PgHandle {
                 parent: self,
                 prepared: Some(pair.1),
                 inner: Some(pair.0),
-            })),
-            None => Either::B(
-                tokio_postgres::connect(self.conn_string, NoTls)
-                    .map(move |(client, connection)| {
-                        let connection = connection
-                            .then(move |res| {
-                                *self.count.write().unwrap() -= 1;
-                                res
-                            })
-                            .map_err(|e| {
-                                error!("connection error: {}", e);
-                                std::process::exit(1);
-                            });
-                        tokio::spawn(connection);
+            }),
+            None => {
+                let (client, connection) = tokio_postgres::connect(self.conn_string, NoTls).await?;
+                let connection = connection.then(async move |res| {
+                    *self.count.write().unwrap() -= 1;
+                    if let Err(e) = res {
+                        error!("connection error: {}", e);
+                        std::process::exit(1);
+                    }
+                });
+                tokio::spawn(connection);
 
-                        PgHandle {
-                            parent: self,
-                            prepared: Some(HashMap::new()),
-                            inner: Some(client),
-                        }
-                    })
-                    .map_err(map_ue!()),
-            ),
-        })
+                Ok(PgHandle {
+                    parent: self,
+                    prepared: Some(HashMap::new()),
+                    inner: Some(client),
+                })
+            }
+        }
     }
 
     pub fn give(&self, pair: (Client, HashMap<&'static str, Statement>)) {
@@ -106,30 +104,30 @@ pub struct PgHandle {
     inner: Option<Client>,
 }
 
-impl PgHandle {
-    pub fn cache_prepare(
-        &mut self,
-        query: &'static str,
-    ) -> impl Future<Item = Statement, Error = UserError> + '_ {
-        let prepared = self.prepared.as_mut().unwrap();
+// impl PgHandle {
+//     pub fn cache_prepare(
+//         &mut self,
+//         query: &'static str,
+//     ) -> impl Future<Item = Statement, Error = UserError> + '_ {
+//         let prepared = self.prepared.as_mut().unwrap();
 
-        if let Some(statement) = prepared.get(query) {
-            return Either::B(ok(statement.clone()));
-        }
+//         if let Some(statement) = prepared.get(query) {
+//             return Either::B(ok(statement.clone()));
+//         }
 
-        Either::A(
-            self.inner
-                .as_mut()
-                .unwrap()
-                .prepare(query)
-                .map_err(map_ue!())
-                .map(move |statement| {
-                    prepared.insert(query, statement.clone());
-                    statement
-                }),
-        )
-    }
-}
+//         Either::A(
+//             self.inner
+//                 .as_mut()
+//                 .unwrap()
+//                 .prepare(query)
+//                 .map_err(map_ue!())
+//                 .map(move |statement| {
+//                     prepared.insert(query, statement.clone());
+//                     statement
+//                 }),
+//         )
+//     }
+// }
 
 impl Drop for PgHandle {
     fn drop(&mut self) {

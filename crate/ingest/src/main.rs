@@ -363,7 +363,7 @@ async fn main() -> Result<(), Error> {
 
     info!("Processing posts we already have");
 
-    let mut client = pg_connect().await.unwrap();
+    let mut client = PG_POOL.take().await.unwrap();
     let stmt = client
         .prepare(
             "SELECT reddit_id_int FROM posts \
@@ -379,6 +379,8 @@ async fn main() -> Result<(), Error> {
             Ok(already_have)
         })
         .await?;
+
+    drop(client);
 
     let already_have_len = already_have.len();
     info!(

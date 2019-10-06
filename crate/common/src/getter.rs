@@ -475,7 +475,7 @@ async fn poss_move_row(
     if hash_dest == found_hash_dest || hash_dest == HashDest::ImageCache {
         Ok((hash, hash_dest, id, true))
     } else {
-        let mut client = pg_connect().await?;
+        let mut client = PG_POOL.take().await?;
         let mut trans = client.transaction().await?;
         let stmt = trans
             .prepare(
@@ -520,7 +520,7 @@ pub async fn save_hash(
                 .and_then(|s| cache_control::with_str(s).ok());
             let cc = cc.as_ref();
 
-            let mut client = pg_connect().await?;
+            let mut client = PG_POOL.take().await?;
             let mut trans = client.transaction().await?;
             let stmt = trans
                 .prepare(

@@ -1,3 +1,5 @@
+#![feature(async_closure)]
+
 use cache_control::CacheControl;
 use chrono::{DateTime, NaiveDateTime};
 pub use failure::{self, format_err, Error};
@@ -18,8 +20,8 @@ use url::{
 mod getter;
 pub use getter::*;
 
-// mod pool;
-// pub use pool::*;
+mod pool;
+pub use pool::*;
 
 mod hash;
 pub use hash::*;
@@ -29,6 +31,7 @@ lazy_static! {
         Regex::new(r"(?i)\W(?:png|jpe?g|gif|webp|p[bgpn]m|tiff?|bmp|ico|hdr)\b").unwrap();
     pub static ref URL_RE: Regex =
         Regex::new(r"^(?i)https?://(?:[a-z0-9.-]+|\[[0-9a-f:]+\])(?:$|[:/?#])").unwrap();
+    pub static ref PG_POOL: PgPool = PgPool::new(&SECRETS.postgres.connect);
 }
 
 // Log Error, returning empty
@@ -342,7 +345,7 @@ pub async fn save_post(post: &Submission, image_id: Option<i64>) -> Result<bool,
             .as_str(),
     );
 
-    let mut client = pg_connect().await?;
+    let mut client = PG_POOL.take().await?;
     let mut trans = client.transaction().await?;
     let stmt = trans
         .prepare(
@@ -428,29 +431,8 @@ impl HashDest {
     }
 }
 
-pub async fn pg_connect() -> Result<tokio_postgres::Client, UserError> {
-    let (client, connection) =
-        match tokio_postgres::connect(&SECRETS.postgres.connect, tokio_postgres::NoTls)
-        .await {
-            Ok(c) => c,
-            Err(e) => {
-                error!("{:?}", e);
-                std::process::exit(1)
-            }
-        };
-
-    tokio::spawn(connection.map(|r| {
-        if let Err(e) = r {
-            error!("Postgres connection error: {}", e);
-            std::process::exit(1)
-        }
-    }));
-
-    Ok(client)
-}
-
 async fn get_existing(link: &str) -> Result<Option<(Hash, HashDest, i64)>, UserError> {
-    let mut client = pg_connect().await?;
+    let mut client = PG_POOL.take().await?;
 
     let stmt = client
         .prepare(

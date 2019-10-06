@@ -88,15 +88,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bench"
-version = "0.1.0"
-dependencies = [
- "clap 2.33.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "common 0.0.1",
- "image 0.22.3 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
 name = "bincode"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

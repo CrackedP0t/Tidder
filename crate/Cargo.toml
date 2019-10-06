@@ -1,2 +1,2 @@
 [workspace]
-members = ["common", "site", "ingest", "bench", "cache_control", "macros", "op"]
+members = ["common", "site", "ingest", "bench", "cache_control", "op"]

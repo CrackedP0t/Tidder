@@ -489,12 +489,15 @@ async fn poss_move_row(
             .await?;
 
         let rows = trans.query(&stmt, &[&id]).try_collect::<Vec<_>>().await?;
+
         let new_id = rows[0].get::<_, i64>("id");
 
         let stmt = trans
             .prepare("DELETE FROM image_cache WHERE id = $1")
             .await?;
         trans.execute(&stmt, &[&id]).await?;
+
+        trans.commit().await?;
 
         Ok((hash, HashDest::Images, new_id, true))
     }
@@ -521,14 +524,14 @@ pub async fn save_hash(
             let mut trans = client.transaction().await?;
             let stmt = trans
                 .prepare(
-                    {format!(
+                    format!(
                         "INSERT INTO {} (link, hash, no_store, no_cache, expires, \
                          etag, must_revalidate, retrieved_on) \
                          VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
                          ON CONFLICT DO NOTHING \
                          RETURNING id",
                         hash_dest.table_name()
-                    )}
+                    )
                     .as_str(),
                 )
                 .await?;
@@ -557,6 +560,8 @@ pub async fn save_hash(
                 )
                 .try_collect::<Vec<_>>()
                 .await?;
+
+            trans.commit().await?;
 
             match rows.first() {
                 Some(row) => Ok((hash, hash_dest, row.get("id"), false)),

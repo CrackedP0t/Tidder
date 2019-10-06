@@ -380,6 +380,8 @@ pub async fn save_post(post: &Submission, image_id: Option<i64>) -> Result<bool,
         )
         .await?;
 
+    trans.commit().await?;
+
     Ok(modified > 0)
 }
 
@@ -445,8 +447,8 @@ pub async fn pg_connect() -> Result<tokio_postgres::Client, UserError> {
 
 async fn get_existing(link: &str) -> Result<Option<(Hash, HashDest, i64)>, UserError> {
     let mut client = pg_connect().await?;
-    let mut trans = client.transaction().await.map_err(map_ue!())?;
-    let stmt = trans
+
+    let stmt = client
         .prepare(
             "SELECT hash, id, 'images' as table_name \
              FROM images WHERE link = $1 \
@@ -455,7 +457,7 @@ async fn get_existing(link: &str) -> Result<Option<(Hash, HashDest, i64)>, UserE
              FROM image_cache WHERE link = $1",
         )
         .await?;
-    let rows = trans.query(&stmt, &[&link]).try_collect::<Vec<_>>().await?;
+    let rows = client.query(&stmt, &[&link]).try_collect::<Vec<_>>().await?;
 
     Ok(rows.first().map(|row| {
         (
@@ -472,30 +474,30 @@ async fn get_existing(link: &str) -> Result<Option<(Hash, HashDest, i64)>, UserE
 
 pub fn setup_logging(name: &str) {
     fern::Dispatch::new()
-        // .format(|out, message, record| {
-        //     let level = record.level();
-        //     out.finish(format_args!(
-        //         "[{}]{}[{}] {}",
-        //         chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
-        //         if level != LevelFilter::Info && level != LevelFilter::Warn {
-        //             match record.file() {
-        //                 Some(file) => Cow::Owned(format!(
-        //                     "[{}{}]",
-        //                     file,
-        //                     match record.line() {
-        //                         Some(line) => Cow::Owned(format!("#{}", line)),
-        //                         None => Cow::Borrowed(""),
-        //                     }
-        //                 )),
-        //                 None => Cow::Borrowed(""),
-        //             }
-        //         } else {
-        //             Cow::Borrowed("")
-        //         },
-        //         record.level(),
-        //         message
-        //     ))
-        // })
+        .format(|out, message, record| {
+            let level = record.level();
+            out.finish(format_args!(
+                "[{}]{}[{}] {}",
+                chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+                if level != LevelFilter::Info && level != LevelFilter::Warn {
+                    match record.file() {
+                        Some(file) => Cow::Owned(format!(
+                            "[{}{}]",
+                            file,
+                            match record.line() {
+                                Some(line) => Cow::Owned(format!("#{}", line)),
+                                None => Cow::Borrowed(""),
+                            }
+                        )),
+                        None => Cow::Borrowed(""),
+                    }
+                } else {
+                    Cow::Borrowed("")
+                },
+                record.level(),
+                message
+            ))
+        })
         .level(LevelFilter::Warn)
         .level_for("gotham", LevelFilter::Info)
         .level_for("site", LevelFilter::Info)

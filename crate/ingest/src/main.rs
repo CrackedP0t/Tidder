@@ -88,7 +88,6 @@ where
 async fn ingest_json<R: Read + Send>(
     mut already_have: Option<BTreeSet<i64>>,
     json_stream: R,
-    verbose: bool,
 ) {
     let blacklist = Arc::new(RwLock::new(HashMap::<String, bool>::from_iter(
         NO_BLACKLIST.iter().map(|h| (h.to_string(), false)),
@@ -208,10 +207,8 @@ async fn ingest_json<R: Read + Send>(
                     Err(e) => Err(e)
                 };
 
-
                 let image_id = match save_res {
                     Ok((_hash, _hash_dest, image_id, exists)) => {
-                        if verbose {
                             if exists {
                                 info!(
                                     "{}: {}: {} already exists",
@@ -223,7 +220,6 @@ async fn ingest_json<R: Read + Send>(
                                     post.created_utc, post.id, post.url
                                 );
                             }
-                        }
 
                         Some(image_id)
                     }
@@ -289,6 +285,11 @@ async fn ingest_json<R: Read + Send>(
                     );
                     std::process::exit(1);
                 }
+
+                info!(
+                        "{}: {}: {} successfully saved",
+                        post.created_utc, post.id, post.url
+                    );
             });
         })
 }
@@ -307,13 +308,11 @@ async fn main() -> Result<(), Error> {
             (version: crate_version!())
             (author: crate_authors!(","))
             (about: crate_description!())
-            (@arg VERBOSE: -v --verbose "Verbose logging")
             (@arg NO_DELETE: -D --("no-delete") "Don't delete archive files when done")
             (@arg PATH: +required "The URL or path of the file to ingest")
     )
     .get_matches();
 
-    let verbose = matches.is_present("VERBOSE");
     let no_delete = matches.is_present("NO_DELETE");
     let path = matches.value_of("PATH").unwrap().to_string();
 
@@ -409,12 +408,11 @@ async fn main() -> Result<(), Error> {
     let input = BufReader::new(input_file);
 
     if path.ends_with("bz2") {
-        ingest_json(already_have, bzip2::bufread::BzDecoder::new(input), verbose).await;
+        ingest_json(already_have, bzip2::bufread::BzDecoder::new(input)).await;
     } else if path.ends_with("xz") {
         ingest_json(
             already_have,
             xz2::bufread::XzDecoder::new(input),
-            verbose,
         ).await;
     } else if path.ends_with("zst") {
         ingest_json(
@@ -422,11 +420,10 @@ async fn main() -> Result<(), Error> {
             zstd::stream::read::Decoder::new(input)
                 .map_err(Error::from)
                 .unwrap(),
-            verbose,
         )
         .await;
     } else {
-        ingest_json(already_have, input, verbose).await;
+        ingest_json(already_have, input).await;
     };
 
     if !no_delete {

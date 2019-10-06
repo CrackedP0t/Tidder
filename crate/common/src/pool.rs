@@ -1,6 +1,5 @@
 use super::*;
 use future::poll_fn;
-use futures::prelude::*;
 use futures::task::Poll;
 use log::error;
 use std::collections::HashMap;
@@ -25,46 +24,20 @@ impl PgPool {
     }
 
     pub async fn take(&'static self) -> Result<PgHandle, UserError> {
-        let maybe_pair = poll_fn(move |_|
-        //         match self.pool.try_write() {
-        //     Ok(mut pool_guard) => match pool_guard.pop() {
-        //         Some(client) => Ok(Async::Ready(Some(client))),
-        //         None => {
-        //             drop(pool_guard);
-        //             match self.count.try_read() {
-        //                 Ok(count_guard) => {
-        //                     if *count_guard < CONN_LIMIT {
-        //                         drop(count_guard);
-        //                         *self.count.write().unwrap() += 1;
-        //                         Ok(Async::Ready(None))
-        //                     } else {
-        //                         Ok(Async::NotReady)
-        //                     }
-        //                 }
-        //                 Err(TryLockError::WouldBlock) => Ok(Async::NotReady),
-        //                 Err(TryLockError::Poisoned(e)) => panic!("{}", e),
-        //             }
-        //         }
-        //     },
-        //     Err(TryLockError::WouldBlock) => Ok(Async::NotReady),
-        //             Err(TryLockError::Poisoned(e)) => panic!("{}", e),
-
-        //         }
-                // }
-
-                match self.pool.write().unwrap().pop() {
-                    Some(pair) => Poll::Ready(Some(pair)),
-                    None => {
-                        let count_read = self.count.read().unwrap();
-                        if *count_read < CONN_LIMIT {
-                            drop(count_read);
-                            *self.count.write().unwrap() += 1;
-                            Poll::Ready(None)
-                        } else {
-                            Poll::Pending
-                        }
-                    }
-                })
+        let maybe_pair = poll_fn(move |c| match self.pool.write().unwrap().pop() {
+            Some(pair) => Poll::Ready(Some(pair)),
+            None => {
+                let count_read = self.count.read().unwrap();
+                if *count_read < CONN_LIMIT {
+                    drop(count_read);
+                    *self.count.write().unwrap() += 1;
+                    Poll::Ready(None)
+                } else {
+                    c.waker().wake_by_ref();
+                    Poll::Pending
+                }
+            }
+        })
         .await;
 
         match maybe_pair {

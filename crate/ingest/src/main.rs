@@ -86,13 +86,15 @@ where
 }
 
 async fn ingest_json<R: Read + Send>(mut already_have: Option<BTreeSet<i64>>, json_stream: R) {
+    const MAX_SPAWNED: u32 = 128;
+
     let blacklist = Arc::new(RwLock::new(HashMap::<String, bool>::from_iter(
         NO_BLACKLIST.iter().map(|h| (h.to_string(), false)),
     )));
 
     let in_flight = Arc::new(RwLock::new(HashMap::<String, u32>::new()));
 
-    // const MAX_SPAWNED: u32 = 128;
+    let spawned = Arc::new(RwLock::new(0));
 
     let json_iter = Deserializer::from_reader(json_stream)
         .into_iter::<Submission>()
@@ -102,188 +104,200 @@ async fn ingest_json<R: Read + Send>(mut already_have: Option<BTreeSet<i64>>, js
 
     info!("Starting ingestion!");
 
-    check_json
-        .filter(|post| {
-            !post.is_self
-                && post.promoted.map(|promoted| !promoted).unwrap_or(true)
-                && ((EXT_RE.is_match(&post.url) && URL_RE.is_match(&post.url))
-                    || is_link_special(&post.url))
-                && match already_have {
-                    None => true,
-                    Some(ref mut set) => {
-                        let had = set.remove(&post.id_int);
-                        if set.is_empty() {
-                            already_have = None;
-                        }
-                        !had
+    for mut post in check_json.filter(|post| {
+        !post.is_self
+            && post.promoted.map(|promoted| !promoted).unwrap_or(true)
+            && ((EXT_RE.is_match(&post.url) && URL_RE.is_match(&post.url))
+                || is_link_special(&post.url))
+            && match already_have {
+                None => true,
+                Some(ref mut set) => {
+                    let had = set.remove(&post.id_int);
+                    if set.is_empty() {
+                        already_have = None;
                     }
+                    !had
                 }
+            }
+    }) {
+        let spawned = spawned.clone();
+
+        poll_fn(|c| {
+            if *spawned.read().unwrap() < MAX_SPAWNED {
+                Poll::Ready(())
+            } else {
+                c.waker().wake_by_ref();
+                Poll::Pending
+            }
         })
-        .for_each(|mut post: Submission| {
-            let lazy_blacklist = blacklist.clone();
-            let blacklist = blacklist.clone();
+        .await;
 
-            let in_flight = in_flight.clone();
-            let end_in_flight = in_flight.clone();
+        let mut spawned_guard = spawned.write().unwrap();
+        *spawned_guard += 1;
+        drop(spawned_guard);
 
-            tokio::spawn(async move {
-                let post_url_res = (|| {
-                    let blacklist = lazy_blacklist;
-                    post.url = post
-                        .url
-                        .replace("&amp;", "&")
-                        .replace("&lt;", "<")
-                        .replace("&gt;", ">");
+        let blacklist = blacklist.clone();
+        let in_flight = in_flight.clone();
 
-                    let post_url = Url::parse(&post.url).map_err(map_ue!("invalid URL"))?;
+        tokio::spawn(async move {
+            let post_url_res = (|| {
+                post.url = post
+                    .url
+                    .replace("&amp;", "&")
+                    .replace("&lt;", "<")
+                    .replace("&gt;", ">");
 
-                    if BANNED.iter().any(|banned| banned.matches(&post_url)) {
-                        return Err(ue!("banned host"));
-                    }
+                let post_url = Url::parse(&post.url).map_err(map_ue!("invalid URL"))?;
 
-                    let blacklist_guard = blacklist.read().unwrap();
-                    if post_url
+                if BANNED.iter().any(|banned| banned.matches(&post_url)) {
+                    return Err(ue!("banned host"));
+                }
+
+                let blacklist_guard = blacklist.read().unwrap();
+                if post_url
+                    .host_str()
+                    .and_then(|host| blacklist_guard.get(host).copied())
+                    .unwrap_or(false)
+                {
+                    return Err(ue!("blacklisted host"));
+                }
+                drop(blacklist_guard);
+
+                Ok(post_url)
+            })();
+
+            let save_res = match post_url_res {
+                Ok(post_url) => {
+                    let tld = get_tld(&post_url);
+
+                    let custom_limit: Option<&Option<_>> = post_url
                         .host_str()
-                        .and_then(|host| blacklist_guard.get(host).copied())
-                        .unwrap_or(false)
-                    {
-                        return Err(ue!("blacklisted host"));
-                    }
-                    drop(blacklist_guard);
+                        .and_then(|host| CUSTOM_LIMITS.get(&host));
 
-                    Ok(post_url)
-                })();
+                    poll_fn(|c| {
+                        let guard = in_flight.read().unwrap();
+                        let limit = match custom_limit {
+                            None => Some(IN_FLIGHT_LIMIT),
+                            Some(&Some(limit)) => Some(limit),
+                            Some(&None) => None,
+                        };
 
-                let save_res = match post_url_res {
-                    Ok(post_url) => {
-                        let tld = get_tld(&post_url);
+                        let ready = limit
+                            .map(|limit| {
+                                guard
+                                    .get::<str>(&tld)
+                                    .map(|in_flight| *in_flight < limit)
+                                    .unwrap_or(true)
+                            })
+                            .unwrap_or(true);
 
-                        let custom_limit: Option<&Option<_>> = post_url
-                            .host_str()
-                            .and_then(|host| CUSTOM_LIMITS.get(&host));
-
-                        poll_fn(move |_| match in_flight.try_read() {
-                            Ok(guard) => {
-                                let limit = match custom_limit {
-                                    None => Some(IN_FLIGHT_LIMIT),
-                                    Some(&Some(limit)) => Some(limit),
-                                    Some(&None) => None,
-                                };
-
-                                let ready = limit
-                                    .map(|limit| {
-                                        guard
-                                            .get::<str>(&tld)
-                                            .map(|in_flight| *in_flight < limit)
-                                            .unwrap_or(true)
-                                    })
-                                    .unwrap_or(true);
-
-                                if ready {
-                                    drop(guard);
-                                    let mut write_guard = in_flight.write().unwrap();
-                                    *(write_guard.entry(tld.to_owned()).or_insert(0)) += 1;
-                                    drop(write_guard);
-                                    Poll::Ready(tld.to_owned())
-                                } else {
-                                    drop(guard);
-                                    Poll::Pending
-                                }
-                            }
-                            Err(TryLockError::WouldBlock) => Poll::Pending,
-                            Err(TryLockError::Poisoned(e)) => panic!(e.to_string()),
-                        })
-                        .await;
-
-                        let res = save_hash(post.url.clone(), HashDest::Images).await;
-
-                        *end_in_flight.write().unwrap().get_mut(tld).unwrap() -= 1;
-
-                        res
-                    }
-                    Err(e) => Err(e),
-                };
-
-                let image_id = match save_res {
-                    Ok((_hash, _hash_dest, image_id, exists)) => {
-                        if exists {
-                            info!(
-                                "{}: {}: {} already exists",
-                                post.created_utc, post.id, post.url
-                            );
+                        if ready {
+                            drop(guard);
+                            let mut write_guard = in_flight.write().unwrap();
+                            *(write_guard.entry(tld.to_owned()).or_insert(0)) += 1;
+                            drop(write_guard);
+                            Poll::Ready(tld.to_owned())
                         } else {
-                            info!(
-                                "{}: {}: {} successfully hashed",
-                                post.created_utc, post.id, post.url
-                            );
+                            drop(guard);
+                            c.waker().wake_by_ref();
+                            Poll::Pending
                         }
+                    })
+                    .await;
 
-                        Some(image_id)
+                    let res = save_hash(post.url.clone(), HashDest::Images).await;
+
+                    *in_flight.write().unwrap().get_mut(tld).unwrap() -= 1;
+
+                    res
+                }
+                Err(e) => Err(e),
+            };
+
+            let image_id = match save_res {
+                Ok((_hash, _hash_dest, image_id, exists)) => {
+                    if exists {
+                        info!(
+                            "{}: {}: {} already exists",
+                            post.created_utc, post.id, post.url
+                        );
+                    } else {
+                        info!(
+                            "{}: {}: {} successfully hashed",
+                            post.created_utc, post.id, post.url
+                        );
                     }
-                    Err(ue) => {
-                        match ue.source {
-                            Source::Internal => {
-                                error!(
-                                    "{}: {}: {}: {}{}{}{}",
-                                    post.created_utc,
-                                    post.id,
-                                    post.url,
-                                    ue.file.unwrap_or(""),
-                                    ue.line
-                                        .map(|line| Cow::Owned(format!("#{}", line)))
-                                        .unwrap_or(Cow::Borrowed("")),
-                                    if ue.file.is_some() || ue.line.is_some() {
-                                        ": "
-                                    } else {
-                                        ""
-                                    },
-                                    ue.error
-                                );
-                                std::process::exit(1);
-                            }
-                            _ => {
-                                warn!(
-                                    "{}: {}: {} failed: {}",
-                                    post.created_utc, post.id, post.url, ue.error
-                                );
-                                if let Some(e) = ue.error.downcast_ref::<reqwest::Error>() {
-                                    if e.is_timeout()
-                                        || std::error::Error::downcast_ref::<hyper::Error>(e)
-                                            .map(hyper::Error::is_connect)
-                                            .unwrap_or(false)
-                                    {
-                                        if is_link_special(&post.url) {
-                                            error!(
-                                                "{}: {}: {}: Special link server error: {:?}",
-                                                post.created_utc, post.id, post.url, e
-                                            );
-                                            std::process::exit(1);
-                                        }
-                                        if let Ok(url) = Url::parse(&post.url) {
-                                            if let Some(host) = url.host_str() {
-                                                blacklist
-                                                    .write()
-                                                    .unwrap()
-                                                    .insert(host.to_string(), true);
-                                            }
+
+                    Some(image_id)
+                }
+                Err(ue) => {
+                    match ue.source {
+                        Source::Internal => {
+                            error!(
+                                "{}: {}: {}: {}{}{}{}",
+                                post.created_utc,
+                                post.id,
+                                post.url,
+                                ue.file.unwrap_or(""),
+                                ue.line
+                                    .map(|line| Cow::Owned(format!("#{}", line)))
+                                    .unwrap_or(Cow::Borrowed("")),
+                                if ue.file.is_some() || ue.line.is_some() {
+                                    ": "
+                                } else {
+                                    ""
+                                },
+                                ue.error
+                            );
+                            std::process::exit(1);
+                        }
+                        _ => {
+                            warn!(
+                                "{}: {}: {} failed: {}",
+                                post.created_utc, post.id, post.url, ue.error
+                            );
+                            if let Some(e) = ue.error.downcast_ref::<reqwest::Error>() {
+                                if e.is_timeout()
+                                    || std::error::Error::downcast_ref::<hyper::Error>(e)
+                                        .map(hyper::Error::is_connect)
+                                        .unwrap_or(false)
+                                {
+                                    if is_link_special(&post.url) {
+                                        error!(
+                                            "{}: {}: {}: Special link server error: {:?}",
+                                            post.created_utc, post.id, post.url, e
+                                        );
+                                        std::process::exit(1);
+                                    }
+                                    if let Ok(url) = Url::parse(&post.url) {
+                                        if let Some(host) = url.host_str() {
+                                            blacklist
+                                                .write()
+                                                .unwrap()
+                                                .insert(host.to_string(), true);
                                         }
                                     }
                                 }
                             }
                         }
-                        None
                     }
-                };
-
-                if let Err(e) = save_post(&post, image_id).await {
-                    error!(
-                        "{}: {}: {} failed to save: {}",
-                        post.created_utc, post.id, post.url, e
-                    );
-                    std::process::exit(1);
+                    None
                 }
-            });
-        })
+            };
+
+            if let Err(e) = save_post(&post, image_id).await {
+                error!(
+                    "{}: {}: {} failed to save: {}",
+                    post.created_utc, post.id, post.url, e
+                );
+                std::process::exit(1);
+            }
+
+            let mut spawned_guard = spawned.write().unwrap();
+            *spawned_guard -= 1;
+            drop(spawned_guard);
+        });
+    }
 }
 
 #[tokio::main]

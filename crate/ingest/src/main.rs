@@ -13,13 +13,12 @@ use regex::Regex;
 use reqwest::Client;
 use serde_json::Deserializer;
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::{remove_file, File, OpenOptions};
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
-use std::iter::FromIterator;
 use std::iter::Iterator;
 use std::path::Path;
-use std::sync::{Arc, RwLock, TryLockError};
+use std::sync::{Arc, RwLock};
 use url::Url;
 
 pub enum Banned {
@@ -88,9 +87,7 @@ where
 async fn ingest_json<R: Read + Send>(mut already_have: Option<BTreeSet<i64>>, json_stream: R) {
     const MAX_SPAWNED: u32 = 128;
 
-    let blacklist = Arc::new(RwLock::new(HashMap::<String, bool>::from_iter(
-        NO_BLACKLIST.iter().map(|h| (h.to_string(), false)),
-    )));
+    let blacklist = Arc::new(RwLock::new(HashSet::<String>::new()));
 
     let in_flight = Arc::new(RwLock::new(HashMap::<String, u32>::new()));
 
@@ -156,7 +153,7 @@ async fn ingest_json<R: Read + Send>(mut already_have: Option<BTreeSet<i64>>, js
                 let blacklist_guard = blacklist.read().unwrap();
                 if post_url
                     .host_str()
-                    .and_then(|host| blacklist_guard.get(host).copied())
+                    .map(|host| blacklist_guard.contains(host))
                     .unwrap_or(false)
                 {
                     return Err(ue!("blacklisted host"));
@@ -271,10 +268,9 @@ async fn ingest_json<R: Read + Send>(mut already_have: Option<BTreeSet<i64>>, js
                                     }
                                     if let Ok(url) = Url::parse(&post.url) {
                                         if let Some(host) = url.host_str() {
-                                            blacklist
-                                                .write()
-                                                .unwrap()
-                                                .insert(host.to_string(), true);
+                                            if !NO_BLACKLIST.contains(&host) {
+                                                blacklist.write().unwrap().insert(host.to_string());
+                                            }
                                         }
                                     }
                                 }

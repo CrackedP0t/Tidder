@@ -486,7 +486,7 @@ async fn poss_move_row(
                  must_revalidate, retrieved_on FROM image_cache WHERE id = $1) \
                  RETURNING id",
             )
-            .await?;
+            .await.map_err(map_ue!())?;
 
         let rows = trans.query(&stmt, &[&id]).try_collect::<Vec<_>>().await?;
 

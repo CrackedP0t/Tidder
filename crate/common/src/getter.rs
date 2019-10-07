@@ -472,6 +472,7 @@ async fn poss_move_row(
     found_hash_dest: HashDest,
     id: i64,
 ) -> Result<(Hash, HashDest, i64, bool), UserError> {
+    dbg!(&hash, &hash_dest, &found_hash_dest, id);
     if hash_dest == found_hash_dest || hash_dest == HashDest::ImageCache {
         Ok((hash, hash_dest, id, true))
     } else {
@@ -482,7 +483,7 @@ async fn poss_move_row(
                 "INSERT INTO images \
                  (link, hash, no_store, no_cache, expires, etag, \
                  must_revalidate, retrieved_on) \
-                 VALUES (SELECT link, hash, no_store, no_cache, expires, etag,\
+                 VALUES (SELECT link, hash, no_store, no_cache, expires, etag, \
                  must_revalidate, retrieved_on FROM image_cache WHERE id = $1) \
                  RETURNING id",
             )

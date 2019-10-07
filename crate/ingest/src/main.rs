@@ -188,10 +188,7 @@ async fn ingest_post(
             match ue.source {
                 Source::Internal => {
                     error!(
-                        "{}: {}: {}: {}{}{}{:?}",
-                        post.created_utc,
-                        post.id,
-                        post.url,
+                        "{}{}{}\n{:#?}\n{:#?}",
                         ue.file.unwrap_or(""),
                         ue.line
                             .map(|line| Cow::Owned(format!("#{}", line)))
@@ -201,7 +198,8 @@ async fn ingest_post(
                         } else {
                             ""
                         },
-                        ue.error
+                        ue.error,
+                        post
                     );
                     std::process::exit(1);
                 }

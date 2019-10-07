@@ -188,7 +188,7 @@ async fn ingest_post(
             match ue.source {
                 Source::Internal => {
                     error!(
-                        "{}: {}: {}: {}{}{}{}",
+                        "{}: {}: {}: {}{}{}{:?}",
                         post.created_utc,
                         post.id,
                         post.url,
@@ -366,10 +366,11 @@ async fn main() -> Result<(), Error> {
                     .write(true)
                     .open(&arch_path)?;
 
-                let resp = REQW_CLIENT.get(&path).send().await?.error_for_status()?;
-                let bytes = resp.bytes().await?;
+                let mut resp = REQW_CLIENT.get(&path).send().await?.error_for_status()?;
 
-                arch_file.write_all(&bytes)?;
+                while let Some(chunk) = resp.chunk().await? {
+                    arch_file.write_all(&chunk)?;
+                }
 
                 arch_file.seek(SeekFrom::Start(0))?;
 

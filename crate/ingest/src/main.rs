@@ -249,7 +249,7 @@ async fn ingest_json<R: Read + Send + 'static>(
     mut already_have: Option<BTreeSet<i64>>,
     json_stream: R,
 ) {
-    const MAX_SPAWNED: u32 = 512;
+    const MAX_SPAWNED: u32 = 2048;
 
     let json_iter = Deserializer::from_reader(json_stream)
         .into_iter::<Submission>()

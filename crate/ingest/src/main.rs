@@ -82,7 +82,7 @@ where
         loop {
             match self.iter.next() {
                 None => return None,
-                Some(Err(e)) => warn!("Error deserializing: {}", e),
+                Some(Err(_)) => continue,
                 Some(Ok(v)) => return Some(v),
             }
         }

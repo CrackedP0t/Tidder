@@ -1,4 +1,4 @@
-use super::{UserError, map_ue_save};
+use super::{map_ue_save, UserError};
 use image::{
     imageops, load_from_memory, DynamicImage, GenericImageView, GrayImage, ImageBgr8, ImageBgra8,
     ImageLuma8, ImageLumaA8, ImageRgb8, ImageRgba8,

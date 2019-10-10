@@ -113,7 +113,11 @@ fn follow_gifsound(url: Url) -> Result<String, UserError> {
             }
         }
     }
-    Err(ue_save!("GifSound URL without GIF", "gifsound_no_gif", Source::User))
+    Err(ue_save!(
+        "GifSound URL without GIF",
+        "gifsound_no_gif",
+        Source::User
+    ))
 }
 
 async fn follow_gfycat(url: Url) -> Result<String, UserError> {
@@ -140,16 +144,24 @@ async fn follow_gfycat(url: Url) -> Result<String, UserError> {
                 .captures(url.path())
                 .and_then(|c| c.get(1))
                 .map(|m| m.as_str())
-                .ok_or_else(|| ue_save!("couldn't find Gfycat ID in link", "gfycat_no_id", Source::User))?
+                .ok_or_else(|| ue_save!(
+                    "couldn't find Gfycat ID in link",
+                    "gfycat_no_id",
+                    Source::User
+                ))?
         ))
         .send()
-        .await.map_err(map_ue!("couldn't connect to GfyCat API"))?
+        .await
+        .map_err(map_ue!("couldn't connect to GfyCat API"))?
         .error_for_status()
         .map_err(error_for_status_ue)?;
 
     Ok(resp
         .json::<Gfycats>()
-        .map_err(map_ue_save!("problematic JSON from Gfycat API", "gfycat_json_bad"))
+        .map_err(map_ue_save!(
+            "problematic JSON from Gfycat API",
+            "gfycat_json_bad"
+        ))
         .await?
         .gfy_item
         .mobile_poster_url)
@@ -198,7 +210,10 @@ async fn make_imgur_api_request(api_link: String) -> Result<Value, UserError> {
         Err(ue!("out of Imgur API requests", Source::Internal))
     } else {
         resp.json::<Value>()
-            .map_err(map_ue_save!("Imgur API returned invalid JSON", "imgur_json_bad"))
+            .map_err(map_ue_save!(
+                "Imgur API returned invalid JSON",
+                "imgur_json_bad"
+            ))
             .await
     }
 }
@@ -251,9 +266,14 @@ async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
         let json = make_imgur_api_request(api_link).await?;
         Ok(GIFV_RE
             .replace(
-                json["data"].get(0).ok_or(ue_save!("Imgur album is empty", "imgur_album_empty"))?["link"]
+                json["data"]
+                    .get(0)
+                    .ok_or(ue_save!("Imgur album is empty", "imgur_album_empty"))?["link"]
                     .as_str()
-                    .ok_or(ue_save!("Imgur API returned unexpectedly-structured JSON", "imgur_json_bad"))?,
+                    .ok_or(ue_save!(
+                        "Imgur API returned unexpectedly-structured JSON",
+                        "imgur_json_bad"
+                    ))?,
                 ".gif$1",
             )
             .to_string())
@@ -276,7 +296,10 @@ async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
                         .get(0)
                         .ok_or(ue_save!("Imgur album is empty", "imgur_album_empty"))?["link"]
                         .as_str()
-                        .ok_or(ue_save!("Imgur API returned unexpectedly-structured JSON", "imgur_json_bad"))?,
+                        .ok_or(ue_save!(
+                            "Imgur API returned unexpectedly-structured JSON",
+                            "imgur_json_bad"
+                        ))?,
                     ".gif$1",
                 )
                 .to_string())
@@ -454,7 +477,10 @@ pub async fn get_hash(orig_link: &str) -> Result<(Hash, String, GetKind), UserEr
             .map_err(map_ue!("non-ASCII Content-Type header"))?;
 
         if !IMAGE_MIMES.contains(&ct) {
-            return Err(ue_save!(format!("unsupported Content-Type: {}", ct), "content_type_unsupported"));
+            return Err(ue_save!(
+                format!("unsupported Content-Type: {}", ct),
+                "content_type_unsupported"
+            ));
         }
 
         if url

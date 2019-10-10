@@ -188,10 +188,6 @@ async fn ingest_post(
                 std::process::exit(1)
             }
             _ => {
-                warn!("{} failed{}: {}", post_info,
-                      ue.save_error.as_ref().map(|se| Cow::Owned(format!(" ({})", se))).unwrap_or_else(|| Cow::Borrowed("")),
-                      ue.error);
-
                 let reqwest_save_error = ue.error.downcast_ref::<reqwest::Error>().and_then(|e| {
                     let hyper_error = std::error::Error::downcast_ref::<hyper::Error>(e);
 
@@ -212,7 +208,8 @@ async fn ingest_post(
                         }
                     }
 
-                    e.status().map(|status| format!("http_{}", status.as_str()).into())
+                    e.status()
+                        .map(|status| format!("http_{}", status.as_str()).into())
                         .or_else(|| {
                             if e.is_timeout() {
                                 Some("timeout".into())
@@ -223,7 +220,19 @@ async fn ingest_post(
                         .or_else(|| hyper_error.map(|_| "hyper".into()))
                 });
 
-                Err(ue.save_error.or(reqwest_save_error))
+                let save_error = ue.save_error.or(reqwest_save_error);
+
+                warn!(
+                    "{} failed{}: {}",
+                    post_info,
+                    save_error
+                        .as_ref()
+                        .map(|se| Cow::Owned(format!(" ({})", se)))
+                        .unwrap_or_else(|| Cow::Borrowed("")),
+                    ue.error
+                );
+
+                Err(save_error)
             }
         },
     };

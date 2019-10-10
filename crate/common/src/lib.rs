@@ -369,7 +369,10 @@ mod de_sub {
     }
 }
 
-pub async fn save_post(post: &Submission, image_id: Result<i64, Option<Cow<'static, str>>>) -> Result<bool, UserError> {
+pub async fn save_post(
+    post: &Submission,
+    image_id: Result<i64, Option<Cow<'static, str>>>,
+) -> Result<bool, UserError> {
     lazy_static! {
         static ref ID_RE: Regex = Regex::new(r"/comments/([^/]+)/").unwrap();
     }
@@ -386,64 +389,68 @@ pub async fn save_post(post: &Submission, image_id: Result<i64, Option<Cow<'stat
     let trans = client.transaction().await?;
 
     let modified = match image_id {
-        Ok(image_id) => trans
-            .execute(
-                "INSERT INTO posts \
-                 (reddit_id, link, permalink, author, \
-                 created_utc, score, subreddit, title, nsfw, \
-                 spoiler, image_id, reddit_id_int, \
-                 thumbnail, thumbnail_width, thumbnail_height) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, \
-                 $8, $9, $10, $11, $12, $13, $14, $15) \
-                 ON CONFLICT DO NOTHING",
-                &[
-                    &reddit_id,
-                    &post.url,
-                    &post.permalink,
-                    &post.author,
-                    &post.created_utc,
-                    &post.score,
-                    &post.subreddit,
-                    &post.title,
-                    &post.over_18,
-                    &post.spoiler.unwrap_or(false),
-                    &image_id,
-                    &i64::from_str_radix(&reddit_id, 36).unwrap(),
-                    &post.thumbnail,
-                    &post.thumbnail_width,
-                    &post.thumbnail_height,
-                ],
-            )
-            .await?,
-        Err(save_error) => trans
-            .execute(
-                "INSERT INTO posts \
-                 (reddit_id, link, permalink, author, \
-                 created_utc, score, subreddit, title, nsfw, \
-                 spoiler, reddit_id_int, thumbnail, \
-                 thumbnail_width, thumbnail_height, save_error) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, \
-                 $8, $9, $10, $11, $12, $13, $14, $15) \
-                 ON CONFLICT DO NOTHING",
-                &[
-                    &reddit_id,
-                    &post.url,
-                    &post.permalink,
-                    &post.author,
-                    &post.created_utc,
-                    &post.score,
-                    &post.subreddit,
-                    &post.title,
-                    &post.over_18,
-                    &post.spoiler.unwrap_or(false),
-                    &i64::from_str_radix(&reddit_id, 36).unwrap(),
-                    &post.thumbnail,
-                    &post.thumbnail_width,
-                    &post.thumbnail_height,
-                    &save_error
-                ],
-            )
-            .await?
+        Ok(image_id) => {
+            trans
+                .execute(
+                    "INSERT INTO posts \
+                     (reddit_id, link, permalink, author, \
+                     created_utc, score, subreddit, title, nsfw, \
+                     spoiler, image_id, reddit_id_int, \
+                     thumbnail, thumbnail_width, thumbnail_height) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, \
+                     $8, $9, $10, $11, $12, $13, $14, $15) \
+                     ON CONFLICT DO NOTHING",
+                    &[
+                        &reddit_id,
+                        &post.url,
+                        &post.permalink,
+                        &post.author,
+                        &post.created_utc,
+                        &post.score,
+                        &post.subreddit,
+                        &post.title,
+                        &post.over_18,
+                        &post.spoiler.unwrap_or(false),
+                        &image_id,
+                        &i64::from_str_radix(&reddit_id, 36).unwrap(),
+                        &post.thumbnail,
+                        &post.thumbnail_width,
+                        &post.thumbnail_height,
+                    ],
+                )
+                .await?
+        }
+        Err(save_error) => {
+            trans
+                .execute(
+                    "INSERT INTO posts \
+                     (reddit_id, link, permalink, author, \
+                     created_utc, score, subreddit, title, nsfw, \
+                     spoiler, reddit_id_int, thumbnail, \
+                     thumbnail_width, thumbnail_height, save_error) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, \
+                     $8, $9, $10, $11, $12, $13, $14, $15) \
+                     ON CONFLICT DO NOTHING",
+                    &[
+                        &reddit_id,
+                        &post.url,
+                        &post.permalink,
+                        &post.author,
+                        &post.created_utc,
+                        &post.score,
+                        &post.subreddit,
+                        &post.title,
+                        &post.over_18,
+                        &post.spoiler.unwrap_or(false),
+                        &i64::from_str_radix(&reddit_id, 36).unwrap(),
+                        &post.thumbnail,
+                        &post.thumbnail_width,
+                        &post.thumbnail_height,
+                        &save_error,
+                    ],
+                )
+                .await?
+        }
     };
 
     trans.commit().await?;

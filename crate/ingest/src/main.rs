@@ -166,7 +166,7 @@ async fn ingest_post(
             })
             .await;
 
-            let res = save_hash(post.url.clone(), HashDest::Images).await;
+            let res = save_hash(&post.url, HashDest::Images).await;
 
             *in_flight.write().unwrap().get_mut(tld).unwrap() -= 1;
 

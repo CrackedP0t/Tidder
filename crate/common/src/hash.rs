@@ -52,14 +52,7 @@ pub fn distance(a: Hash, b: Hash) -> u32 {
 }
 
 pub fn hash_from_memory(image: &[u8]) -> Result<Hash, UserError> {
-    Ok(dhash(
-        // match format {
-        //     Some(format) => load_from_memory_with_format(&file, format),
-        // None =>
-        load_from_memory(&image)
-            // }
-            .map_err(map_ue!("invalid image"))?,
-    ))
+    Ok(dhash(load_from_memory(&image).map_err(map_ue!("invalid image"))?))
 }
 
 fn rgb_to_luma(r: u8, g: u8, b: u8) -> u8 {

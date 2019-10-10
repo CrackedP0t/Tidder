@@ -376,16 +376,16 @@ pub enum GetKind {
     Request(HeaderMap),
 }
 
-pub async fn get_hash(link: &str) -> Result<(Hash, String, GetKind), UserError> {
+pub async fn get_hash(orig_link: &str) -> Result<(Hash, String, GetKind), UserError> {
     lazy_static! {
         static ref EXT_REPLACE_RE: Regex = Regex::new(r"^(.+?)\.[[:alnum:]]+$").unwrap();
     }
 
-    if link.len() > 2000 {
+    if orig_link.len() > 2000 {
         return Err(ue!("URL too long", Source::User));
     }
 
-    let url = Url::parse(link).map_err(map_ue!("not a valid URL", Source::User))?;
+    let url = Url::parse(orig_link).map_err(map_ue!("not a valid URL", Source::User))?;
 
     let scheme = url.scheme();
     if scheme != "http" && scheme != "https" {
@@ -456,12 +456,20 @@ pub async fn get_hash(link: &str) -> Result<(Hash, String, GetKind), UserError> 
     }
 
     let headers = resp.headers().to_owned();
-    let hash = hash_from_memory(
+
+    let image =
         &resp
             .bytes()
             .map_err(map_ue!("couldn't download image", Source::External))
-            .await?,
-    )?;
+            .await?;
+
+    let hash = match std::panic::catch_unwind(|| hash_from_memory(image)) {
+        Ok(r) => r?,
+        Err(e) => {
+            error!("{} panicked!", orig_link);
+            std::panic::resume_unwind(e)
+        }
+    };
 
     Ok((hash, link, GetKind::Request(headers)))
 }

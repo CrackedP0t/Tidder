@@ -91,9 +91,16 @@ where
 
 async fn ingest_post(
     mut post: Submission,
+    verbose: bool,
     blacklist: &RwLock<HashSet<String>>,
     in_flight: &RwLock<HashMap<String, u32>>,
 ) {
+    let post_info = format!("{}: {}: {}", post.created_utc, post.id, post.url);
+
+    if verbose {
+        info!("{} starting to hash", post_info);
+    }
+
     let post_url_res = (|| {
         post.url = post
             .url
@@ -171,15 +178,9 @@ async fn ingest_post(
     let image_id = match save_res {
         Ok((_hash, _hash_dest, image_id, exists)) => {
             if exists {
-                info!(
-                    "{}: {}: {} already exists",
-                    post.created_utc, post.id, post.url
-                );
+                info!("{} already exists", post_info);
             } else {
-                info!(
-                    "{}: {}: {} successfully hashed",
-                    post.created_utc, post.id, post.url
-                );
+                info!("{} successfully hashed", post_info);
             }
 
             Some(image_id)
@@ -204,21 +205,13 @@ async fn ingest_post(
                     std::process::exit(1);
                 }
                 _ => {
-                    warn!(
-                        "{}: {}: {} failed: {}",
-                        post.created_utc, post.id, post.url, ue.error
-                    );
+                    warn!("{} failed: {}", post_info, ue.error);
                     if let Some(e) = ue.error.downcast_ref::<reqwest::Error>() {
                         if e.is_timeout()
-                            || std::error::Error::downcast_ref::<hyper::Error>(e)
-                                .map(hyper::Error::is_connect)
-                                .unwrap_or(false)
+                            || std::error::Error::downcast_ref::<hyper::Error>(e).is_some()
                         {
                             if is_link_special(&post.url) {
-                                error!(
-                                    "{}: {}: {}: Special link server error: {:?}",
-                                    post.created_utc, post.id, post.url, e
-                                );
+                                error!("{} special link server error: {:?}", post_info, ue.error);
                                 std::process::exit(1);
                             }
                             if let Ok(url) = Url::parse(&post.url) {
@@ -236,16 +229,21 @@ async fn ingest_post(
         }
     };
 
-    if let Err(e) = save_post(&post, image_id).await {
-        error!(
-            "{}: {}: {} failed to save: {}",
-            post.created_utc, post.id, post.url, e
-        );
-        std::process::exit(1);
+    match save_post(&post, image_id).await {
+        Ok(_) => {
+            if verbose {
+                info!("{} successfully saved", post_info);
+            }
+        }
+        Err(e) => {
+            error!("{} failed to save: {:?}", post_info, e);
+            std::process::exit(1);
+        }
     }
 }
 
 async fn ingest_json<R: Read + Send + 'static>(
+    verbose: bool,
     mut already_have: Option<BTreeSet<i64>>,
     json_stream: R,
 ) {
@@ -292,7 +290,7 @@ async fn ingest_json<R: Read + Send + 'static>(
                         drop(json_iter_lock);
                         post
                     } {
-                        ingest_post(post, &blacklist, &in_flight).await;
+                        ingest_post(post, verbose, &blacklist, &in_flight).await;
                     }
                 }))
                 .unwrap()
@@ -320,11 +318,13 @@ async fn main() -> Result<(), Error> {
             (about: crate_description!())
             (@arg NO_DELETE: -D --("no-delete") "Don't delete archive files when done")
             (@arg PATH: +required "The URL or path of the file to ingest")
+            (@arg VERBOSE: -v --verbose "Print out each step in processing an image")
     )
     .get_matches();
 
     let no_delete = matches.is_present("NO_DELETE");
     let path = matches.value_of("PATH").unwrap().to_string();
+    let verbose = matches.is_present("VERBOSE");
 
     let month: i32 = MONTH_RE
         .captures(&path)
@@ -417,11 +417,12 @@ async fn main() -> Result<(), Error> {
     let input = BufReader::new(input_file);
 
     if path.ends_with("bz2") {
-        ingest_json(already_have, bzip2::bufread::BzDecoder::new(input)).await;
+        ingest_json(verbose, already_have, bzip2::bufread::BzDecoder::new(input)).await;
     } else if path.ends_with("xz") {
-        ingest_json(already_have, xz2::bufread::XzDecoder::new(input)).await;
+        ingest_json(verbose, already_have, xz2::bufread::XzDecoder::new(input)).await;
     } else if path.ends_with("zst") {
         ingest_json(
+            verbose,
             already_have,
             zstd::stream::read::Decoder::new(input)
                 .map_err(Error::from)
@@ -429,7 +430,7 @@ async fn main() -> Result<(), Error> {
         )
         .await;
     } else {
-        ingest_json(already_have, input).await;
+        ingest_json(verbose, already_have, input).await;
     };
 
     if !no_delete {

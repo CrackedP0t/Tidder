@@ -121,7 +121,8 @@ CREATE TABLE public.posts (
     thumbnail_width integer,
     thumbnail character varying,
     thumbnail_height integer,
-    updated timestamp without time zone
+    updated timestamp without time zone,
+    save_error character varying
 );
 
 

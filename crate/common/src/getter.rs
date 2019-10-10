@@ -313,7 +313,7 @@ async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
                 .map_err(error_for_status_ue)
         }
     } else {
-        let id = last_full_segment(&url).unwrap()
+        let id = last_full_segment(&url)
             .and_then(|seg| ID_RE.find(seg))
             .ok_or(ue_save!("Couldn't find Imgur ID", "imgur_no_id"))?
             .as_str();

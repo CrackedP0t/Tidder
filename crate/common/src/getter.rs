@@ -19,16 +19,16 @@ lazy_static! {
         .unwrap();
 }
 
-pub fn new_domain_re(domain: &str) -> Result<Regex, regex::Error> {
+pub fn new_domain_with_path_re(domain: &str) -> Result<Regex, regex::Error> {
     Regex::new(&format!(
-        r"(?i)^https?://(?:[a-z0-9-.]+\.)?{}(?:[/?#:]|$)",
+        r"(?i)^https?://(?:[a-z0-9-.]+\.)?{}(?::\d+)?[/?#].+",
         domain.replace(".", r"\.")
     ))
 }
 
 pub fn is_link_imgur(link: &str) -> bool {
     lazy_static! {
-        static ref IMGUR_LINK_RE: Regex = new_domain_re("imgur.com").unwrap();
+        static ref IMGUR_LINK_RE: Regex = new_domain_with_path_re("imgur.com").unwrap();
     }
 
     IMGUR_LINK_RE.is_match(link)
@@ -36,7 +36,7 @@ pub fn is_link_imgur(link: &str) -> bool {
 
 pub fn is_link_gfycat(link: &str) -> bool {
     lazy_static! {
-        static ref GFYCAT_LINK_RE: Regex = new_domain_re("gfycat.com").unwrap();
+        static ref GFYCAT_LINK_RE: Regex = new_domain_with_path_re("gfycat.com").unwrap();
     }
 
     GFYCAT_LINK_RE.is_match(link)
@@ -44,7 +44,7 @@ pub fn is_link_gfycat(link: &str) -> bool {
 
 pub fn is_link_gifsound(link: &str) -> bool {
     lazy_static! {
-        static ref GIFSOUND_LINK_RE: Regex = new_domain_re("gifsound.com").unwrap();
+        static ref GIFSOUND_LINK_RE: Regex = new_domain_with_path_re("gifsound.com").unwrap();
     }
 
     GIFSOUND_LINK_RE.is_match(link)
@@ -588,11 +588,11 @@ pub async fn save_hash(
 mod tests {
     use super::*;
 
-    #[test]
-    fn follow() {
+    #[tokio::test]
+    async fn follow() {
         assert_eq!(
             follow_imgur(Url::parse("http://www.i.imgur.com/3EqtHIK.jpg").unwrap())
-                .wait()
+                .await
                 .unwrap(),
             "https://i.imgur.com/3EqtHIK.jpg"
         );
@@ -613,14 +613,14 @@ mod tests {
         assert!(is_link_imgur("https://i.imgur.com/3EqtHIK.jpg"));
         assert!(is_link_imgur("https://imgur.com/3EqtHIK"));
         assert!(is_link_imgur("http://imgur.com/3EqtHIK"));
-        assert!(is_link_imgur("https://imgur.com"));
+        assert!(!is_link_imgur("https://imgur.com"));
         assert!(!is_link_imgur("https://notimgur.com/3EqtHIK"));
         assert!(!is_link_imgur("http://www.valuatemysite.com/www.imgur.com"));
-        assert!(is_link_imgur("https://sub-domain.imgur.com"));
+        assert!(is_link_imgur("https://sub-domain.imgur.com/imageid"));
         assert!(is_link_imgur("https://imgur.com?query=string"));
         assert!(is_link_imgur("HTTPS://IMGUR.COM/3EqtHIK"));
         assert!(is_link_imgur("https://imgur.com#fragment"));
-        assert!(is_link_imgur("https://imgur.com:443"));
+        assert!(is_link_imgur("https://imgur.com:443/imageid"));
         assert!(!is_link_imgur("http://rir.li/http://i.imgur.com/oGqNH.jpg"));
     }
     #[test]
@@ -628,7 +628,7 @@ mod tests {
         assert!(is_link_gfycat(
             "https://gfycat.com/excellentclumsyjanenschia-dog"
         ));
-        assert!(is_link_gfycat("https://gfycat.com"));
+        assert!(!is_link_gfycat("https://gfycat.com"));
         assert!(is_link_gfycat("https://developers.gfycat.com/api/"));
         assert!(!is_link_gfycat(
             "https://notgfycat.com/excellentclumsyjanenschia-dog"

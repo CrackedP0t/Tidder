@@ -4,7 +4,7 @@ use image::{
     ImageLuma8, ImageLumaA8, ImageRgb8, ImageRgba8,
 };
 use std::fmt::{self, Display, Formatter};
-use tokio_postgres::{to_sql_checked, types};
+use tokio_postgres::types;
 
 #[derive(Debug, Copy, Clone)]
 pub struct Hash(pub u64);
@@ -28,7 +28,7 @@ impl types::ToSql for Hash {
         i64::accepts(t)
     }
 
-    to_sql_checked!();
+    types::to_sql_checked!();
 }
 
 pub fn dhash(img: DynamicImage) -> Hash {

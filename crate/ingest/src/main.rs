@@ -382,7 +382,7 @@ async fn main() -> Result<(), Error> {
 
     info!("Processing posts we already have");
 
-    let mut client = PG_POOL.take().await.unwrap();
+    let client = PG_POOL.take().await.unwrap();
     let stmt = client
         .prepare(
             "SELECT reddit_id_int FROM posts \
@@ -393,11 +393,11 @@ async fn main() -> Result<(), Error> {
 
     let already_have = client
         .query(&stmt, &[&month_f, &year_f])
-        .try_fold(BTreeSet::new(), async move |mut already_have, row| {
+        .await?
+        .into_iter().fold(BTreeSet::new(), move |mut already_have, row| {
             already_have.insert(row.get(0));
-            Ok(already_have)
-        })
-        .await?;
+            already_have
+        });
 
     drop(client);
 

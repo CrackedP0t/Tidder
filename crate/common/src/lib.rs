@@ -346,7 +346,7 @@ pub async fn save_post(post: &Submission, image_id: Option<i64>) -> Result<bool,
     );
 
     let mut client = PG_POOL.take().await?;
-    let mut trans = client.transaction().await?;
+    let trans = client.transaction().await?;
     let stmt = trans
         .prepare(
             "INSERT INTO posts \
@@ -432,7 +432,7 @@ impl HashDest {
 }
 
 async fn get_existing(link: &str) -> Result<Option<(Hash, HashDest, i64)>, UserError> {
-    let mut client = PG_POOL.take().await?;
+    let client = PG_POOL.take().await?;
 
     let stmt = client
         .prepare(
@@ -446,7 +446,6 @@ async fn get_existing(link: &str) -> Result<Option<(Hash, HashDest, i64)>, UserE
         .map_err(map_ue!())?;
     let rows = client
         .query(&stmt, &[&link])
-        .try_collect::<Vec<_>>()
         .await?;
 
     Ok(rows.first().map(|row| {

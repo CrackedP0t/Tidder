@@ -18,12 +18,9 @@ bzip2 = "0.3.3"
 xz2 = "0.1.6"
 regex = "1.1.6"
 failure = "0.1.5"
-hyper = "0.13.0-alpha.2"
+hyper = "0.13.0-alpha.4"
 tokio = "0.2.0-alpha.6"
 futures-preview = "0.3.0-alpha.19"
 url = "1.7.2"
 chrono = { version = "0.4.7", features = ["serde"] }
-[dependencies.reqwest]
-git = "https://github.com/seanmonstar/reqwest"
-# default-features = false
-features = ["gzip"]
+reqwest = {version = "0.10.0-alpha.1", features = ["gzip"]}

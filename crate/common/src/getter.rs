@@ -476,7 +476,7 @@ async fn poss_move_row(
         Ok((hash, hash_dest, id, true))
     } else {
         let mut client = PG_POOL.take().await?;
-        let mut trans = client.transaction().await?;
+        let trans = client.transaction().await?;
         let stmt = trans
             .prepare(
                 "INSERT INTO images \
@@ -489,9 +489,7 @@ async fn poss_move_row(
             .await
             .map_err(map_ue!())?;
 
-        let rows = trans.query(&stmt, &[&id]).try_collect::<Vec<_>>().await?;
-
-        let new_id = rows[0].get::<_, i64>("id");
+        let new_id = trans.query_one(&stmt, &[&id]).await?.get::<_, i64>("id");
 
         let stmt = trans
             .prepare("DELETE FROM image_cache WHERE id = $1")
@@ -522,7 +520,7 @@ pub async fn save_hash(
             let cc = cc.as_ref();
 
             let mut client = PG_POOL.take().await?;
-            let mut trans = client.transaction().await?;
+            let trans = client.transaction().await?;
             let stmt = trans
                 .prepare(
                     format!(
@@ -559,7 +557,6 @@ pub async fn save_hash(
                         &now,
                     ],
                 )
-                .try_collect::<Vec<_>>()
                 .await?;
 
             trans.commit().await?;

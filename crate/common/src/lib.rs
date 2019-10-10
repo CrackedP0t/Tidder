@@ -167,8 +167,6 @@ pub mod user_error {
         }
     }
 
-    // impl std::error::Error for UserError {}
-
     impl Display for UserError {
         fn fmt(&self, f: &mut Formatter) -> fmt::Result {
             Display::fmt(&self.error, f)
@@ -314,22 +312,6 @@ mod de_sub {
 
         des.deserialize_any(CreatedUTC)
     }
-}
-
-#[derive(Deserialize, Debug)]
-pub struct Hit {
-    #[serde(rename = "_source")]
-    pub source: Submission,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct Hits {
-    pub hits: Vec<Hit>,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct PushShiftSearch {
-    pub hits: Hits,
 }
 
 pub async fn save_post(post: &Submission, image_id: Option<i64>) -> Result<bool, UserError> {

@@ -92,10 +92,10 @@ async fn ingest_post(
     }
 
     let post_url_res = (|| {
-        let post_url = Url::parse(&post.url).map_err(map_ue!("invalid URL"))?;
+        let post_url = Url::parse(&post.url).map_err(map_ue_save!("invalid URL", "url_invalid"))?;
 
         if BANNED.iter().any(|banned| banned.matches(&post_url)) {
-            return Err(ue!("banned host"));
+            return Err(ue_save!("banned", "banned"));
         }
 
         let blacklist_guard = blacklist.read().unwrap();
@@ -104,7 +104,7 @@ async fn ingest_post(
             .map(|host| blacklist_guard.contains(host))
             .unwrap_or(false)
         {
-            return Err(ue!("blacklisted host"));
+            return Err(ue_save!("blacklisted", "blacklisted"));
         }
         drop(blacklist_guard);
 
@@ -167,50 +167,65 @@ async fn ingest_post(
                 info!("{} successfully hashed", post_info);
             }
 
-            Some(image_id)
+            Ok(image_id)
         }
-        Err(ue) => {
-            match ue.source {
-                Source::Internal => {
-                    error!(
-                        "{}{}{}\n{:#?}\n{:#?}",
-                        ue.file.unwrap_or(""),
-                        ue.line
-                            .map(|line| Cow::Owned(format!("#{}", line)))
-                            .unwrap_or(Cow::Borrowed("")),
-                        if ue.file.is_some() || ue.line.is_some() {
-                            ": "
-                        } else {
-                            ""
-                        },
-                        ue.error,
-                        post
-                    );
-                    std::process::exit(1);
-                }
-                _ => {
-                    warn!("{} failed: {}", post_info, ue.error);
-                    if let Some(e) = ue.error.downcast_ref::<reqwest::Error>() {
-                        if e.is_timeout()
-                            || std::error::Error::downcast_ref::<hyper::Error>(e).is_some()
-                        {
-                            if is_link_special(&post.url) {
-                                error!("{} special link server error: {:?}", post_info, ue.error);
-                                std::process::exit(1);
-                            }
-                            if let Ok(url) = Url::parse(&post.url) {
-                                if let Some(host) = url.host_str() {
-                                    if !NO_BLACKLIST.contains(&host) {
-                                        blacklist.write().unwrap().insert(host.to_string());
-                                    }
+        Err(ue) => match ue.source {
+            Source::Internal => {
+                error!(
+                    "{}{}{}\n{:#?}\n{:#?}",
+                    ue.file.unwrap_or(""),
+                    ue.line
+                        .map(|line| Cow::Owned(format!("#{}", line)))
+                        .unwrap_or(Cow::Borrowed("")),
+                    if ue.file.is_some() || ue.line.is_some() {
+                        ": "
+                    } else {
+                        ""
+                    },
+                    ue.error,
+                    post
+                );
+                std::process::exit(1)
+            }
+            _ => {
+                warn!("{} failed{}: {}", post_info,
+                      ue.save_error.as_ref().map(|se| Cow::Owned(format!(" ({})", se))).unwrap_or_else(|| Cow::Borrowed("")),
+                      ue.error);
+
+                let reqwest_save_error = ue.error.downcast_ref::<reqwest::Error>().and_then(|e| {
+                    let hyper_error = std::error::Error::downcast_ref::<hyper::Error>(e);
+
+                    if e.is_timeout()
+                        || e.status().map(|s| s.is_server_error()).unwrap_or(false)
+                        || hyper_error.is_some()
+                    {
+                        if is_link_special(&post.url) {
+                            error!("{} special link server error: {:?}", post_info, ue.error);
+                            std::process::exit(1);
+                        }
+                        if let Ok(url) = Url::parse(&post.url) {
+                            if let Some(host) = url.host_str() {
+                                if !NO_BLACKLIST.contains(&host) {
+                                    blacklist.write().unwrap().insert(host.to_string());
                                 }
                             }
                         }
                     }
-                }
+
+                    e.status().map(|status| format!("http_{}", status.as_str()).into())
+                        .or_else(|| {
+                            if e.is_timeout() {
+                                Some("timeout".into())
+                            } else {
+                                None
+                            }
+                        })
+                        .or_else(|| hyper_error.map(|_| "hyper".into()))
+                });
+
+                Err(ue.save_error.or(reqwest_save_error))
             }
-            None
-        }
+        },
     };
 
     match save_post(&post, image_id).await {

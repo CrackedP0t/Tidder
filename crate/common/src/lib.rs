@@ -74,6 +74,8 @@ pub mod user_error {
         pub file: Option<&'static str>,
         #[serde(skip)]
         pub line: Option<u32>,
+        #[serde(skip)]
+        pub save_error: Option<Cow<'static, str>>,
     }
 
     impl UserError {
@@ -87,6 +89,7 @@ pub mod user_error {
                 error: error.into(),
                 file: None,
                 line: None,
+                save_error: None,
             }
         }
         pub fn new_source<M: Into<Cow<'static, str>> + Sync + Send, E: Into<Error>>(
@@ -100,6 +103,7 @@ pub mod user_error {
                 error: error.into(),
                 file: None,
                 line: None,
+                save_error: None,
             }
         }
         pub fn new_msg<M: Into<Cow<'static, str>> + Sync + Send>(user_msg: M) -> Self {
@@ -111,6 +115,7 @@ pub mod user_error {
                 error,
                 file: None,
                 line: None,
+                save_error: None,
             }
         }
         pub fn new_msg_source<M: Into<Cow<'static, str>> + Sync + Send>(
@@ -125,6 +130,7 @@ pub mod user_error {
                 error,
                 file: None,
                 line: None,
+                save_error: None,
             }
         }
         pub fn from_std<E: std::error::Error + Send + Sync + 'static>(error: E) -> Self {
@@ -134,6 +140,7 @@ pub mod user_error {
                 error: error.into(),
                 file: None,
                 line: None,
+                save_error: None,
             }
         }
 
@@ -201,6 +208,26 @@ pub mod user_error {
     }
 
     #[macro_export]
+    macro_rules! ue_save {
+        ($msg:expr, $save_error:expr) => {
+            UserError {
+                file: Some(file!()),
+                line: Some(line!()),
+                save_error: Some($save_error.into()),
+                ..UserError::new_msg($msg)
+            }
+        };
+        ($msg:expr, $save_error:expr, $source:expr) => {
+            UserError {
+                file: Some(file!()),
+                line: Some(line!()),
+                save_error: Some($save_error.into()),
+                ..UserError::new_msg_source($msg, $source)
+            }
+        };
+    }
+
+    #[macro_export]
     macro_rules! map_ue {
         () => {
             |e| UserError {
@@ -220,6 +247,34 @@ pub mod user_error {
             |e| UserError {
                 file: Some(file!()),
                 line: Some(line!()),
+                ..UserError::new_source($msg, $source, failure::Error::from(e))
+            }
+        };
+    }
+
+    #[macro_export]
+    macro_rules! map_ue_save {
+        ($save_error:expr) => {
+            |e| UserError {
+                file: Some(file!()),
+                line: Some(line!()),
+                save_error: Some($save_error.into()),
+                ..UserError::from_std(e)
+            }
+        };
+        ($msg:expr, $save_error:expr) => {
+            |e| UserError {
+                file: Some(file!()),
+                line: Some(line!()),
+                save_error: Some($save_error.into()),
+                ..UserError::new($msg, failure::Error::from(e))
+            }
+        };
+        ($msg:expr, $save_error:expr, $source:expr) => {
+            |e| UserError {
+                file: Some(file!()),
+                line: Some(line!()),
+                save_error: Some($save_error.into()),
                 ..UserError::new_source($msg, $source, failure::Error::from(e))
             }
         };
@@ -314,7 +369,7 @@ mod de_sub {
     }
 }
 
-pub async fn save_post(post: &Submission, image_id: Option<i64>) -> Result<bool, UserError> {
+pub async fn save_post(post: &Submission, image_id: Result<i64, Option<Cow<'static, str>>>) -> Result<bool, UserError> {
     lazy_static! {
         static ref ID_RE: Regex = Regex::new(r"/comments/([^/]+)/").unwrap();
     }
@@ -329,40 +384,67 @@ pub async fn save_post(post: &Submission, image_id: Option<i64>) -> Result<bool,
 
     let mut client = PG_POOL.take().await?;
     let trans = client.transaction().await?;
-    let stmt = trans
-        .prepare(
-            "INSERT INTO posts \
-             (reddit_id, link, permalink, author, \
-             created_utc, score, subreddit, title, nsfw, \
-             spoiler, image_id, reddit_id_int, \
-             thumbnail, thumbnail_width, thumbnail_height) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, \
-             $8, $9, $10, $11, $12, $13, $14, $15) \
-             ON CONFLICT DO NOTHING",
-        )
-        .await?;
-    let modified = trans
-        .execute(
-            &stmt,
-            &[
-                &reddit_id,
-                &post.url,
-                &post.permalink,
-                &post.author,
-                &post.created_utc,
-                &post.score,
-                &post.subreddit,
-                &post.title,
-                &post.over_18,
-                &post.spoiler.unwrap_or(false),
-                &image_id,
-                &i64::from_str_radix(&reddit_id, 36).unwrap(),
-                &post.thumbnail,
-                &post.thumbnail_width,
-                &post.thumbnail_height,
-            ],
-        )
-        .await?;
+
+    let modified = match image_id {
+        Ok(image_id) => trans
+            .execute(
+                "INSERT INTO posts \
+                 (reddit_id, link, permalink, author, \
+                 created_utc, score, subreddit, title, nsfw, \
+                 spoiler, image_id, reddit_id_int, \
+                 thumbnail, thumbnail_width, thumbnail_height) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, \
+                 $8, $9, $10, $11, $12, $13, $14, $15) \
+                 ON CONFLICT DO NOTHING",
+                &[
+                    &reddit_id,
+                    &post.url,
+                    &post.permalink,
+                    &post.author,
+                    &post.created_utc,
+                    &post.score,
+                    &post.subreddit,
+                    &post.title,
+                    &post.over_18,
+                    &post.spoiler.unwrap_or(false),
+                    &image_id,
+                    &i64::from_str_radix(&reddit_id, 36).unwrap(),
+                    &post.thumbnail,
+                    &post.thumbnail_width,
+                    &post.thumbnail_height,
+                ],
+            )
+            .await?,
+        Err(save_error) => trans
+            .execute(
+                "INSERT INTO posts \
+                 (reddit_id, link, permalink, author, \
+                 created_utc, score, subreddit, title, nsfw, \
+                 spoiler, reddit_id_int, thumbnail, \
+                 thumbnail_width, thumbnail_height, save_error) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, \
+                 $8, $9, $10, $11, $12, $13, $14, $15) \
+                 ON CONFLICT DO NOTHING",
+                &[
+                    &reddit_id,
+                    &post.url,
+                    &post.permalink,
+                    &post.author,
+                    &post.created_utc,
+                    &post.score,
+                    &post.subreddit,
+                    &post.title,
+                    &post.over_18,
+                    &post.spoiler.unwrap_or(false),
+                    &i64::from_str_radix(&reddit_id, 36).unwrap(),
+                    &post.thumbnail,
+                    &post.thumbnail_width,
+                    &post.thumbnail_height,
+                    &save_error
+                ],
+            )
+            .await?
+    };
 
     trans.commit().await?;
 

@@ -1,4 +1,4 @@
-use super::{map_ue, UserError};
+use super::{UserError, map_ue_save};
 use image::{
     imageops, load_from_memory, DynamicImage, GenericImageView, GrayImage, ImageBgr8, ImageBgra8,
     ImageLuma8, ImageLumaA8, ImageRgb8, ImageRgba8,
@@ -53,7 +53,7 @@ pub fn distance(a: Hash, b: Hash) -> u32 {
 
 pub fn hash_from_memory(image: &[u8]) -> Result<Hash, UserError> {
     Ok(dhash(
-        load_from_memory(&image).map_err(map_ue!("invalid image"))?,
+        load_from_memory(&image).map_err(map_ue_save!("invalid image", "image_invalid"))?,
     ))
 }
 

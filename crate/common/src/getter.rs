@@ -85,18 +85,35 @@ pub async fn follow_link(url: Url) -> Result<String, UserError> {
 }
 
 fn follow_gifsound(url: Url) -> Result<String, UserError> {
+    lazy_static! {
+        static ref IMGUR_NO_SCHEME_RE: Regex = Regex::new(r"^(?:[a-z0-9-.]+\.)?imgur.com").unwrap();
+    }
     for (key, value) in url.query_pairs() {
         if key == "gif" {
             return Ok(
                 if value.starts_with("http://") || value.starts_with("https://") {
                     value.to_string()
+                } else if IMGUR_NO_SCHEME_RE.is_match(&value) {
+                    format!("https://{}", value)
                 } else {
                     format!("http://{}", value)
                 },
             );
+        } else if key == "gifv" {
+            return Ok(format!("https://i.imgur.com/{}.gif", value));
+        } else if key == "mp4" || key == "webm" {
+            if IMGUR_NO_SCHEME_RE.is_match(&value) {
+                return Ok(format!("https://i.imgur.com/{}.gif", value));
+            } else {
+                return Err(ue_save!(
+                    "Unsupported GifSound file",
+                    "gifsound_unsupported",
+                    Source::User
+                ));
+            }
         }
     }
-    Err(ue!("GifSound URL without GIF", Source::User))
+    Err(ue_save!("GifSound URL without GIF", "gifsound_no_gif", Source::User))
 }
 
 async fn follow_gfycat(url: Url) -> Result<String, UserError> {
@@ -123,17 +140,16 @@ async fn follow_gfycat(url: Url) -> Result<String, UserError> {
                 .captures(url.path())
                 .and_then(|c| c.get(1))
                 .map(|m| m.as_str())
-                .ok_or_else(|| ue!("couldn't find Gfycat ID in link", Source::User))?
+                .ok_or_else(|| ue_save!("couldn't find Gfycat ID in link", "gfycat_no_id", Source::User))?
         ))
         .send()
-        .map_err(map_ue!("couldn't reach Gfycat API"))
-        .await?
+        .await.map_err(map_ue!("couldn't connect to GfyCat API"))?
         .error_for_status()
         .map_err(error_for_status_ue)?;
 
     Ok(resp
         .json::<Gfycats>()
-        .map_err(map_ue!("problematic JSON from Gfycat API"))
+        .map_err(map_ue_save!("problematic JSON from Gfycat API", "gfycat_json_bad"))
         .await?
         .gfy_item
         .mobile_poster_url)
@@ -182,7 +198,7 @@ async fn make_imgur_api_request(api_link: String) -> Result<Value, UserError> {
         Err(ue!("out of Imgur API requests", Source::Internal))
     } else {
         resp.json::<Value>()
-            .map_err(map_ue!("Imgur API returned invalid JSON"))
+            .map_err(map_ue_save!("Imgur API returned invalid JSON", "imgur_json_bad"))
             .await
     }
 }
@@ -235,9 +251,9 @@ async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
         let json = make_imgur_api_request(api_link).await?;
         Ok(GIFV_RE
             .replace(
-                json["data"].get(0).ok_or(ue!("Imgur album is empty"))?["link"]
+                json["data"].get(0).ok_or(ue_save!("Imgur album is empty", "imgur_album_empty"))?["link"]
                     .as_str()
-                    .ok_or(ue!("Imgur API returned unexpectedly-structured JSON"))?,
+                    .ok_or(ue_save!("Imgur API returned unexpectedly-structured JSON", "imgur_json_bad"))?,
                 ".gif$1",
             )
             .to_string())
@@ -258,9 +274,9 @@ async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
                 .replace(
                     json["data"]["images"]
                         .get(0)
-                        .ok_or(ue!("Imgur album is empty"))?["link"]
+                        .ok_or(ue_save!("Imgur album is empty", "imgur_album_empty"))?["link"]
                         .as_str()
-                        .ok_or(ue!("Imgur API returned unexpectedly-structured JSON"))?,
+                        .ok_or(ue_save!("Imgur API returned unexpectedly-structured JSON", "imgur_json_bad"))?,
                     ".gif$1",
                 )
                 .to_string())
@@ -275,7 +291,7 @@ async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
             .unwrap()
             .next_back()
             .and_then(|seg| ID_RE.find(seg))
-            .ok_or(ue!("Couldn't find Imgur ID"))?
+            .ok_or(ue_save!("Couldn't find Imgur ID", "imgur_no_id"))?
             .as_str();
 
         Ok(format!("https://i.imgur.com/{}.jpg", id))
@@ -385,7 +401,7 @@ pub async fn get_hash(orig_link: &str) -> Result<(Hash, String, GetKind), UserEr
         return Err(ue!("URL too long", Source::User));
     }
 
-    let url = Url::parse(orig_link).map_err(map_ue!("not a valid URL", Source::User))?;
+    let url = Url::parse(orig_link).map_err(map_ue!("invalid URL", Source::User))?;
 
     let scheme = url.scheme();
     if scheme != "http" && scheme != "https" {
@@ -429,7 +445,7 @@ pub async fn get_hash(orig_link: &str) -> Result<(Hash, String, GetKind), UserEr
         .unwrap_or(false)
         && url.path() == "/removed.png"
     {
-        return Err(ue!("removed from Imgur"));
+        return Err(ue_save!("removed from Imgur", "imgur_removed"));
     }
 
     if let Some(ct) = resp.headers().get(header::CONTENT_TYPE) {
@@ -438,7 +454,7 @@ pub async fn get_hash(orig_link: &str) -> Result<(Hash, String, GetKind), UserEr
             .map_err(map_ue!("non-ASCII Content-Type header"))?;
 
         if !IMAGE_MIMES.contains(&ct) {
-            return Err(ue!(format!("unsupported Content-Type: {}", ct)));
+            return Err(ue_save!(format!("unsupported Content-Type: {}", ct), "content_type_unsupported"));
         }
 
         if url
@@ -459,7 +475,7 @@ pub async fn get_hash(orig_link: &str) -> Result<(Hash, String, GetKind), UserEr
 
     let image = &resp
         .bytes()
-        .map_err(map_ue!("couldn't download image", Source::External))
+        .map_err(map_ue_save!("couldn't download image", "download_image"))
         .await?;
 
     let hash = match std::panic::catch_unwind(|| hash_from_memory(image)) {
@@ -589,12 +605,23 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn follow() {
+    async fn follow_async() {
         assert_eq!(
             follow_imgur(Url::parse("http://www.i.imgur.com/3EqtHIK.jpg").unwrap())
                 .await
                 .unwrap(),
             "https://i.imgur.com/3EqtHIK.jpg"
+        );
+    }
+
+    #[test]
+    fn follow_sync() {
+        assert_eq!(
+            follow_gifsound(
+                Url::parse("http://gifsound.com/?gifv=IRRzso8&v=HcuKxAvCSZ4&s=115").unwrap()
+            )
+            .unwrap(),
+            "https://i.imgur.com/IRRzso8.gif"
         );
     }
 
@@ -623,6 +650,7 @@ mod tests {
         assert!(is_link_imgur("https://imgur.com:443/imageid"));
         assert!(!is_link_imgur("http://rir.li/http://i.imgur.com/oGqNH.jpg"));
     }
+
     #[test]
     fn gfycat_links() {
         assert!(is_link_gfycat(
@@ -632,6 +660,16 @@ mod tests {
         assert!(is_link_gfycat("https://developers.gfycat.com/api/"));
         assert!(!is_link_gfycat(
             "https://notgfycat.com/excellentclumsyjanenschia-dog"
+        ));
+    }
+
+    #[test]
+    fn gifsound_links() {
+        assert!(is_link_gifsound(
+            "http://gifsound.com/?gif=i.imgur.com/IRRzso8.gif&v=HcuKxAvCSZ4&s=115"
+        ));
+        assert!(is_link_gifsound(
+            "https://gifsound.com/?gifv=IRRzso8&v=HcuKxAvCSZ4&s=115"
         ));
     }
 }

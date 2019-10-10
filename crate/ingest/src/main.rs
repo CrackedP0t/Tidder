@@ -43,11 +43,12 @@ impl Banned {
     }
 }
 
-const BANNED: [Banned; 4] = [
+const BANNED: [Banned; 5] = [
     Banned::TLD("fbcdn.net"),
     Banned::TLD("livememe.com"),
     Banned::Full("http://i.imgur.com/JwhvGDV.jpg"),
     Banned::Full("http://i.imgur.com/4nmJMzR.jpg"),
+    Banned::Full("https://imgur.com/trtbLIL")
 ];
 const IN_FLIGHT_LIMIT: u32 = 1;
 const NO_BLACKLIST: [&str; 1] = ["gifsound.com"];

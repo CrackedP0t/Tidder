@@ -19,7 +19,7 @@ use std::fs::{remove_file, File, OpenOptions};
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::iter::Iterator;
 use std::path::Path;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, TryLockError, RwLock};
 use tokio::executor::{DefaultExecutor, Executor};
 use url::Url;
 
@@ -136,7 +136,7 @@ async fn ingest_post(
                 .host_str()
                 .and_then(|host| CUSTOM_LIMITS.get(&host));
 
-            poll_fn(|c| {
+            poll_fn(|context| {
                 let guard = in_flight.read().unwrap();
                 let limit = match custom_limit {
                     None => Some(IN_FLIGHT_LIMIT),
@@ -161,7 +161,7 @@ async fn ingest_post(
                     Poll::Ready(tld.to_owned())
                 } else {
                     drop(guard);
-                    c.waker().wake_by_ref();
+                    context.waker().wake_by_ref();
                     Poll::Pending
                 }
             })
@@ -286,10 +286,20 @@ async fn ingest_json<R: Read + Send + 'static>(
             (&mut DefaultExecutor::current() as &mut dyn Executor)
                 .spawn_with_handle(Box::pin(async move {
                     while let Some(post) = {
-                        let mut json_iter_lock = json_iter.lock().unwrap();
-                        let post = json_iter_lock.next();
-                        drop(json_iter_lock);
-                        post
+                        poll_fn(|context| {
+                            match json_iter.try_lock() {
+                                Ok(mut guard) => {
+                                    let post = guard.next();
+                                    drop(guard);
+                                    Poll::Ready(post)
+                                },
+                                Err(TryLockError::WouldBlock) => {
+                                    context.waker().wake_by_ref();
+                                    Poll::Pending
+                                },
+                                Err(poison_error) => panic!("{}", poison_error)
+                            }
+                        }).await
                     } {
                         ingest_post(post, verbose, &blacklist, &in_flight).await;
                     }

@@ -58,7 +58,7 @@ async fn post(id: String) -> Result<(), Error> {
 async fn hash(links: Vec<String>) -> Result<(), Error> {
     futures::stream::iter(links.into_iter())
         .fold(None, async move |last, arg| -> Option<Hash> {
-            let res = get_hash(arg.clone()).await;
+            let res = get_hash(&arg).await;
 
             let (hash, link, _get_kind) = match res {
                 Ok(res) => res,

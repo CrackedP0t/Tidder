@@ -376,7 +376,7 @@ pub enum GetKind {
     Request(HeaderMap),
 }
 
-pub async fn get_hash(link: String) -> Result<(Hash, String, GetKind), UserError> {
+pub async fn get_hash(link: &str) -> Result<(Hash, String, GetKind), UserError> {
     lazy_static! {
         static ref EXT_REPLACE_RE: Regex = Regex::new(r"^(.+?)\.[[:alnum:]]+$").unwrap();
     }
@@ -385,7 +385,7 @@ pub async fn get_hash(link: String) -> Result<(Hash, String, GetKind), UserError
         return Err(ue!("URL too long", Source::User));
     }
 
-    let url = Url::parse(&link).map_err(map_ue!("not a valid URL", Source::User))?;
+    let url = Url::parse(link).map_err(map_ue!("not a valid URL", Source::User))?;
 
     let scheme = url.scheme();
     if scheme != "http" && scheme != "https" {
@@ -503,7 +503,7 @@ async fn poss_move_row(
 }
 
 pub async fn save_hash(
-    link: String,
+    link: &str,
     hash_dest: HashDest,
 ) -> Result<(Hash, HashDest, i64, bool), UserError> {
     let (hash, link, get_kind) = get_hash(link).await?;

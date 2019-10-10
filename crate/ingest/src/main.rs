@@ -95,6 +95,12 @@ async fn ingest_post(
     blacklist: &RwLock<HashSet<String>>,
     in_flight: &RwLock<HashMap<String, u32>>,
 ) {
+    post.url = post
+        .url
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">");
+
     let post_info = format!("{}: {}: {}", post.created_utc, post.id, post.url);
 
     if verbose {
@@ -102,12 +108,6 @@ async fn ingest_post(
     }
 
     let post_url_res = (|| {
-        post.url = post
-            .url
-            .replace("&amp;", "&")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">");
-
         let post_url = Url::parse(&post.url).map_err(map_ue!("invalid URL"))?;
 
         if BANNED.iter().any(|banned| banned.matches(&post_url)) {

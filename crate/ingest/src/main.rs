@@ -19,36 +19,19 @@ use std::fs::{remove_file, File, OpenOptions};
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::iter::Iterator;
 use std::path::Path;
-use std::sync::{Arc, Mutex, TryLockError, RwLock};
+use std::sync::{Arc, Mutex, RwLock, TryLockError};
 use tokio::executor::{DefaultExecutor, Executor};
 use url::Url;
 
-pub enum Banned {
-    TLD(&'static str),
-    Host(&'static str),
-    Full(&'static str),
-}
-
-impl Banned {
-    pub fn matches(&self, url: &Url) -> bool {
-        use Banned::*;
-        match self {
-            TLD(tld) => get_tld(url) == *tld,
-            Host(host) => url
-                .host_str()
-                .map(|host_str| host_str == *host)
-                .unwrap_or(false),
-            Full(link) => url.as_str() == *link,
-        }
-    }
-}
+mod banned;
+use banned::*;
 
 const BANNED: [Banned; 5] = [
     Banned::TLD("fbcdn.net"),
     Banned::TLD("livememe.com"),
-    Banned::Full("http://i.imgur.com/JwhvGDV.jpg"),
-    Banned::Full("http://i.imgur.com/4nmJMzR.jpg"),
-    Banned::Full("https://imgur.com/trtbLIL")
+    Banned::NoScheme("i.imgur.com/JwhvGDV.jpg"),
+    Banned::NoScheme("i.imgur.com/4nmJMzR.jpg"),
+    Banned::NoScheme("imgur.com/trtbLIL"),
 ];
 const IN_FLIGHT_LIMIT: u32 = 1;
 const NO_BLACKLIST: [&str; 1] = ["gifsound.com"];
@@ -286,20 +269,19 @@ async fn ingest_json<R: Read + Send + 'static>(
             (&mut DefaultExecutor::current() as &mut dyn Executor)
                 .spawn_with_handle(Box::pin(async move {
                     while let Some(post) = {
-                        poll_fn(|context| {
-                            match json_iter.try_lock() {
-                                Ok(mut guard) => {
-                                    let post = guard.next();
-                                    drop(guard);
-                                    Poll::Ready(post)
-                                },
-                                Err(TryLockError::WouldBlock) => {
-                                    context.waker().wake_by_ref();
-                                    Poll::Pending
-                                },
-                                Err(poison_error) => panic!("{}", poison_error)
+                        poll_fn(|context| match json_iter.try_lock() {
+                            Ok(mut guard) => {
+                                let post = guard.next();
+                                drop(guard);
+                                Poll::Ready(post)
                             }
-                        }).await
+                            Err(TryLockError::WouldBlock) => {
+                                context.waker().wake_by_ref();
+                                Poll::Pending
+                            }
+                            Err(poison_error) => panic!("{}", poison_error),
+                        })
+                        .await
                     } {
                         ingest_post(post, verbose, &blacklist, &in_flight).await;
                     }
@@ -405,7 +387,8 @@ async fn main() -> Result<(), Error> {
     let already_have = client
         .query(&stmt, &[&month_f, &year_f])
         .await?
-        .into_iter().fold(BTreeSet::new(), move |mut already_have, row| {
+        .into_iter()
+        .fold(BTreeSet::new(), move |mut already_have, row| {
             already_have.insert(row.get(0));
             already_have
         });

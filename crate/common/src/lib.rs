@@ -426,9 +426,7 @@ async fn get_existing(link: &str) -> Result<Option<(Hash, HashDest, i64)>, UserE
         )
         .await
         .map_err(map_ue!())?;
-    let rows = client
-        .query(&stmt, &[&link])
-        .await?;
+    let rows = client.query(&stmt, &[&link]).await?;
 
     Ok(rows.first().map(|row| {
         (

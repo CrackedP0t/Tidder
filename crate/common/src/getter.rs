@@ -457,11 +457,10 @@ pub async fn get_hash(orig_link: &str) -> Result<(Hash, String, GetKind), UserEr
 
     let headers = resp.headers().to_owned();
 
-    let image =
-        &resp
-            .bytes()
-            .map_err(map_ue!("couldn't download image", Source::External))
-            .await?;
+    let image = &resp
+        .bytes()
+        .map_err(map_ue!("couldn't download image", Source::External))
+        .await?;
 
     let hash = match std::panic::catch_unwind(|| hash_from_memory(image)) {
         Ok(r) => r?,

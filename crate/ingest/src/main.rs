@@ -15,6 +15,7 @@ use reqwest::Client;
 use serde_json::Deserializer;
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::error::Error as _;
 use std::fs::{remove_file, File, OpenOptions};
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::iter::Iterator;
@@ -189,7 +190,7 @@ async fn ingest_post(
             }
             _ => {
                 let reqwest_save_error = ue.error.downcast_ref::<reqwest::Error>().and_then(|e| {
-                    let hyper_error = std::error::Error::downcast_ref::<hyper::Error>(e);
+                    let hyper_error = e.source().and_then(|he| he.downcast_ref::<hyper::Error>());
 
                     if e.is_timeout()
                         || e.status().map(|s| s.is_server_error()).unwrap_or(false)

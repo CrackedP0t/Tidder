@@ -218,6 +218,10 @@ async fn make_imgur_api_request(api_link: String) -> Result<Value, UserError> {
     }
 }
 
+fn last_full_segment(url: &Url) -> Option<&str> {
+    url.path_segments().and_then(|mut p| p.rfind(|s| !s.is_empty()))
+}
+
 async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
     lazy_static! {
         static ref ID_RE: Regex = Regex::new(r"^[[:alnum:]]+").unwrap();
@@ -261,7 +265,7 @@ async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
     } else if EXT_RE.is_match(path) || path_start == "download" {
         Ok(url.into_string())
     } else if path_start == "a" {
-        let id = url.path_segments().unwrap().next_back().unwrap();
+        let id = last_full_segment(&url).unwrap();
         let api_link = format!("https://imgur-apiv3.p.rapidapi.com/3/album/{}/images", id);
         let json = make_imgur_api_request(api_link).await?;
         Ok(GIFV_RE
@@ -278,7 +282,7 @@ async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
             )
             .to_string())
     } else if path_start == "gallery" {
-        let id = url.path_segments().unwrap().next_back().unwrap().to_owned();
+        let id = last_full_segment(&url).unwrap();
         let image_link = format!("https://i.imgur.com/{}.jpg", id);
 
         let resp = REQW_CLIENT_NO_REDIR
@@ -309,10 +313,7 @@ async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
                 .map_err(error_for_status_ue)
         }
     } else {
-        let id = url
-            .path_segments()
-            .unwrap()
-            .next_back()
+        let id = last_full_segment(&url).unwrap()
             .and_then(|seg| ID_RE.find(seg))
             .ok_or(ue_save!("Couldn't find Imgur ID", "imgur_no_id"))?
             .as_str();

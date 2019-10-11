@@ -4,8 +4,8 @@ use clap::clap_app;
 use common::*;
 use futures::prelude::*;
 use reqwest::{header::USER_AGENT, Client};
-use serde_json::Value;
 use serde::de::Deserialize;
+use serde_json::Value;
 
 async fn post(id: &str) -> Result<(), UserError> {
     let client = Client::new();
@@ -91,7 +91,9 @@ async fn save(id: &str) -> Result<(), UserError> {
             .await?
             .error_for_status()?;
 
-        let post = Submission::deserialize(&resp.json::<Value>().await?["data"]["children"][0]["data"])?.finalize()?;
+        let post =
+            Submission::deserialize(&resp.json::<Value>().await?["data"]["children"][0]["data"])?
+                .finalize()?;
 
         let (_hash, _hash_dest, image_id, _exists) = save_hash(&post.url, HashDest::Images).await?;
 
@@ -130,7 +132,6 @@ async fn hash(links: &[&str]) -> Result<(), UserError> {
     Ok(())
 }
 
-
 #[tokio::main]
 async fn main() -> Result<(), UserError> {
     let matches = clap_app!(op =>
@@ -149,14 +150,9 @@ async fn main() -> Result<(), UserError> {
     let (op_name, op_matches) = matches.subcommand();
     let op_matches = op_matches.ok_or_else(|| ue!("No subcommand provided"))?;
 
-   match op_name {
+    match op_name {
         "post" => post(op_matches.value_of("ID").unwrap()).await,
-        "hash" => hash(
-            &op_matches
-                .values_of("LINKS")
-                .unwrap()
-                .collect::<Vec<_>>(),
-        ).await,
+        "hash" => hash(&op_matches.values_of("LINKS").unwrap().collect::<Vec<_>>()).await,
         "save" => save(op_matches.value_of("ID").unwrap()).await,
         unknown => Err(ue!(format!("Unknown subcommand '{}'", unknown))),
     }

@@ -364,7 +364,10 @@ mod de_sub {
                 self.visit_i64(secs)
             }
 
-            fn visit_f64<E>(self, secs: f64) -> Result<Self::Value, E> where E: de::Error {
+            fn visit_f64<E>(self, secs: f64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
                 self.visit_i64(secs as i64)
             }
         }

@@ -193,9 +193,7 @@ async fn ingest_post(
                 let reqwest_save_error = ue.error.downcast_ref::<reqwest::Error>().and_then(|e| {
                     let hyper_error = e.source().and_then(|he| he.downcast_ref::<hyper::Error>());
 
-                    if e.is_timeout()
-                        || hyper_error.is_some()
-                    {
+                    if e.is_timeout() || hyper_error.is_some() {
                         if is_link_special(&post.url) {
                             error!("{} special link server error: {:?}", post_info, ue.error);
                             std::process::exit(1);

@@ -218,18 +218,22 @@ async fn make_imgur_api_request(api_link: String) -> Result<Value, UserError> {
     }
 }
 
-fn is_id(id: &str) -> bool {
+fn get_id(id: &str) -> Option<&str> {
     lazy_static! {
         static ref ID_RE: Regex = Regex::new(r"^[[:alnum:]]+").unwrap();
     }
 
-    id != "all" && ID_RE.is_match(id)
+    if id != "all" {
+        ID_RE.find(id).map(|m| m.as_str())
+    } else {
+        None
+    }
 }
 
 fn id_segment<'a>(segments: &'a [&str], loc: usize) -> Result<&'a str, UserError> {
     segments
         .get(loc)
-        .and_then(|&seg| if is_id(seg) { Some(seg) } else { None })
+        .and_then(|&seg| get_id(seg))
         .ok_or(ue_save!("couldn't find Imgur ID in URL", "imgur_no_id"))
 }
 
@@ -242,8 +246,8 @@ where
 {
     segments
         .into_iter()
-        .rfind(|&id| is_id(id))
-        .copied()
+        .rev()
+        .find_map(|&id| get_id(id))
         .ok_or(ue_save!("couldn't find Imgur ID in URL", "imgur_no_id"))
 }
 
@@ -658,6 +662,13 @@ mod tests {
                 .await
                 .unwrap(),
             "https://i.imgur.com/3EqtHIK.jpg"
+        );
+
+        assert_eq!(
+            follow_imgur(Url::parse("http://imgur.com/vyyUWmX,m8YtXvI,Fay1RGQ,DKFJDkI").unwrap())
+                .await
+                .unwrap(),
+            "https://i.imgur.com/vyyUWmX.jpg"
         );
     }
 

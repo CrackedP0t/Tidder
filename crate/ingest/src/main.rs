@@ -193,7 +193,6 @@ async fn ingest_post(
                     let hyper_error = e.source().and_then(|he| he.downcast_ref::<hyper::Error>());
 
                     if e.is_timeout()
-                        || e.status().map(|s| s.is_server_error()).unwrap_or(false)
                         || hyper_error.is_some()
                     {
                         if is_link_special(&post.url) {

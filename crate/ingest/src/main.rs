@@ -27,9 +27,10 @@ use url::Url;
 mod banned;
 use banned::*;
 
-const BANNED: [Banned; 5] = [
+const BANNED: [Banned; 6] = [
     Banned::TLD("fbcdn.net"),
     Banned::TLD("livememe.com"),
+    Banned::TLD("lvme.me"),
     Banned::NoScheme("i.imgur.com/JwhvGDV.jpg"),
     Banned::NoScheme("i.imgur.com/4nmJMzR.jpg"),
     Banned::NoScheme("imgur.com/trtbLIL"),

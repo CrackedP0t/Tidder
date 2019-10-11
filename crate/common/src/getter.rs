@@ -218,13 +218,37 @@ async fn make_imgur_api_request(api_link: String) -> Result<Value, UserError> {
     }
 }
 
-fn last_full_segment(url: &Url) -> Option<&str> {
-    url.path_segments().and_then(|mut p| p.rfind(|s| !s.is_empty()))
+fn is_id(id: &str) -> bool {
+    lazy_static! {
+        static ref ID_RE: Regex = Regex::new(r"^[[:alnum:]]+").unwrap();
+    }
+
+    id != "all" && ID_RE.is_match(id)
+}
+
+fn id_segment<'a>(segments: &'a [&str], loc: usize) -> Result<&'a str, UserError> {
+    segments
+        .get(loc)
+        .and_then(|&seg| if is_id(seg) { Some(seg) } else { None })
+        .ok_or(ue_save!("couldn't find Imgur ID in URL", "imgur_no_id"))
+}
+
+fn last_id<'a, 'b: 'a, D>(
+    segments: impl IntoIterator<Item = &'a &'b str, IntoIter = D>,
+) -> Result<&'b str, UserError>
+where
+    D: DoubleEndedIterator,
+    D: Iterator<Item = &'a &'b str>,
+{
+    segments
+        .into_iter()
+        .rfind(|&id| is_id(id))
+        .copied()
+        .ok_or(ue_save!("couldn't find Imgur ID in URL", "imgur_no_id"))
 }
 
 async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
     lazy_static! {
-        static ref ID_RE: Regex = Regex::new(r"^[[:alnum:]]+").unwrap();
         static ref GIFV_RE: Regex = Regex::new(r"\.(?:gifv|webm|mp4)($|[?#])").unwrap();
         static ref EMPTY_RE: Regex = Regex::new(r"^/\.[[:alnum:]]+\b").unwrap();
         static ref EXT_RE: Regex = Regex::new(r"(?i)[[:alnum:]]\.(?:jpg|png)[[:alnum:]]+").unwrap();
@@ -238,7 +262,7 @@ async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
                 .unwrap();
     }
 
-    let host = url.host_str().ok_or(ue!("No host in Imgur URL"))?;
+    let host = url.host_str().ok_or(ue!("no host in Imgur URL"))?;
 
     if let Some(caps) = HOST_LIMIT_RE.captures(host) {
         let new_host = caps.get(1).unwrap().as_str().to_string();
@@ -253,19 +277,18 @@ async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
     }
 
     let path = url.path();
-
-    let path_start = url
+    let segments = url
         .path_segments()
-        .and_then(|mut ps| ps.next())
         .ok_or(ue!("base Imgur URL", Source::User))?
-        .to_owned();
+        .collect::<Vec<_>>();
+    let path_start = *segments.first().ok_or(ue!("base Imgur URL"))?;
 
     if host == "i.imgur.com" && GIFV_RE.is_match(path) {
         Ok(GIFV_RE.replace(url.as_str(), ".gif$1").to_string())
     } else if EXT_RE.is_match(path) || path_start == "download" {
         Ok(url.into_string())
     } else if path_start == "a" {
-        let id = last_full_segment(&url).unwrap();
+        let id = id_segment(&segments, 1)?;
         let api_link = format!("https://imgur-apiv3.p.rapidapi.com/3/album/{}/images", id);
         let json = make_imgur_api_request(api_link).await?;
         Ok(GIFV_RE
@@ -282,7 +305,7 @@ async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
             )
             .to_string())
     } else if path_start == "gallery" {
-        let id = last_full_segment(&url).unwrap();
+        let id = id_segment(&segments, 1)?;
         let image_link = format!("https://i.imgur.com/{}.jpg", id);
 
         let resp = REQW_CLIENT_NO_REDIR
@@ -313,10 +336,7 @@ async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
                 .map_err(error_for_status_ue)
         }
     } else {
-        let id = last_full_segment(&url)
-            .and_then(|seg| ID_RE.find(seg))
-            .ok_or(ue_save!("Couldn't find Imgur ID", "imgur_no_id"))?
-            .as_str();
+        let id = last_id(&segments)?;
 
         Ok(format!("https://i.imgur.com/{}.jpg", id))
     }

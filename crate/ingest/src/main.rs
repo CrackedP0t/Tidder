@@ -27,13 +27,14 @@ use url::Url;
 mod banned;
 use banned::*;
 
-const BANNED: [Banned; 6] = [
+const BANNED: [Banned; 7] = [
     Banned::TLD("fbcdn.net"),
     Banned::TLD("livememe.com"),
     Banned::TLD("lvme.me"),
     Banned::NoScheme("i.imgur.com/JwhvGDV.jpg"),
     Banned::NoScheme("i.imgur.com/4nmJMzR.jpg"),
     Banned::NoScheme("imgur.com/trtbLIL"),
+    Banned::NoScheme("i.imgur.com/NibDL0u.gif")
 ];
 const IN_FLIGHT_LIMIT: u32 = 1;
 const NO_BLACKLIST: [&str; 1] = ["gifsound.com"];

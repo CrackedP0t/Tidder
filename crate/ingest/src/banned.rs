@@ -1,12 +1,14 @@
 use common::*;
+use serde::Deserialize;
 use url::Url;
 
 #[allow(dead_code)]
+#[derive(Debug, Deserialize)]
 pub enum Banned {
-    TLD(&'static str),
-    Host(&'static str),
-    NoScheme(&'static str),
-    Full(&'static str),
+    TLD(String),
+    Host(String),
+    NoScheme(String),
+    Full(String),
 }
 
 impl Banned {
@@ -35,7 +37,7 @@ mod tests {
 
     #[test]
     fn banned() {
-        assert!(Banned::NoScheme("imgur.com/trtbLIL")
+        assert!(Banned::NoScheme("imgur.com/trtbLIL".to_string())
             .matches(&Url::parse("https://imgur.com/trtbLIL").unwrap()));
     }
 }

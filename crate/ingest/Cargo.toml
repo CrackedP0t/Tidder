@@ -24,3 +24,4 @@ futures-preview = "0.3.0-alpha.19"
 url = "1.7.2"
 chrono = { version = "0.4.7", features = ["serde"] }
 reqwest = {version = "0.10.0-alpha.1", features = ["gzip"]}
+ron = "0.5.1"

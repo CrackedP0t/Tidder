@@ -1,0 +1,10 @@
+[
+    TLD("fbcdn.net"),
+    TLD("livememe.com"),
+    TLD("lvme.me"),
+    NoScheme("i.imgur.com/JwhvGDV.jpg"),
+    NoScheme("i.imgur.com/4nmJMzR.jpg"),
+    NoScheme("imgur.com/trtbLIL"),
+    NoScheme("i.imgur.com/NibDL0u.gif"),
+    NoScheme("i.imgur.com/gw9loSi.gif")
+]

@@ -3,7 +3,6 @@
 
 use clap::{clap_app, crate_authors, crate_description, crate_version};
 use common::*;
-use failure::{format_err, Error};
 use future::poll_fn;
 use futures::prelude::*;
 use futures::stream::FuturesUnordered;
@@ -27,15 +26,6 @@ use url::Url;
 mod banned;
 use banned::*;
 
-const BANNED: [Banned; 7] = [
-    Banned::TLD("fbcdn.net"),
-    Banned::TLD("livememe.com"),
-    Banned::TLD("lvme.me"),
-    Banned::NoScheme("i.imgur.com/JwhvGDV.jpg"),
-    Banned::NoScheme("i.imgur.com/4nmJMzR.jpg"),
-    Banned::NoScheme("imgur.com/trtbLIL"),
-    Banned::NoScheme("i.imgur.com/NibDL0u.gif")
-];
 const IN_FLIGHT_LIMIT: u32 = 1;
 const NO_BLACKLIST: [&str; 1] = ["gifsound.com"];
 
@@ -79,6 +69,7 @@ where
 async fn ingest_post(
     mut post: Submission,
     verbose: bool,
+    banned: &[Banned],
     blacklist: &RwLock<HashSet<String>>,
     in_flight: &RwLock<HashMap<String, u32>>,
 ) {
@@ -97,7 +88,7 @@ async fn ingest_post(
     let post_url_res = (|| {
         let post_url = Url::parse(&post.url).map_err(map_ue_save!("invalid URL", "url_invalid"))?;
 
-        if BANNED.iter().any(|banned| banned.matches(&post_url)) {
+        if banned.iter().any(|banned| banned.matches(&post_url)) {
             return Err(ue_save!("banned", "banned"));
         }
 
@@ -253,6 +244,7 @@ async fn ingest_post(
 async fn ingest_json<R: Read + Send + 'static>(
     verbose: bool,
     mut already_have: Option<BTreeSet<i64>>,
+    banned: Vec<Banned>,
     json_stream: R,
 ) {
     const MAX_SPAWNED: u32 = 2048;
@@ -278,14 +270,16 @@ async fn ingest_json<R: Read + Send + 'static>(
             }
     });
 
-    let json_iter = Arc::new(Mutex::new(json_iter));
+    let banned = Arc::new(banned);
     let blacklist = Arc::new(RwLock::new(HashSet::<String>::new()));
     let in_flight = Arc::new(RwLock::new(HashMap::<String, u32>::new()));
+    let json_iter = Arc::new(Mutex::new(json_iter));
 
     info!("Starting ingestion!");
 
     (0..MAX_SPAWNED)
         .map(|_i| {
+            let banned = banned.clone();
             let blacklist = blacklist.clone();
             let in_flight = in_flight.clone();
             let json_iter = json_iter.clone();
@@ -307,7 +301,7 @@ async fn ingest_json<R: Read + Send + 'static>(
                         })
                         .await
                     } {
-                        ingest_post(post, verbose, &blacklist, &in_flight).await;
+                        ingest_post(post, verbose, banned.as_slice(), &blacklist, &in_flight).await;
                     }
                 }))
                 .unwrap()
@@ -320,7 +314,7 @@ async fn ingest_json<R: Read + Send + 'static>(
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Error> {
+async fn main() -> Result<(), UserError> {
     lazy_static::lazy_static! {
         static ref REQW_CLIENT: Client = Client::new();
         static ref MONTH_RE: Regex = Regex::new(r"(\d\d)\..+$").unwrap();
@@ -346,13 +340,13 @@ async fn main() -> Result<(), Error> {
     let month: i32 = MONTH_RE
         .captures(&path)
         .and_then(|caps| caps.get(1))
-        .ok_or_else(|| format_err!("couldn't find month in {}", path))
-        .and_then(|m| m.as_str().parse().map_err(Error::from))?;
+        .ok_or_else(|| ue!(format!("couldn't find month in {}", path)))
+        .and_then(|m| m.as_str().parse().map_err(map_ue!()))?;
 
     let year: i32 = YEAR_RE
         .find(&path)
-        .ok_or_else(|| format_err!("couldn't find year in {}", path))
-        .and_then(|m| m.as_str().parse().map_err(Error::from))?;
+        .ok_or_else(|| ue!(format!("couldn't find year in {}", path)))
+        .and_then(|m| m.as_str().parse().map_err(map_ue!()))?;
 
     let month_f = f64::from(month);
     let year_f = f64::from(year);
@@ -365,9 +359,9 @@ async fn main() -> Result<(), Error> {
                 + "/archives/"
                 + Url::parse(&path)?
                     .path_segments()
-                    .ok_or_else(|| format_err!("cannot-be-a-base-url"))?
+                    .ok_or_else(|| ue!("cannot-be-a-base-url"))?
                     .next_back()
-                    .ok_or_else(|| format_err!("no last path segment"))?;
+                    .ok_or_else(|| ue!("no last path segment"))?;
 
             let arch_file = if Path::exists(Path::new(&arch_path)) {
                 info!("Found existing archive file");
@@ -399,7 +393,7 @@ async fn main() -> Result<(), Error> {
 
     info!("Processing posts we already have");
 
-    let client = PG_POOL.take().await.unwrap();
+    let client = PG_POOL.take().await?;
     let stmt = client
         .prepare(
             "SELECT reddit_id_int FROM posts \
@@ -432,23 +426,39 @@ async fn main() -> Result<(), Error> {
         None
     };
 
+    let banned = ron::de::from_reader::<_, Vec<Banned>>(File::open(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/banned.ron"
+    ))?)?;
+
     let input = BufReader::new(input_file);
 
     if path.ends_with("bz2") {
-        ingest_json(verbose, already_have, bzip2::bufread::BzDecoder::new(input)).await;
+        ingest_json(
+            verbose,
+            already_have,
+            banned,
+            bzip2::bufread::BzDecoder::new(input),
+        )
+        .await;
     } else if path.ends_with("xz") {
-        ingest_json(verbose, already_have, xz2::bufread::XzDecoder::new(input)).await;
+        ingest_json(
+            verbose,
+            already_have,
+            banned,
+            xz2::bufread::XzDecoder::new(input),
+        )
+        .await;
     } else if path.ends_with("zst") {
         ingest_json(
             verbose,
             already_have,
-            zstd::stream::read::Decoder::new(input)
-                .map_err(Error::from)
-                .unwrap(),
+            banned,
+            zstd::stream::read::Decoder::new(input)?,
         )
         .await;
     } else {
-        ingest_json(verbose, already_have, input).await;
+        ingest_json(verbose, already_have, banned, input).await;
     };
 
     if !no_delete {

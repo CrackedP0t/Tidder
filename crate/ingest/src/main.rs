@@ -27,7 +27,7 @@ mod banned;
 use banned::*;
 
 const IN_FLIGHT_LIMIT: u32 = 1;
-const NO_BLACKLIST: [&str; 1] = ["gifsound.com"];
+const NO_BLACKLIST: [&str; 2] = ["gifsound.com", "wikimedia.org"];
 
 lazy_static! {
     static ref CUSTOM_LIMITS: HashMap<&'static str, Option<u32>> = {
@@ -192,7 +192,7 @@ async fn ingest_post(
                         }
                         if let Ok(url) = Url::parse(&post.url) {
                             if let Some(host) = url.host_str() {
-                                if !NO_BLACKLIST.contains(&host) {
+                                if !NO_BLACKLIST.contains(&get_tld(&url)) {
                                     blacklist.write().unwrap().insert(host.to_string());
                                 }
                             }

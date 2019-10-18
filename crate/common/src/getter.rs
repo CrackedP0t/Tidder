@@ -174,6 +174,10 @@ async fn make_imgur_api_request(api_link: String) -> Result<Value, UserError> {
             .default_headers({
                 let mut headers = HeaderMap::new();
                 headers.insert(
+                    "X-RapidAPI-Host",
+                    HeaderValue::from_static("imgur-apiv3.p.rapidapi.com"),
+                );
+                headers.insert(
                     "X-RapidAPI-Key",
                     HeaderValue::from_static(&SECRETS.imgur.rapidapi_key),
                 );
@@ -192,9 +196,23 @@ async fn make_imgur_api_request(api_link: String) -> Result<Value, UserError> {
         .get(&api_link)
         .send()
         .map_err(map_ue!("couldn't reach Imgur API"))
-        .await?
-        .error_for_status()
-        .map_err(error_for_status_ue)?;
+        .await?;
+
+    let status = resp.status();
+
+    if !status.is_success() {
+        let msg = if status == StatusCode::NOT_FOUND {
+            format!("Imgur API call to {} returned status {}", api_link, status)
+        } else {
+            format!(
+                "Imgur API call to {} returned status {}: {}",
+                api_link,
+                status,
+                resp.json::<Value>().await?
+            )
+        };
+        return Err(ue_save!(msg, format!("http_{}", status.as_str())));
+    }
 
     if resp
         .headers()
@@ -310,35 +328,35 @@ async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
             .to_string())
     } else if path_start == "gallery" {
         let id = id_segment(&segments, 1)?;
-        let image_link = format!("https://i.imgur.com/{}.jpg", id);
+        // let image_link = format!("https://i.imgur.com/{}.jpg", id);
 
-        let resp = REQW_CLIENT_NO_REDIR
-            .head(&image_link)
-            .send()
-            .map_err(map_ue!("couldn't reach Imgur image servers"))
-            .await?;
-        let resp_url = resp.url().as_str();
-        if resp.status() == StatusCode::FOUND {
-            let api_link = format!("https://imgur-apiv3.p.rapidapi.com/3/gallery/album/{}", id);
-            let json = make_imgur_api_request(api_link).await?;
-            Ok(GIFV_RE
-                .replace(
-                    json["data"]["images"]
-                        .get(0)
-                        .ok_or(ue_save!("Imgur album is empty", "imgur_album_empty"))?["link"]
-                        .as_str()
-                        .ok_or(ue_save!(
-                            "Imgur API returned unexpectedly-structured JSON",
-                            "imgur_json_bad"
-                        ))?,
-                    ".gif$1",
-                )
-                .to_string())
-        } else {
-            resp.error_for_status_ref()
-                .map(|_| resp_url.to_string())
-                .map_err(error_for_status_ue)
-        }
+        // let resp = REQW_CLIENT_NO_REDIR
+        //     .head(&image_link)
+        //     .send()
+        //     .map_err(map_ue!("couldn't reach Imgur image servers"))
+        //     .await?;
+        // let resp_url = resp.url().as_str();
+        // if resp.status().is_success() {
+        let api_link = format!("https://imgur-apiv3.p.rapidapi.com/3/gallery/album/{}", id);
+        let json = make_imgur_api_request(api_link).await?;
+        Ok(GIFV_RE
+            .replace(
+                json["data"]["images"]
+                    .get(0)
+                    .ok_or(ue_save!("Imgur album is empty", "imgur_album_empty"))?["link"]
+                    .as_str()
+                    .ok_or(ue_save!(
+                        "Imgur API returned unexpectedly-structured JSON",
+                        "imgur_json_bad"
+                    ))?,
+                ".gif$1",
+            )
+            .to_string())
+    // } else {
+    //     resp.error_for_status_ref()
+    //         .map(|_| resp_url.to_string())
+    //         .map_err(error_for_status_ue)
+    // }
     } else {
         let id = last_id(&segments)?;
 

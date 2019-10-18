@@ -114,7 +114,7 @@ async fn hash(links: &[&str]) -> Result<(), UserError> {
             let (hash, link, _get_kind) = match res {
                 Ok(res) => res,
                 Err(e) => {
-                    println!("{} failed: {:?}", arg, e);
+                    warn!("{} failed: {:?}", arg, e);
                     return last;
                 }
             };
@@ -134,6 +134,8 @@ async fn hash(links: &[&str]) -> Result<(), UserError> {
 
 #[tokio::main]
 async fn main() -> Result<(), UserError> {
+    setup_logging!();
+
     let matches = clap_app!(op =>
         (@subcommand post =>
             (@arg ID: +required "Reddit's ID for the post")

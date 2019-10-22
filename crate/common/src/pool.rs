@@ -48,11 +48,13 @@ impl PgPool {
             }),
             None => {
                 let (client, connection) = tokio_postgres::connect(self.conn_string, NoTls).await?;
-                let connection = connection.then(async move |res| {
-                    *self.count.write().unwrap() -= 1;
-                    if let Err(e) = res {
-                        error!("connection error: {}", e);
-                        std::process::exit(1);
+                let connection = connection.then(move |res| {
+                    async move {
+                        *self.count.write().unwrap() -= 1;
+                        if let Err(e) = res {
+                            error!("connection error: {}", e);
+                            std::process::exit(1);
+                        }
                     }
                 });
                 tokio::spawn(connection);

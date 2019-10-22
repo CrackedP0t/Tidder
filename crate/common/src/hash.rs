@@ -5,6 +5,7 @@ use image::{
 };
 use std::fmt::{self, Display, Formatter};
 use tokio_postgres::types;
+use bytes::BytesMut;
 
 #[derive(Debug, Copy, Clone)]
 pub struct Hash(pub u64);
@@ -19,7 +20,7 @@ impl types::ToSql for Hash {
     fn to_sql(
         &self,
         t: &types::Type,
-        w: &mut Vec<u8>,
+        w: &mut BytesMut,
     ) -> Result<types::IsNull, Box<dyn std::error::Error + Sync + Send>> {
         (self.0 as i64).to_sql(t, w)
     }

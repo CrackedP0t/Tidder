@@ -1,5 +1,3 @@
-#![feature(async_closure)]
-
 use clap::clap_app;
 use common::*;
 use futures::prelude::*;
@@ -108,24 +106,26 @@ async fn save(id: &str) -> Result<(), UserError> {
 
 async fn hash(links: &[&str]) -> Result<(), UserError> {
     futures::stream::iter(links.iter())
-        .fold(None, async move |last, arg| -> Option<Hash> {
-            let res = get_hash(&arg).await;
+        .fold(None, move |last, arg| {
+            async move {
+                let res = get_hash(&arg).await;
 
-            let (hash, link, _get_kind) = match res {
-                Ok(res) => res,
-                Err(e) => {
-                    warn!("{} failed: {:?}", arg, e);
-                    return last;
+                let (hash, link, _get_kind) = match res {
+                    Ok(res) => res,
+                    Err(e) => {
+                        warn!("{} failed: {:?}", arg, e);
+                        return last;
+                    }
+                };
+
+                let mut out = format!("{}: {}", link, hash);
+                if let Some(last) = last {
+                    out = format!("{} ({})", out, distance(hash, last));
                 }
-            };
+                println!("{}", out);
 
-            let mut out = format!("{}: {}", link, hash);
-            if let Some(last) = last {
-                out = format!("{} ({})", out, distance(hash, last));
+                Some(hash)
             }
-            println!("{}", out);
-
-            Some(hash)
         })
         .await;
 

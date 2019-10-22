@@ -1,4 +1,3 @@
-#![feature(async_closure)]
 #![recursion_limit = "128"]
 
 use clap::{clap_app, crate_authors, crate_description, crate_version};
@@ -59,7 +58,10 @@ where
         loop {
             match self.iter.next() {
                 None => return None,
-                Some(Err(_)) => continue,
+                Some(Err(e)) => {
+                    warn!("{}", e);
+                    continue
+                },
                 Some(Ok(v)) => return Some(v),
             }
         }
@@ -317,7 +319,7 @@ async fn ingest_json<R: Read + Send + 'static>(
 async fn main() -> Result<(), UserError> {
     lazy_static::lazy_static! {
         static ref REQW_CLIENT: Client = Client::new();
-        static ref MONTH_RE: Regex = Regex::new(r"(\d\d)\..+$").unwrap();
+        static ref MONTH_RE: Regex = Regex::new(r"-(\d\d)").unwrap();
         static ref YEAR_RE: Regex = Regex::new(r"\d\d\d\d").unwrap();
     }
 

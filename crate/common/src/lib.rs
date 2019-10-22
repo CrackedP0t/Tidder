@@ -1,4 +1,4 @@
-#![feature(async_closure)]
+// #![feature(async_closure)]
 
 use cache_control::CacheControl;
 use chrono::{DateTime, NaiveDateTime};
@@ -293,6 +293,8 @@ pub struct Submission {
     pub author: Option<String>,
     #[serde(deserialize_with = "de_sub::created_utc")]
     pub created_utc: NaiveDateTime,
+    #[serde(default, deserialize_with = "de_sub::crosspost_parent")]
+    pub crosspost_parent: Option<i64>,
     pub is_self: bool,
     pub over_18: bool,
     pub permalink: String,
@@ -374,6 +376,53 @@ mod de_sub {
 
         des.deserialize_any(CreatedUTC)
     }
+
+    pub fn crosspost_parent<'de, D>(des: D) -> Result<Option<i64>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct CrosspostParent;
+        impl<'de> Visitor<'de> for CrosspostParent {
+            type Value = Option<i64>;
+
+            fn expecting(&self, formatter: &mut Formatter) -> fmt::Result {
+                write!(formatter, "t3_<id>")
+            }
+
+            fn visit_some<D>(self, des: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                des.deserialize_str(self)
+            }
+
+            fn visit_str<E>(self, name: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                lazy_static! {
+                    static ref T3_RE: Regex = Regex::new("^t3_([[:alnum:]]+)$").unwrap();
+                }
+
+                T3_RE.captures(name)
+                    .and_then(|cs| cs.get(1))
+                    .and_then(|id| {
+                        i64::from_str_radix(id.as_str(), 36).ok()
+                    })
+                    .ok_or_else(|| E::invalid_value(Unexpected::Str(name), &self))
+                    .map(Some)
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(None)
+            }
+        }
+
+        des.deserialize_option(CrosspostParent)
+    }
 }
 
 pub async fn save_post(
@@ -403,9 +452,10 @@ pub async fn save_post(
                      (reddit_id, link, permalink, author, \
                      created_utc, score, subreddit, title, nsfw, \
                      spoiler, image_id, reddit_id_int, \
-                     thumbnail, thumbnail_width, thumbnail_height) \
+                     thumbnail, thumbnail_width, thumbnail_height, \
+                     crosspost_parent) \
                      VALUES ($1, $2, $3, $4, $5, $6, $7, \
-                     $8, $9, $10, $11, $12, $13, $14, $15) \
+                     $8, $9, $10, $11, $12, $13, $14, $15, $16) \
                      ON CONFLICT DO NOTHING",
                     &[
                         &reddit_id,
@@ -423,6 +473,7 @@ pub async fn save_post(
                         &post.thumbnail,
                         &post.thumbnail_width,
                         &post.thumbnail_height,
+                        &post.crosspost_parent
                     ],
                 )
                 .await?
@@ -434,9 +485,10 @@ pub async fn save_post(
                      (reddit_id, link, permalink, author, \
                      created_utc, score, subreddit, title, nsfw, \
                      spoiler, reddit_id_int, thumbnail, \
-                     thumbnail_width, thumbnail_height, save_error) \
+                     thumbnail_width, thumbnail_height, save_error, \
+                     crosspost_parent) \
                      VALUES ($1, $2, $3, $4, $5, $6, $7, \
-                     $8, $9, $10, $11, $12, $13, $14, $15) \
+                     $8, $9, $10, $11, $12, $13, $14, $15, $16) \
                      ON CONFLICT DO NOTHING",
                     &[
                         &reddit_id,
@@ -454,6 +506,7 @@ pub async fn save_post(
                         &post.thumbnail_width,
                         &post.thumbnail_height,
                         &save_error,
+                        &post.crosspost_parent
                     ],
                 )
                 .await?

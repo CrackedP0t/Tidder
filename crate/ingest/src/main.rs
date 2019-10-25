@@ -26,7 +26,7 @@ mod banned;
 use banned::*;
 
 const IN_FLIGHT_LIMIT: u32 = 1;
-const NO_BLACKLIST: [&str; 2] = ["gifsound.com", "wikimedia.org"];
+const NO_BLACKLIST: [&str; 15] = ["imgur.com", "gfycat.com", "gifsound.com", "wikipedia.org", "wiktionary.org", "wikiquote.org", "wikibooks.org", "wikisource.org", "wikinews.org", "wikiversity.org", "wikispecies.org", "mediawiki.org", "wikidata.org", "wikivoyage.org", "wikimedia.org"];
 
 lazy_static! {
     static ref CUSTOM_LIMITS: HashMap<&'static str, Option<u32>> = {
@@ -37,17 +37,17 @@ lazy_static! {
     };
 }
 
-struct Check<I> {
+struct CheckIter<I> {
     iter: I,
 }
 
-impl<I> Check<I> {
-    fn new(iter: I) -> Check<I> {
-        Check { iter }
+impl<I> CheckIter<I> {
+    fn new(iter: I) -> CheckIter<I> {
+        CheckIter { iter }
     }
 }
 
-impl<I, T, E> Iterator for Check<I>
+impl<I, T, E> Iterator for CheckIter<I>
 where
     I: Iterator<Item = Result<T, E>>,
     E: std::fmt::Display,
@@ -188,13 +188,9 @@ async fn ingest_post(
                     let hyper_error = e.source().and_then(|he| he.downcast_ref::<hyper::Error>());
 
                     if e.is_timeout() || hyper_error.is_some() {
-                        if is_link_special(&post.url) {
-                            error!("{} special link server error: {:?}", post_info, ue.error);
-                            std::process::exit(1);
-                        }
                         if let Ok(url) = Url::parse(&post.url) {
-                            if let Some(host) = url.host_str() {
-                                if !NO_BLACKLIST.contains(&get_tld(&url)) {
+                            if !NO_BLACKLIST.contains(&get_tld(&url)) {
+                                if let Some(host) = url.host_str() {
                                     blacklist.write().unwrap().insert(host.to_string());
                                 }
                             }
@@ -255,7 +251,7 @@ async fn ingest_json<R: Read + Send + 'static>(
         .into_iter::<Submission>()
         .map(|res| res.map_err(map_ue!()).and_then(|sub| sub.finalize()));
 
-    let json_iter = Check::new(json_iter).filter(move |post| {
+    let json_iter = CheckIter::new(json_iter).filter(move |post| {
         !post.is_self
             && post.promoted.map(|promoted| !promoted).unwrap_or(true)
             && ((EXT_RE.is_match(&post.url) && URL_RE.is_match(&post.url))

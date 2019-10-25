@@ -63,10 +63,6 @@ pub fn is_link_special(link: &str) -> bool {
     is_link_imgur(link) || is_link_gfycat(link) || is_wikipedia_file(link)
 }
 
-pub fn is_link_important(link: &str) -> bool {
-    is_link_imgur(link) || is_link_gfycat(link)
-}
-
 pub async fn follow_link(url: Url) -> Result<String, UserError> {
     let link = if is_link_imgur(url.as_str()) {
         follow_imgur(url).await?

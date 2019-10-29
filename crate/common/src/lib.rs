@@ -1,12 +1,9 @@
-// #![feature(async_closure)]
-
 use cache_control::CacheControl;
 use chrono::{DateTime, NaiveDateTime};
 pub use failure::{self, format_err, Error};
 use futures::prelude::*;
 use lazy_static::lazy_static;
 use log::LevelFilter;
-pub use log::{error, info, warn};
 use regex::Regex;
 use reqwest::header::{self, HeaderMap, HeaderValue};
 use serde::Deserialize;
@@ -16,6 +13,7 @@ use url::{
     percent_encoding::{percent_decode, utf8_percent_encode, QUERY_ENCODE_SET},
     Url,
 };
+use std::time::Duration;
 
 mod getter;
 pub use getter::*;
@@ -26,28 +24,29 @@ pub use pool::*;
 mod hash;
 pub use hash::*;
 
+pub use log::{error, info, warn};
+
+pub const USER_AGENT: &str = concat!("Tidder ", env!("CARGO_PKG_VERSION"));
+
 lazy_static! {
     pub static ref EXT_RE: Regex =
         Regex::new(r"(?i)\W(?:png|jpe?g|gif|webp|p[bgpn]m|tiff?|bmp|ico|hdr)\b").unwrap();
     pub static ref URL_RE: Regex =
         Regex::new(r"^(?i)https?://(?:[a-z0-9.-]+|\[[0-9a-f:]+\])(?:$|[:/?#])").unwrap();
     pub static ref PG_POOL: PgPool = PgPool::new(&SECRETS.postgres.connect);
-}
-
-// Log Error, returning empty
-#[macro_export]
-macro_rules! le {
-    () => {
-        |e| error!("{}", e)
+    pub static ref COMMON_HEADERS: HeaderMap<HeaderValue> = {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::USER_AGENT,
+            HeaderValue::from_static(USER_AGENT)
+        );
+        headers
     };
-}
-
-// Log Error as Info, returning empty
-#[macro_export]
-macro_rules! lei {
-    () => {
-        |e| info!("{}", e)
-    };
+    pub static ref REQW_CLIENT: reqwest::Client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .default_headers(COMMON_HEADERS.clone())
+        .build()
+        .unwrap();
 }
 
 pub mod user_error {
@@ -152,18 +151,6 @@ pub mod user_error {
             }
         }
     }
-
-    // impl From<Error> for UserError {
-    //     fn from(error: Error) -> Self {
-    //         Self {
-    //             source: Source::Internal,
-    //             user_msg: Cow::Borrowed("internal error"),
-    //             error,
-    //             file: None,
-    //             line: None,
-    //         }
-    //     }
-    // }
 
     impl<E> From<E> for UserError
     where
@@ -404,11 +391,10 @@ mod de_sub {
                     static ref T3_RE: Regex = Regex::new("^t3_([[:alnum:]]+)$").unwrap();
                 }
 
-                T3_RE.captures(name)
+                T3_RE
+                    .captures(name)
                     .and_then(|cs| cs.get(1))
-                    .and_then(|id| {
-                        i64::from_str_radix(id.as_str(), 36).ok()
-                    })
+                    .and_then(|id| i64::from_str_radix(id.as_str(), 36).ok())
                     .ok_or_else(|| E::invalid_value(Unexpected::Str(name), &self))
                     .map(Some)
             }
@@ -473,7 +459,7 @@ pub async fn save_post(
                         &post.thumbnail,
                         &post.thumbnail_width,
                         &post.thumbnail_height,
-                        &post.crosspost_parent
+                        &post.crosspost_parent,
                     ],
                 )
                 .await?
@@ -506,7 +492,7 @@ pub async fn save_post(
                         &post.thumbnail_width,
                         &post.thumbnail_height,
                         &save_error,
-                        &post.crosspost_parent
+                        &post.crosspost_parent,
                     ],
                 )
                 .await?

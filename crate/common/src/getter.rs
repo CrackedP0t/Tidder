@@ -2,7 +2,6 @@ use super::*;
 
 use reqwest::{RedirectPolicy, StatusCode};
 use serde_json::Value;
-use std::time::Duration;
 
 macro_rules! format {
     ($($arg:tt)*) => {{
@@ -10,13 +9,6 @@ macro_rules! format {
         let res = std::fmt::format(format_args!($($arg)*));
         res
     }}
-}
-
-lazy_static! {
-    static ref REQW_CLIENT: reqwest::Client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .unwrap();
 }
 
 pub fn new_domain_with_path_re(domain: &str) -> Result<Regex, regex::Error> {
@@ -168,7 +160,7 @@ async fn make_imgur_api_request(api_link: String) -> Result<Value, UserError> {
         static ref API_CLIENT: reqwest::Client = reqwest::Client::builder()
             .timeout(Duration::from_secs(60))
             .default_headers({
-                let mut headers = HeaderMap::new();
+                let mut headers = COMMON_HEADERS.clone();
                 headers.insert(
                     "X-RapidAPI-Host",
                     HeaderValue::from_static("imgur-apiv3.p.rapidapi.com"),
@@ -490,10 +482,7 @@ pub async fn get_hash(orig_link: &str) -> Result<(Hash, String, GetKind), UserEr
             }
             .join(",")
         })
-        .header(
-            header::USER_AGENT,
-            "Mozilla/5.0 (X11; Linux x86_64; rv:66.0) Gecko/20100101 Firefox/66.0",
-        )
+        .header(header::USER_AGENT, USER_AGENT)
         .send()
         .map_err(map_ue!("couldn't connect to image host"))
         .await?

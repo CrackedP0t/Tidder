@@ -9,7 +9,6 @@ use futures::task::Poll;
 use lazy_static::lazy_static;
 use log::{error, info, warn};
 use regex::Regex;
-use reqwest::Client;
 use serde_json::Deserializer;
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -26,7 +25,23 @@ mod banned;
 use banned::*;
 
 const IN_FLIGHT_LIMIT: u32 = 1;
-const NO_BLACKLIST: [&str; 15] = ["imgur.com", "gfycat.com", "gifsound.com", "wikipedia.org", "wiktionary.org", "wikiquote.org", "wikibooks.org", "wikisource.org", "wikinews.org", "wikiversity.org", "wikispecies.org", "mediawiki.org", "wikidata.org", "wikivoyage.org", "wikimedia.org"];
+const NO_BLACKLIST: [&str; 15] = [
+    "imgur.com",
+    "gfycat.com",
+    "gifsound.com",
+    "wikipedia.org",
+    "wiktionary.org",
+    "wikiquote.org",
+    "wikibooks.org",
+    "wikisource.org",
+    "wikinews.org",
+    "wikiversity.org",
+    "wikispecies.org",
+    "mediawiki.org",
+    "wikidata.org",
+    "wikivoyage.org",
+    "wikimedia.org",
+];
 
 lazy_static! {
     static ref CUSTOM_LIMITS: HashMap<&'static str, Option<u32>> = {
@@ -60,8 +75,8 @@ where
                 None => return None,
                 Some(Err(e)) => {
                     warn!("{}", e);
-                    continue
-                },
+                    continue;
+                }
                 Some(Ok(v)) => return Some(v),
             }
         }
@@ -314,7 +329,6 @@ async fn ingest_json<R: Read + Send + 'static>(
 #[tokio::main]
 async fn main() -> Result<(), UserError> {
     lazy_static::lazy_static! {
-        static ref REQW_CLIENT: Client = Client::new();
         static ref MONTH_RE: Regex = Regex::new(r"-(\d\d)").unwrap();
         static ref YEAR_RE: Regex = Regex::new(r"\d\d\d\d").unwrap();
     }

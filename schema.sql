@@ -122,7 +122,8 @@ CREATE TABLE public.posts (
     thumbnail character varying,
     thumbnail_height integer,
     updated timestamp without time zone,
-    save_error character varying
+    save_error character varying,
+    crosspost_parent bigint
 );
 
 

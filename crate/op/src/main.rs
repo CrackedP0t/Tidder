@@ -132,6 +132,42 @@ async fn hash(links: &[&str]) -> Result<(), UserError> {
     Ok(())
 }
 
+async fn search(link: &str) -> Result<(), UserError> {
+    let resp = reqwest::get(link).await?.error_for_status()?;
+    let image = resp.bytes().await?;
+    let hash = hash_from_memory(&image)?;
+
+    let found = PG_POOL
+        .take()
+        .await?
+        .query(
+            "SELECT hash <-> $1 as distance, images.link, permalink, \
+             score, author, created_utc, subreddit, title \
+             FROM posts INNER JOIN images \
+             ON hash <@ ($1, 2) \
+             AND image_id = images.id \
+             ORDER BY distance ASC, created_utc ASC",
+            &[&hash],
+        )
+        .await?;
+
+    for row in found {
+        format!(
+            "{} | {} | {} | {} | {} | {} | {} | {}",
+            row.get::<_, i64>("distance"),
+            row.get::<_, chrono::NaiveDateTime>("created_utc"),
+            row.get::<_, i64>("score"),
+            row.get::<_, &str>("link"),
+            row.get::<_, &str>("permalink"),
+            row.get::<_, &str>("subreddit"),
+            row.get::<_, &str>("author"),
+            row.get::<_, &str>("title")
+        );
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), UserError> {
     setup_logging!();
@@ -146,6 +182,9 @@ async fn main() -> Result<(), UserError> {
         (@subcommand save =>
             (@arg ID: +required ... "Reddit's ID for the post you wish to save")
         )
+        (@subcommand search =>
+            (@arg LINK: +required ... "The link to the image you wish to search for")
+        )
     )
     .get_matches();
 
@@ -156,6 +195,7 @@ async fn main() -> Result<(), UserError> {
         "post" => post(op_matches.value_of("ID").unwrap()).await,
         "hash" => hash(&op_matches.values_of("LINKS").unwrap().collect::<Vec<_>>()).await,
         "save" => save(op_matches.value_of("ID").unwrap()).await,
+        "search" => search(op_matches.value_of("LINK").unwrap()).await,
         unknown => Err(ue!(format!("Unknown subcommand '{}'", unknown))),
     }
 }

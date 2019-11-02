@@ -565,8 +565,7 @@ async fn get_existing(link: &str) -> Result<Option<(Hash, HashDest, i64)>, UserE
              SELECT hash, id, 'image_cache' as table_name \
              FROM image_cache WHERE link = $1",
         )
-        .await
-        .map_err(map_ue!())?;
+        .await?;
     let rows = client.query(&stmt, &[&link]).await?;
 
     Ok(rows.first().map(|row| {

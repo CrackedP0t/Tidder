@@ -555,8 +555,7 @@ async fn poss_move_row(
                  must_revalidate, retrieved_on FROM image_cache WHERE id = $1 \
                  RETURNING id",
             )
-            .await
-            .map_err(map_ue!())?;
+            .await?;
 
         let new_id = trans.query_one(&stmt, &[&id]).await?.get::<_, i64>("id");
 

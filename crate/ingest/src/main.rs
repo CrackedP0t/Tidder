@@ -434,7 +434,7 @@ async fn main() -> Result<(), UserError> {
         None
     };
 
-    let banned = ron::de::from_reader::<_, Vec<Banned>>(File::open(concat!(
+    let banned = ron::de::from_reader(File::open(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/banned.ron"
     ))?)?;

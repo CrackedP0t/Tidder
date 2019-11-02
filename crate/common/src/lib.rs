@@ -9,11 +9,11 @@ use reqwest::header::{self, HeaderMap, HeaderValue};
 use serde::Deserialize;
 use std::borrow::Cow;
 use std::string::ToString;
+use std::time::Duration;
 use url::{
     percent_encoding::{percent_decode, utf8_percent_encode, QUERY_ENCODE_SET},
     Url,
 };
-use std::time::Duration;
 
 mod getter;
 pub use getter::*;
@@ -36,10 +36,7 @@ lazy_static! {
     pub static ref PG_POOL: PgPool = PgPool::new(&SECRETS.postgres.connect);
     pub static ref COMMON_HEADERS: HeaderMap<HeaderValue> = {
         let mut headers = HeaderMap::new();
-        headers.insert(
-            header::USER_AGENT,
-            HeaderValue::from_static(USER_AGENT)
-        );
+        headers.insert(header::USER_AGENT, HeaderValue::from_static(USER_AGENT));
         headers
     };
     pub static ref REQW_CLIENT: reqwest::Client = reqwest::Client::builder()

@@ -200,7 +200,16 @@ async fn main() -> Result<(), UserError> {
         "post" => post(op_matches.value_of("ID").unwrap()).await,
         "hash" => hash(&op_matches.values_of("LINKS").unwrap().collect::<Vec<_>>()).await,
         "save" => save(op_matches.value_of("ID").unwrap()).await,
-        "search" => search(op_matches.value_of("LINK").unwrap(), op_matches.value_of("distance").map(|d| d.parse()).transpose()?).await,
+        "search" => {
+            search(
+                op_matches.value_of("LINK").unwrap(),
+                op_matches
+                    .value_of("distance")
+                    .map(|d| d.parse())
+                    .transpose()?,
+            )
+            .await
+        }
         unknown => Err(ue!(format!("Unknown subcommand '{}'", unknown))),
     }
 }

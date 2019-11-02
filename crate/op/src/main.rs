@@ -157,7 +157,7 @@ async fn search(link: &str, distance: Option<i64>) -> Result<(), UserError> {
 
     for row in found {
         println!(
-            "{} | {} | {} | {} | {} | {} | {} | {}",
+            "{} | {} | {} | {} | {} | /r/{} | {} | {}",
             row.get::<_, i64>("distance"),
             row.get::<_, chrono::NaiveDateTime>("created_utc"),
             row.get::<_, i64>("score"),

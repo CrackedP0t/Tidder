@@ -152,7 +152,7 @@ async fn search(link: &str) -> Result<(), UserError> {
         .await?;
 
     for row in found {
-        format!(
+        println!(
             "{} | {} | {} | {} | {} | {} | {} | {}",
             row.get::<_, i64>("distance"),
             row.get::<_, chrono::NaiveDateTime>("created_utc"),

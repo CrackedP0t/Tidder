@@ -109,7 +109,7 @@ CREATE TABLE public.posts (
     reddit_id character varying NOT NULL,
     link character varying NOT NULL,
     permalink character varying NOT NULL,
-    author character varying,
+    author character varying NOT NULL,
     score bigint NOT NULL,
     created_utc timestamp without time zone NOT NULL,
     subreddit character varying NOT NULL,

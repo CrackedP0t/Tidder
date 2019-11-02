@@ -277,7 +277,7 @@ pub struct Submission {
     #[serde(default)]
     pub id_int: i64,
     pub id: String,
-    pub author: Option<String>,
+    pub author: String,
     #[serde(deserialize_with = "de_sub::created_utc")]
     pub created_utc: NaiveDateTime,
     #[serde(default, deserialize_with = "de_sub::crosspost_parent")]

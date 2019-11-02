@@ -171,14 +171,10 @@ async fn ingest_post(
     };
 
     let image_id = match save_res {
-        Ok((_hash, _hash_dest, image_id, exists)) => {
-            if exists {
-                info!("{} already exists", post_info);
-            } else {
-                info!("{} successfully hashed", post_info);
-            }
+        Ok(hash_gotten) => {
+            info!("{} successfully hashed", post_info);
 
-            Ok(image_id)
+            Ok(hash_gotten.id)
         }
         Err(ue) => match ue.source {
             Source::Internal => {

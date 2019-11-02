@@ -93,9 +93,9 @@ async fn save(id: &str) -> Result<(), UserError> {
             Submission::deserialize(&resp.json::<Value>().await?["data"]["children"][0]["data"])?
                 .finalize()?;
 
-        let (_hash, _hash_dest, image_id, _exists) = save_hash(&post.url, HashDest::Images).await?;
+        let hash_saved = save_hash(&post.url, HashDest::Images).await?;
 
-        save_post(&post, Ok(image_id)).await?;
+        save_post(&post, Ok(hash_saved.id)).await?;
         Ok(())
     } else {
         println!("{:#}", json);
@@ -108,9 +108,7 @@ async fn hash(links: &[&str]) -> Result<(), UserError> {
     futures::stream::iter(links.iter())
         .fold(None, move |last, arg| {
             async move {
-                let res = get_hash(&arg).await;
-
-                let (hash, link, _get_kind) = match res {
+                let HashGotten {hash, end_link, ..} = match get_hash(&arg).await {
                     Ok(res) => res,
                     Err(e) => {
                         warn!("{} failed: {:?}", arg, e);
@@ -118,7 +116,7 @@ async fn hash(links: &[&str]) -> Result<(), UserError> {
                     }
                 };
 
-                let mut out = format!("{}: {}", link, hash);
+                let mut out = format!("{}: {}", end_link, hash);
                 if let Some(last) = last {
                     out = format!("{} ({})", out, distance(hash, last));
                 }

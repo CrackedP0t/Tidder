@@ -424,7 +424,13 @@ pub enum GetKind {
     Request(HeaderMap),
 }
 
-pub async fn get_hash(orig_link: &str) -> Result<(Hash, String, GetKind), UserError> {
+pub struct HashGotten {
+    pub hash: Hash,
+    pub end_link: String,
+    pub get_kind: GetKind
+}
+
+pub async fn get_hash(orig_link: &str) -> Result<HashGotten, UserError> {
     lazy_static! {
         static ref EXT_REPLACE_RE: Regex = Regex::new(r"^(.+?)\.[[:alnum:]]+$").unwrap();
     }
@@ -447,7 +453,7 @@ pub async fn get_hash(orig_link: &str) -> Result<(Hash, String, GetKind), UserEr
     let found = get_existing(&link).await?;
 
     if let Some((hash, hash_dest, id)) = found {
-        return Ok((hash, link, GetKind::Cache(hash_dest, id)));
+        return Ok(HashGotten {hash, end_link: link, get_kind: GetKind::Cache(hash_dest, id)});
     }
 
     let resp = REQW_CLIENT
@@ -518,7 +524,13 @@ pub async fn get_hash(orig_link: &str) -> Result<(Hash, String, GetKind), UserEr
         }
     };
 
-    Ok((hash, link, GetKind::Request(headers)))
+    Ok(HashGotten {hash, end_link: link, get_kind: GetKind::Request(headers)})
+}
+
+pub struct HashSaved {
+    pub hash: Hash,
+    pub hash_dest: HashDest,
+    pub id: i64
 }
 
 async fn poss_move_row(
@@ -526,9 +538,9 @@ async fn poss_move_row(
     hash_dest: HashDest,
     found_hash_dest: HashDest,
     id: i64,
-) -> Result<(Hash, HashDest, i64, bool), UserError> {
+) -> Result<HashSaved, UserError> {
     if hash_dest == found_hash_dest || hash_dest == HashDest::ImageCache {
-        Ok((hash, hash_dest, id, true))
+        Ok(HashSaved{hash, hash_dest, id})
     } else {
         let mut client = PG_POOL.take().await?;
         let trans = client.transaction().await?;
@@ -552,15 +564,15 @@ async fn poss_move_row(
 
         trans.commit().await?;
 
-        Ok((hash, HashDest::Images, new_id, true))
+        Ok(HashSaved {hash, hash_dest: HashDest::Images, id: new_id})
     }
 }
 
 pub async fn save_hash(
     link: &str,
     hash_dest: HashDest,
-) -> Result<(Hash, HashDest, i64, bool), UserError> {
-    let (hash, link, get_kind) = get_hash(link).await?;
+) -> Result<HashSaved, UserError> {
+    let HashGotten {hash, end_link: link, get_kind} = get_hash(link).await?;
     match get_kind {
         GetKind::Cache(found_hash_dest, id) => {
             poss_move_row(hash, hash_dest, found_hash_dest, id).await
@@ -615,8 +627,9 @@ pub async fn save_hash(
 
             trans.commit().await?;
 
+            // Postgres will return no rows on a conflict, and a row with the new id on success
             match rows.first() {
-                Some(row) => Ok((hash, hash_dest, row.get("id"), false)),
+                Some(row) => Ok(HashSaved { hash, hash_dest, id: row.get("id") }),
                 None => {
                     let found = get_existing(&link).await?;
                     match found {

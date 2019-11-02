@@ -132,7 +132,11 @@ async fn hash(links: &[&str]) -> Result<(), UserError> {
     Ok(())
 }
 
-async fn search(link: &str) -> Result<(), UserError> {
+async fn search(link: &str, distance: Option<i64>) -> Result<(), UserError> {
+    const DEFAULT_DISTANCE: i64 = 2;
+
+    let distance = distance.unwrap_or(DEFAULT_DISTANCE);
+
     let resp = reqwest::get(link).await?.error_for_status()?;
     let image = resp.bytes().await?;
     let hash = hash_from_memory(&image)?;
@@ -144,10 +148,10 @@ async fn search(link: &str) -> Result<(), UserError> {
             "SELECT hash <-> $1 as distance, images.link, permalink, \
              score, author, created_utc, subreddit, title \
              FROM posts INNER JOIN images \
-             ON hash <@ ($1, 2) \
+             ON hash <@ ($1, $2) \
              AND image_id = images.id \
              ORDER BY distance ASC, created_utc ASC",
-            &[&hash],
+            &[&hash, &distance],
         )
         .await?;
 
@@ -174,16 +178,17 @@ async fn main() -> Result<(), UserError> {
 
     let matches = clap_app!(op =>
         (@subcommand post =>
-            (@arg ID: +required "Reddit's ID for the post")
+         (@arg ID: +required "Reddit's ID for the post")
         )
         (@subcommand hash =>
-            (@arg LINKS: +required ... "The links you wish to hash")
+         (@arg LINKS: +required ... "The links you wish to hash")
         )
         (@subcommand save =>
-            (@arg ID: +required ... "Reddit's ID for the post you wish to save")
+         (@arg ID: +required ... "Reddit's ID for the post you wish to save")
         )
         (@subcommand search =>
-            (@arg LINK: +required ... "The link to the image you wish to search for")
+         (@arg LINK: +required ... "The link to the image you wish to search for")
+         (@arg distance: -d --distance +takes_value "The max distance you'll accept")
         )
     )
     .get_matches();
@@ -195,7 +200,7 @@ async fn main() -> Result<(), UserError> {
         "post" => post(op_matches.value_of("ID").unwrap()).await,
         "hash" => hash(&op_matches.values_of("LINKS").unwrap().collect::<Vec<_>>()).await,
         "save" => save(op_matches.value_of("ID").unwrap()).await,
-        "search" => search(op_matches.value_of("LINK").unwrap()).await,
+        "search" => search(op_matches.value_of("LINK").unwrap(), op_matches.value_of("distance").map(|d| d.parse()).transpose()?).await,
         unknown => Err(ue!(format!("Unknown subcommand '{}'", unknown))),
     }
 }

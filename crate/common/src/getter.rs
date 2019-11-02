@@ -3,14 +3,6 @@ use super::*;
 use reqwest::{RedirectPolicy, StatusCode};
 use serde_json::Value;
 
-macro_rules! format {
-    ($($arg:tt)*) => {{
-        #[allow(clippy::let_and_return)]
-        let res = std::fmt::format(format_args!($($arg)*));
-        res
-    }}
-}
-
 pub fn new_domain_with_path_re(domain: &str) -> Result<Regex, regex::Error> {
     Regex::new(&format!(
         r"(?i)^https?://(?:[a-z0-9-.]+\.)?{}(?::\d+)?[/?#].+",

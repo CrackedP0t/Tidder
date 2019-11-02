@@ -26,6 +26,15 @@ pub use hash::*;
 
 pub use log::{error, info, warn};
 
+// Get around https://github.com/rust-lang/rust/issues/64960
+macro_rules! format {
+    ($($arg:tt)*) => {{
+        #[allow(clippy::let_and_return)]
+        let res = std::fmt::format(format_args!($($arg)*));
+        res
+    }}
+}
+
 pub const USER_AGENT: &str = concat!("Tidder ", env!("CARGO_PKG_VERSION"));
 
 lazy_static! {

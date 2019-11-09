@@ -10,10 +10,6 @@ use serde::Deserialize;
 use std::borrow::Cow;
 use std::string::ToString;
 use std::time::Duration;
-use url::{
-    percent_encoding::{percent_decode, utf8_percent_encode, QUERY_ENCODE_SET},
-    Url,
-};
 
 // Get around https://github.com/rust-lang/rust/issues/64960
 macro_rules! format {

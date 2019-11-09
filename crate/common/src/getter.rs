@@ -1,6 +1,10 @@
 use super::*;
 
+use url::Url;
+use percent_encoding::{AsciiSet, percent_decode, utf8_percent_encode, CONTROLS};
 use reqwest::RedirectPolicy;
+
+const FRAGMENT: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'<').add(b'>').add(b'`');
 
 pub fn new_domain_with_path_re(domain: &str) -> Result<Regex, regex::Error> {
     Regex::new(&format!(
@@ -60,7 +64,7 @@ pub async fn follow_link(url: Url) -> Result<String, UserError> {
     } else {
         url.into_string()
     };
-    Ok(utf8_percent_encode(link.as_str(), QUERY_ENCODE_SET).collect::<String>())
+    Ok(utf8_percent_encode(link.as_str(), FRAGMENT).collect::<String>())
 }
 
 fn follow_gifsound(url: Url) -> Result<String, UserError> {
@@ -289,41 +293,49 @@ async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
     } else if EXT_RE.is_match(path) || path_start == "download" {
         Ok(url.into_string())
     } else if path_start == "a" {
-        Err(ue_save!("Albums are disabled", "imgur_albums_disabled", Source::External))
-        // let id = id_segment(&segments, 1)?;
-        // let api_link = format!("https://imgur-apiv3.p.rapidapi.com/3/album/{}/images", id);
-        // let json = make_imgur_api_request(api_link).await?;
-        // Ok(GIFV_RE
-        //     .replace(
-        //         json["data"]
-        //             .get(0)
-        //             .ok_or(ue_save!("Imgur album is empty", "imgur_album_empty"))?["link"]
-        //             .as_str()
-        //             .ok_or(ue_save!(
-        //                 "Imgur API returned unexpectedly-structured JSON",
-        //                 "imgur_json_bad"
-        //             ))?,
-        //         ".gif$1",
-        //     )
-        //     .to_string())
+        Err(ue_save!(
+            "Albums are disabled",
+            "imgur_albums_disabled",
+            Source::External
+        ))
+    // let id = id_segment(&segments, 1)?;
+    // let api_link = format!("https://imgur-apiv3.p.rapidapi.com/3/album/{}/images", id);
+    // let json = make_imgur_api_request(api_link).await?;
+    // Ok(GIFV_RE
+    //     .replace(
+    //         json["data"]
+    //             .get(0)
+    //             .ok_or(ue_save!("Imgur album is empty", "imgur_album_empty"))?["link"]
+    //             .as_str()
+    //             .ok_or(ue_save!(
+    //                 "Imgur API returned unexpectedly-structured JSON",
+    //                 "imgur_json_bad"
+    //             ))?,
+    //         ".gif$1",
+    //     )
+    //     .to_string())
     } else if path_start == "gallery" {
-        Err(ue_save!("Albums are disabled", "imgur_albums_disabled", Source::External))
-        // let id = id_segment(&segments, 1)?;
-        // let api_link = format!("https://imgur-apiv3.p.rapidapi.com/3/gallery/album/{}", id);
-        // let json = make_imgur_api_request(api_link).await?;
-        // Ok(GIFV_RE
-        //     .replace(
-        //         json["data"]["images"]
-        //             .get(0)
-        //             .ok_or(ue_save!("Imgur album is empty", "imgur_album_empty"))?["link"]
-        //             .as_str()
-        //             .ok_or(ue_save!(
-        //                 "Imgur API returned unexpectedly-structured JSON",
-        //                 "imgur_json_bad"
-        //             ))?,
-        //         ".gif$1",
-        //     )
-        //     .to_string())
+        Err(ue_save!(
+            "Albums are disabled",
+            "imgur_albums_disabled",
+            Source::External
+        ))
+    // let id = id_segment(&segments, 1)?;
+    // let api_link = format!("https://imgur-apiv3.p.rapidapi.com/3/gallery/album/{}", id);
+    // let json = make_imgur_api_request(api_link).await?;
+    // Ok(GIFV_RE
+    //     .replace(
+    //         json["data"]["images"]
+    //             .get(0)
+    //             .ok_or(ue_save!("Imgur album is empty", "imgur_album_empty"))?["link"]
+    //             .as_str()
+    //             .ok_or(ue_save!(
+    //                 "Imgur API returned unexpectedly-structured JSON",
+    //                 "imgur_json_bad"
+    //             ))?,
+    //         ".gif$1",
+    //     )
+    //     .to_string())
     } else {
         let id = last_id(&segments)?;
 
@@ -428,7 +440,7 @@ pub enum GetKind {
 pub struct HashGotten {
     pub hash: Hash,
     pub end_link: String,
-    pub get_kind: GetKind
+    pub get_kind: GetKind,
 }
 
 pub async fn get_hash(orig_link: &str) -> Result<HashGotten, UserError> {
@@ -454,7 +466,11 @@ pub async fn get_hash(orig_link: &str) -> Result<HashGotten, UserError> {
     let found = get_existing(&link).await?;
 
     if let Some((hash, hash_dest, id)) = found {
-        return Ok(HashGotten {hash, end_link: link, get_kind: GetKind::Cache(hash_dest, id)});
+        return Ok(HashGotten {
+            hash,
+            end_link: link,
+            get_kind: GetKind::Cache(hash_dest, id),
+        });
     }
 
     let resp = REQW_CLIENT
@@ -525,13 +541,17 @@ pub async fn get_hash(orig_link: &str) -> Result<HashGotten, UserError> {
         }
     };
 
-    Ok(HashGotten {hash, end_link: link, get_kind: GetKind::Request(headers)})
+    Ok(HashGotten {
+        hash,
+        end_link: link,
+        get_kind: GetKind::Request(headers),
+    })
 }
 
 pub struct HashSaved {
     pub hash: Hash,
     pub hash_dest: HashDest,
-    pub id: i64
+    pub id: i64,
 }
 
 async fn poss_move_row(
@@ -541,7 +561,11 @@ async fn poss_move_row(
     id: i64,
 ) -> Result<HashSaved, UserError> {
     if hash_dest == found_hash_dest || hash_dest == HashDest::ImageCache {
-        Ok(HashSaved{hash, hash_dest, id})
+        Ok(HashSaved {
+            hash,
+            hash_dest,
+            id,
+        })
     } else {
         let mut client = PG_POOL.take().await?;
         let trans = client.transaction().await?;
@@ -565,15 +589,21 @@ async fn poss_move_row(
 
         trans.commit().await?;
 
-        Ok(HashSaved {hash, hash_dest: HashDest::Images, id: new_id})
+        Ok(HashSaved {
+            hash,
+            hash_dest: HashDest::Images,
+            id: new_id,
+        })
     }
 }
 
-pub async fn save_hash(
-    link: &str,
-    hash_dest: HashDest,
-) -> Result<HashSaved, UserError> {
-    let HashGotten {hash, end_link: link, get_kind} = get_hash(link).await?;
+pub async fn save_hash(link: &str, hash_dest: HashDest) -> Result<HashSaved, UserError> {
+    let HashGotten {
+        hash,
+        end_link: link,
+        get_kind,
+    } =
+        get_hash(link).await?;
     match get_kind {
         GetKind::Cache(found_hash_dest, id) => {
             poss_move_row(hash, hash_dest, found_hash_dest, id).await
@@ -630,7 +660,11 @@ pub async fn save_hash(
 
             // Postgres will return no rows on a conflict, and a row with the new id on success
             match rows.first() {
-                Some(row) => Ok(HashSaved { hash, hash_dest, id: row.get("id") }),
+                Some(row) => Ok(HashSaved {
+                    hash,
+                    hash_dest,
+                    id: row.get("id"),
+                }),
                 None => {
                     let found = get_existing(&link).await?;
                     match found {

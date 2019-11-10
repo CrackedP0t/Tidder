@@ -73,8 +73,8 @@ where
         loop {
             match self.iter.next() {
                 None => return None,
-                Some(Err(e)) => {
-                    warn!("{}", e);
+                Some(Err(_e)) => {
+                    // warn!("{}", e);
                     continue;
                 }
                 Some(Ok(v)) => return Some(v),

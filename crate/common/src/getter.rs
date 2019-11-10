@@ -1,8 +1,8 @@
 use super::*;
 
-use url::Url;
-use percent_encoding::{AsciiSet, percent_decode, utf8_percent_encode, CONTROLS};
+use percent_encoding::{percent_decode, utf8_percent_encode, AsciiSet, CONTROLS};
 use reqwest::RedirectPolicy;
+use url::Url;
 
 const FRAGMENT: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'<').add(b'>').add(b'`');
 
@@ -460,7 +460,9 @@ pub async fn get_hash(orig_link: &str) -> Result<HashGotten, UserError> {
         return Err(ue!("unsupported scheme in URL", Source::User));
     }
 
-    let is_photobucket = get_host(url.as_str()).map(|h| h.ends_with("photobucket.com")).unwrap_or(false);
+    let is_photobucket = get_host(url.as_str())
+        .map(|h| h.ends_with("photobucket.com"))
+        .unwrap_or(false);
 
     let mut link = follow_link(url).await?;
 
@@ -603,8 +605,7 @@ pub async fn save_hash(link: &str, hash_dest: HashDest) -> Result<HashSaved, Use
         hash,
         end_link: link,
         get_kind,
-    } =
-        get_hash(link).await?;
+    } = get_hash(link).await?;
     match get_kind {
         GetKind::Cache(found_hash_dest, id) => {
             poss_move_row(hash, hash_dest, found_hash_dest, id).await

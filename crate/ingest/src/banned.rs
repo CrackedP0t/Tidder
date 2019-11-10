@@ -19,9 +19,8 @@ impl Banned {
                 .map(|host_str| host_str == *host)
                 .unwrap_or(false),
             AnyScheme(no_scheme) => url
-                .split("://")
-                .nth(1)
-                .map(|u| u == *no_scheme)
+                .find("://")
+                .map(|loc| url.split_at(loc + 3).1 == *no_scheme)
                 .unwrap_or(false),
             Full(link) => url == *link,
         }
@@ -37,6 +36,9 @@ mod tests {
         assert!(
             Banned::AnyScheme("imgur.com/trtbLIL".to_string()).matches("https://imgur.com/trtbLIL")
         );
+
+        assert!(Banned::AnyScheme("site.com/x=http://asdf.com".to_string())
+            .matches("http://site.com/x=http://asdf.com"));
     }
 
     #[test]

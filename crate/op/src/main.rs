@@ -108,7 +108,6 @@ async fn hash(links: &[&str]) -> Result<(), UserError> {
     futures::stream::iter(links.iter())
         .fold(None, move |last, arg| {
             async move {
-                println!("Starting to hash {}", arg);
                 let HashGotten { hash, end_link, .. } = match get_hash(&arg).await {
                     Ok(res) => res,
                     Err(e) => {

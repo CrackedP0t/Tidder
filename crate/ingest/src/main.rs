@@ -103,11 +103,11 @@ async fn ingest_post(
     }
 
     let post_url_res = (|| {
-        let post_url = Url::parse(&post.url).map_err(map_ue_save!("invalid URL", "url_invalid"))?;
-
-        if banned.iter().any(|banned| banned.matches(&post_url)) {
+        if banned.iter().any(|banned| banned.matches(&post.url)) {
             return Err(ue_save!("banned", "banned"));
         }
+
+        let post_url = Url::parse(&post.url).map_err(map_ue_save!("invalid URL", "url_invalid"))?;
 
         let blacklist_guard = blacklist.read().unwrap();
         if post_url
@@ -124,11 +124,9 @@ async fn ingest_post(
 
     let save_res = match post_url_res {
         Ok(post_url) => {
-            let tld = get_tld(&post_url);
+            let host = post_url.host_str().unwrap();
 
-            let custom_limit: Option<&Option<_>> = post_url
-                .host_str()
-                .and_then(|host| CUSTOM_LIMITS.get(&host));
+            let custom_limit: Option<&Option<_>> = CUSTOM_LIMITS.get(&host);
 
             poll_fn(|context| {
                 let guard = in_flight.read().unwrap();
@@ -141,7 +139,7 @@ async fn ingest_post(
                 let ready = limit
                     .map(|limit| {
                         guard
-                            .get::<str>(&tld)
+                            .get::<str>(&host)
                             .map(|in_flight| *in_flight < limit)
                             .unwrap_or(true)
                     })
@@ -150,9 +148,9 @@ async fn ingest_post(
                 if ready {
                     drop(guard);
                     let mut write_guard = in_flight.write().unwrap();
-                    *(write_guard.entry(tld.to_owned()).or_insert(0)) += 1;
+                    *(write_guard.entry(host.to_owned()).or_insert(0)) += 1;
                     drop(write_guard);
-                    Poll::Ready(tld.to_owned())
+                    Poll::Ready(host.to_owned())
                 } else {
                     drop(guard);
                     context.waker().wake_by_ref();
@@ -163,7 +161,7 @@ async fn ingest_post(
 
             let res = save_hash(&post.url, HashDest::Images).await;
 
-            *in_flight.write().unwrap().get_mut(tld).unwrap() -= 1;
+            *in_flight.write().unwrap().get_mut(host).unwrap() -= 1;
 
             res
         }
@@ -200,8 +198,8 @@ async fn ingest_post(
 
                     if e.is_timeout() || hyper_error.is_some() {
                         if let Ok(url) = Url::parse(&post.url) {
-                            if !NO_BLACKLIST.contains(&get_tld(&url)) {
-                                if let Some(host) = url.host_str() {
+                            if let Some(host) = url.host_str() {
+                                if !NO_BLACKLIST.contains(&host) {
                                     blacklist.write().unwrap().insert(host.to_string());
                                 }
                             }

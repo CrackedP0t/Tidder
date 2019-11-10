@@ -421,15 +421,16 @@ async fn follow_wikipedia(url: Url) -> Result<String, UserError> {
     })
 }
 
-pub fn get_tld(url: &Url) -> &str {
-    lazy_static! {
-        static ref TLD_RE: Regex = Regex::new(r"([^.]+\.[^.]+)$").unwrap();
-    }
+lazy_static! {
+    static ref HOST_RE: Regex = Regex::new(r"^https?://([^/:?#]+)").unwrap();
+}
 
-    url.domain()
-        .and_then(|s| TLD_RE.find(s))
-        .map(|m| m.as_str())
-        .unwrap_or_else(|| url.host_str().unwrap())
+pub fn get_host(url: &str) -> Option<&str> {
+    Some(HOST_RE.captures(url)?.get(1)?.as_str())
+}
+
+pub fn host_ends_with(url: &str, end: &str) -> bool {
+    get_host(url).map(|h| h.ends_with(end)).unwrap_or(false)
 }
 
 pub enum GetKind {
@@ -459,7 +460,7 @@ pub async fn get_hash(orig_link: &str) -> Result<HashGotten, UserError> {
         return Err(ue!("unsupported scheme in URL", Source::User));
     }
 
-    let is_photobucket = get_tld(&url) == "photobucket.com";
+    let is_photobucket = get_host(url.as_str()).map(|h| h.ends_with("photobucket.com")).unwrap_or(false);
 
     let mut link = follow_link(url).await?;
 

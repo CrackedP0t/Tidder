@@ -199,7 +199,7 @@ async fn ingest_post(
                     if e.is_timeout() || hyper_error.is_some() {
                         if let Ok(url) = Url::parse(&post.url) {
                             if let Some(host) = url.host_str() {
-                                if !NO_BLACKLIST.contains(&host) {
+                                if !NO_BLACKLIST.iter().any(|n| host_ends_with(host, n)) {
                                     blacklist.write().unwrap().insert(host.to_string());
                                 }
                             }

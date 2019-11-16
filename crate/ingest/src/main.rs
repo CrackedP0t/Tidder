@@ -21,32 +21,6 @@ use std::sync::{Arc, Mutex, RwLock, TryLockError};
 use tokio::executor::{DefaultExecutor, Executor};
 use url::Url;
 
-const IN_FLIGHT_LIMIT: u32 = 1;
-const NO_BLACKLIST: [&str; 15] = [
-    "imgur.com",
-    "gfycat.com",
-    "gifsound.com",
-    "wikipedia.org",
-    "wiktionary.org",
-    "wikiquote.org",
-    "wikibooks.org",
-    "wikisource.org",
-    "wikinews.org",
-    "wikiversity.org",
-    "wikispecies.org",
-    "mediawiki.org",
-    "wikidata.org",
-    "wikivoyage.org",
-    "wikimedia.org",
-];
-
-static CUSTOM_LIMITS: Lazy<HashMap<&'static str, Option<u32>>> = Lazy::new(|| {
-    let mut map = HashMap::new();
-    map.insert("imgur.com", Some(3));
-    map.insert("i.imgur.com", Some(7));
-    map
-});
-
 struct CheckIter<I> {
     iter: I,
 }
@@ -120,12 +94,12 @@ async fn ingest_post(
         Ok(post_url) => {
             let host = post_url.host_str().unwrap();
 
-            let custom_limit: Option<&Option<_>> = CUSTOM_LIMITS.get(&host);
+            let custom_limit: Option<&Option<_>> = CONFIG.custom_limits.get(host);
 
             poll_fn(|context| {
                 let guard = in_flight.read().unwrap();
                 let limit = match custom_limit {
-                    None => Some(IN_FLIGHT_LIMIT),
+                    None => Some(CONFIG.in_flight_limit),
                     Some(&Some(limit)) => Some(limit),
                     Some(&None) => None,
                 };
@@ -193,7 +167,7 @@ async fn ingest_post(
                     if e.is_timeout() || hyper_error.is_some() {
                         if let Ok(url) = Url::parse(&post.url) {
                             if let Some(host) = url.host_str() {
-                                if !NO_BLACKLIST.iter().any(|n| host.ends_with(n)) {
+                                if !CONFIG.no_blacklist.iter().any(|n| host.ends_with(n)) {
                                     blacklist.write().unwrap().insert(host.to_string());
                                 }
                             }

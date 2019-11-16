@@ -544,8 +544,10 @@ pub mod config {
     #[derive(Deserialize)]
     pub struct Config {
         pub banned: Vec<super::Banned>,
-        pub no_blacklist: Vec<String>,
+        pub custom_limits: std::collections::HashMap<String, Option<u32>>,
         pub enable_imgur_api: bool,
+        pub in_flight_limit: u32,
+        pub no_blacklist: Vec<String>,
     }
 
     pub fn load() -> Result<Config, Error> {

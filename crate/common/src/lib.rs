@@ -20,6 +20,9 @@ macro_rules! format {
     }}
 }
 
+mod banned;
+pub use banned::*;
+
 mod getter;
 pub use getter::*;
 
@@ -277,8 +280,6 @@ pub use user_error::*;
 
 pub const DEFAULT_DISTANCE: i64 = 1;
 
-
-
 mod de_sub {
     use super::*;
     use serde::de::{self, Deserializer, Unexpected, Visitor};
@@ -532,14 +533,31 @@ pub mod secrets {
 
     pub fn load() -> Result<Secrets, Error> {
         let mut s = String::new();
-        std::fs::File::open("../secrets/secrets.toml")
-            .map_err(Error::from)?
-            .read_to_string(&mut s)
-            .map_err(Error::from)?;
+        std::fs::File::open("../secrets/secrets.toml")?.read_to_string(&mut s)?;
         toml::from_str::<Secrets>(&s).map_err(Error::from)
+    }
+}
+
+pub mod config {
+    use failure::Error;
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub struct Config {
+        pub banned: Vec<super::Banned>,
+        pub no_blacklist: Vec<String>,
+    }
+
+    pub fn load() -> Result<Config, Error> {
+        ron::de::from_reader(std::fs::File::open(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tidder.ron"
+        ))?)
+        .map_err(Error::from)
     }
 }
 
 lazy_static! {
     pub static ref SECRETS: secrets::Secrets = secrets::load().unwrap();
+    pub static ref CONFIG: config::Config = config::load().unwrap();
 }

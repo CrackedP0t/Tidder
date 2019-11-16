@@ -21,9 +21,6 @@ use std::sync::{Arc, Mutex, RwLock, TryLockError};
 use tokio::executor::{DefaultExecutor, Executor};
 use url::Url;
 
-mod banned;
-use banned::*;
-
 const IN_FLIGHT_LIMIT: u32 = 1;
 const NO_BLACKLIST: [&str; 15] = [
     "imgur.com",
@@ -86,7 +83,6 @@ where
 async fn ingest_post(
     mut post: Submission,
     verbose: bool,
-    banned: &[Banned],
     blacklist: &RwLock<HashSet<String>>,
     in_flight: &RwLock<HashMap<String, u32>>,
 ) {
@@ -103,7 +99,7 @@ async fn ingest_post(
     }
 
     let post_url_res = (|| {
-        if banned.iter().any(|banned| banned.matches(&post.url)) {
+        if CONFIG.banned.iter().any(|banned| banned.matches(&post.url)) {
             return Err(ue_save!("banned", "banned"));
         }
 
@@ -251,7 +247,6 @@ async fn ingest_post(
 async fn ingest_json<R: Read + Send + 'static>(
     verbose: bool,
     mut already_have: Option<BTreeSet<i64>>,
-    banned: Vec<Banned>,
     json_stream: R,
 ) {
     const MAX_SPAWNED: u32 = 2048;
@@ -277,7 +272,6 @@ async fn ingest_json<R: Read + Send + 'static>(
             }
     });
 
-    let banned = Arc::new(banned);
     let blacklist = Arc::new(RwLock::new(HashSet::<String>::new()));
     let in_flight = Arc::new(RwLock::new(HashMap::<String, u32>::new()));
     let json_iter = Arc::new(Mutex::new(json_iter));
@@ -286,7 +280,6 @@ async fn ingest_json<R: Read + Send + 'static>(
 
     (0..MAX_SPAWNED)
         .map(|_i| {
-            let banned = banned.clone();
             let blacklist = blacklist.clone();
             let in_flight = in_flight.clone();
             let json_iter = json_iter.clone();
@@ -308,7 +301,7 @@ async fn ingest_json<R: Read + Send + 'static>(
                         })
                         .await
                     } {
-                        ingest_post(post, verbose, banned.as_slice(), &blacklist, &in_flight).await;
+                        ingest_post(post, verbose, &blacklist, &in_flight).await;
                     }
                 }))
                 .unwrap()
@@ -432,39 +425,21 @@ async fn main() -> Result<(), UserError> {
         None
     };
 
-    let banned = ron::de::from_reader(File::open(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/banned.ron"
-    ))?)?;
-
     let input = BufReader::new(input_file);
 
     if path.ends_with("bz2") {
-        ingest_json(
-            verbose,
-            already_have,
-            banned,
-            bzip2::bufread::BzDecoder::new(input),
-        )
-        .await;
+        ingest_json(verbose, already_have, bzip2::bufread::BzDecoder::new(input)).await;
     } else if path.ends_with("xz") {
-        ingest_json(
-            verbose,
-            already_have,
-            banned,
-            xz2::bufread::XzDecoder::new(input),
-        )
-        .await;
+        ingest_json(verbose, already_have, xz2::bufread::XzDecoder::new(input)).await;
     } else if path.ends_with("zst") {
         ingest_json(
             verbose,
             already_have,
-            banned,
             zstd::stream::read::Decoder::new(input)?,
         )
         .await;
     } else {
-        ingest_json(verbose, already_have, banned, input).await;
+        ingest_json(verbose, already_have, input).await;
     };
 
     if !no_delete {

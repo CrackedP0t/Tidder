@@ -532,7 +532,11 @@ pub mod secrets {
 
     pub fn load() -> Result<Secrets, Error> {
         let mut s = String::new();
-        std::fs::File::open("../secrets/secrets.toml")?.read_to_string(&mut s)?;
+        std::fs::File::open(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../secrets/secrets.toml"
+        ))?
+        .read_to_string(&mut s)?;
         toml::from_str::<Secrets>(&s).map_err(Error::from)
     }
 }
@@ -553,7 +557,7 @@ pub mod config {
     pub fn load() -> Result<Config, Error> {
         ron::de::from_reader(std::fs::File::open(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tidder.ron"
+            "/../tidder.ron"
         ))?)
         .map_err(Error::from)
     }

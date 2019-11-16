@@ -545,6 +545,7 @@ pub mod config {
     pub struct Config {
         pub banned: Vec<super::Banned>,
         pub no_blacklist: Vec<String>,
+        pub enable_imgur_api: bool,
     }
 
     pub fn load() -> Result<Config, Error> {

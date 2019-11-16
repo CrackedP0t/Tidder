@@ -1,7 +1,8 @@
 use super::*;
 
 use percent_encoding::{percent_decode, utf8_percent_encode, AsciiSet, CONTROLS};
-use reqwest::RedirectPolicy;
+use reqwest::StatusCode;
+use serde_json::Value;
 use url::Url;
 
 const FRAGMENT: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'<').add(b'>').add(b'`');
@@ -142,74 +143,75 @@ async fn follow_gfycat(url: Url) -> Result<String, UserError> {
         .mobile_poster_url)
 }
 
-// async fn make_imgur_api_request(api_link: String) -> Result<Value, UserError> {
-//     lazy_static! {
-//         static ref API_CLIENT: reqwest::Client = reqwest::Client::builder()
-//             .timeout(Duration::from_secs(60))
-//             .default_headers({
-//                 let mut headers = COMMON_HEADERS.clone();
-//                 headers.insert(
-//                     "X-RapidAPI-Host",
-//                     HeaderValue::from_static("imgur-apiv3.p.rapidapi.com"),
-//                 );
-//                 headers.insert(
-//                     "X-RapidAPI-Key",
-//                     HeaderValue::from_static(&SECRETS.imgur.rapidapi_key),
-//                 );
-//                 headers.insert(
-//                     header::AUTHORIZATION,
-//                     format!("Client-ID {}", SECRETS.imgur.client_id)
-//                         .parse()
-//                         .unwrap(),
-//                 );
-//                 headers
-//             })
-//             .build()
-//             .unwrap();
-//     }
-//     let resp = API_CLIENT
-//         .get(&api_link)
-//         .send()
-//         .map_err(map_ue!("couldn't reach Imgur API"))
-//         .await?;
+async fn make_imgur_api_request(api_link: String) -> Result<Value, UserError> {
+    static API_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(60))
+            .default_headers({
+                let mut headers = COMMON_HEADERS.clone();
+                headers.insert(
+                    "X-RapidAPI-Host",
+                    HeaderValue::from_static("imgur-apiv3.p.rapidapi.com"),
+                );
+                headers.insert(
+                    "X-RapidAPI-Key",
+                    HeaderValue::from_static(&SECRETS.imgur.rapidapi_key),
+                );
+                headers.insert(
+                    header::AUTHORIZATION,
+                    format!("Client-ID {}", SECRETS.imgur.client_id)
+                        .parse()
+                        .unwrap(),
+                );
+                headers
+            })
+            .build()
+            .unwrap()
+    });
 
-//     let status = resp.status();
+    let resp = API_CLIENT
+        .get(&api_link)
+        .send()
+        .map_err(map_ue!("couldn't reach Imgur API"))
+        .await?;
 
-//     if !status.is_success() {
-//         let msg = if status == StatusCode::NOT_FOUND {
-//             format!("Imgur API call to {} returned status {}", api_link, status)
-//         } else {
-//             format!(
-//                 "Imgur API call to {} returned status {}: {}",
-//                 api_link,
-//                 status,
-//                 resp.json::<Value>().await?
-//             )
-//         };
-//         return Err(ue_save!(msg, format!("http_{}", status.as_str())));
-//     }
+    let status = resp.status();
 
-//     if resp
-//         .headers()
-//         .get("x-ratelimit-requests-remaining")
-//         .ok_or(ue!(
-//             "header `x-ratelimit-requests-remaining` not sent",
-//             Source::Internal
-//         ))
-//         .and_then(|hv| hv.to_str().map_err(map_ue!()))
-//         .and_then(|s| s.parse::<i64>().map_err(map_ue!()))?
-//         < 10
-//     {
-//         Err(ue!("out of Imgur API requests", Source::Internal))
-//     } else {
-//         resp.json::<Value>()
-//             .map_err(map_ue_save!(
-//                 "Imgur API returned invalid JSON",
-//                 "imgur_json_bad"
-//             ))
-//             .await
-//     }
-// }
+    if !status.is_success() {
+        let msg = if status == StatusCode::NOT_FOUND {
+            format!("Imgur API call to {} returned status {}", api_link, status)
+        } else {
+            format!(
+                "Imgur API call to {} returned status {}: {}",
+                api_link,
+                status,
+                resp.json::<Value>().await?
+            )
+        };
+        return Err(ue_save!(msg, format!("http_{}", status.as_str())));
+    }
+
+    if resp
+        .headers()
+        .get("x-ratelimit-requests-remaining")
+        .ok_or(ue!(
+            "header `x-ratelimit-requests-remaining` not sent",
+            Source::Internal
+        ))
+        .and_then(|hv| hv.to_str().map_err(map_ue!()))
+        .and_then(|s| s.parse::<i64>().map_err(map_ue!()))?
+        < 10
+    {
+        Err(ue!("out of Imgur API requests", Source::Internal))
+    } else {
+        resp.json::<Value>()
+            .map_err(map_ue_save!(
+                "Imgur API returned invalid JSON",
+                "imgur_json_bad"
+            ))
+            .await
+    }
+}
 
 fn get_id(id: &str) -> Option<&str> {
     static ID_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[[:alnum:]]+").unwrap());
@@ -221,12 +223,12 @@ fn get_id(id: &str) -> Option<&str> {
     }
 }
 
-// fn id_segment<'a>(segments: &'a [&str], loc: usize) -> Result<&'a str, UserError> {
-//     segments
-//         .get(loc)
-//         .and_then(|&seg| get_id(seg))
-//         .ok_or(ue_save!("couldn't find Imgur ID in URL", "imgur_no_id"))
-// }
+fn id_segment<'a>(segments: &'a [&str], loc: usize) -> Result<&'a str, UserError> {
+    segments
+        .get(loc)
+        .and_then(|&seg| get_id(seg))
+        .ok_or(ue_save!("couldn't find Imgur ID in URL", "imgur_no_id"))
+}
 
 fn last_id<'a, 'b: 'a, D>(
     segments: impl IntoIterator<Item = &'a &'b str, IntoIter = D>,
@@ -244,18 +246,10 @@ where
 
 async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
     static GIFV_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\.(?:gifv|webm|mp4)($|[?#])").unwrap());
-    static EMPTY_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^/\.[[:alnum:]]+\b").unwrap());
     static EXT_RE: Lazy<Regex> =
         Lazy::new(|| Regex::new(r"(?i)[[:alnum:]]\.(?:jpg|png)[[:alnum:]]+").unwrap());
     static HOST_LIMIT_RE: Lazy<Regex> =
         Lazy::new(|| Regex::new(r"^(?i).+?\.([a-z0-9-]+\.[a-z0-9-]+\.[a-z0-9-]+)$").unwrap());
-    static REQW_CLIENT_NO_REDIR: Lazy<reqwest::Client> = Lazy::new(|| {
-        reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .redirect(RedirectPolicy::none())
-            .build()
-            .unwrap()
-    });
 
     let host = url.host_str().ok_or(ue!("no host in Imgur URL"))?;
 
@@ -283,49 +277,53 @@ async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
     } else if EXT_RE.is_match(path) || path_start == "download" {
         Ok(url.into_string())
     } else if path_start == "a" {
-        Err(ue_save!(
-            "Albums are disabled",
-            "imgur_albums_disabled",
-            Source::External
-        ))
-    // let id = id_segment(&segments, 1)?;
-    // let api_link = format!("https://imgur-apiv3.p.rapidapi.com/3/album/{}/images", id);
-    // let json = make_imgur_api_request(api_link).await?;
-    // Ok(GIFV_RE
-    //     .replace(
-    //         json["data"]
-    //             .get(0)
-    //             .ok_or(ue_save!("Imgur album is empty", "imgur_album_empty"))?["link"]
-    //             .as_str()
-    //             .ok_or(ue_save!(
-    //                 "Imgur API returned unexpectedly-structured JSON",
-    //                 "imgur_json_bad"
-    //             ))?,
-    //         ".gif$1",
-    //     )
-    //     .to_string())
+        if CONFIG.enable_imgur_api {
+            return Err(ue_save!(
+                "Albums are disabled",
+                "imgur_albums_disabled",
+                Source::External
+            ));
+        }
+        let id = id_segment(&segments, 1)?;
+        let api_link = format!("https://imgur-apiv3.p.rapidapi.com/3/album/{}/images", id);
+        let json = make_imgur_api_request(api_link).await?;
+        Ok(GIFV_RE
+            .replace(
+                json["data"]
+                    .get(0)
+                    .ok_or(ue_save!("Imgur album is empty", "imgur_album_empty"))?["link"]
+                    .as_str()
+                    .ok_or(ue_save!(
+                        "Imgur API returned unexpectedly-structured JSON",
+                        "imgur_json_bad"
+                    ))?,
+                ".gif$1",
+            )
+            .to_string())
     } else if path_start == "gallery" {
-        Err(ue_save!(
-            "Albums are disabled",
-            "imgur_albums_disabled",
-            Source::External
-        ))
-    // let id = id_segment(&segments, 1)?;
-    // let api_link = format!("https://imgur-apiv3.p.rapidapi.com/3/gallery/album/{}", id);
-    // let json = make_imgur_api_request(api_link).await?;
-    // Ok(GIFV_RE
-    //     .replace(
-    //         json["data"]["images"]
-    //             .get(0)
-    //             .ok_or(ue_save!("Imgur album is empty", "imgur_album_empty"))?["link"]
-    //             .as_str()
-    //             .ok_or(ue_save!(
-    //                 "Imgur API returned unexpectedly-structured JSON",
-    //                 "imgur_json_bad"
-    //             ))?,
-    //         ".gif$1",
-    //     )
-    //     .to_string())
+        if CONFIG.enable_imgur_api {
+            return Err(ue_save!(
+                "Albums are disabled",
+                "imgur_albums_disabled",
+                Source::External
+            ));
+        }
+        let id = id_segment(&segments, 1)?;
+        let api_link = format!("https://imgur-apiv3.p.rapidapi.com/3/gallery/album/{}", id);
+        let json = make_imgur_api_request(api_link).await?;
+        Ok(GIFV_RE
+            .replace(
+                json["data"]["images"]
+                    .get(0)
+                    .ok_or(ue_save!("Imgur album is empty", "imgur_album_empty"))?["link"]
+                    .as_str()
+                    .ok_or(ue_save!(
+                        "Imgur API returned unexpectedly-structured JSON",
+                        "imgur_json_bad"
+                    ))?,
+                ".gif$1",
+            )
+            .to_string())
     } else {
         let id = last_id(&segments)?;
 

@@ -107,7 +107,7 @@ async fn ingest_post(
                 let ready = limit
                     .map(|limit| {
                         guard
-                            .get::<str>(&host)
+                            .get(host)
                             .map(|in_flight| *in_flight < limit)
                             .unwrap_or(true)
                     })

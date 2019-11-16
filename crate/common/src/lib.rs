@@ -2,8 +2,8 @@ use cache_control::CacheControl;
 use chrono::{DateTime, NaiveDateTime};
 pub use failure::{self, format_err, Error};
 use futures::prelude::*;
-use lazy_static::lazy_static;
 use log::LevelFilter;
+use once_cell::sync::Lazy;
 use regex::Regex;
 use reqwest::header::{self, HeaderMap, HeaderValue};
 use serde::Deserialize;
@@ -39,23 +39,23 @@ pub use log::{error, info, warn};
 
 pub const USER_AGENT: &str = concat!("Tidder ", env!("CARGO_PKG_VERSION"));
 
-lazy_static! {
-    pub static ref EXT_RE: Regex =
-        Regex::new(r"(?i)\W(?:png|jpe?g|gif|webp|p[bgpn]m|tiff?|bmp|ico|hdr)\b").unwrap();
-    pub static ref URL_RE: Regex =
-        Regex::new(r"^(?i)https?://(?:[a-z0-9.-]+|\[[0-9a-f:]+\])(?:$|[:/?#])").unwrap();
-    pub static ref PG_POOL: PgPool = PgPool::new(&SECRETS.postgres.connect);
-    pub static ref COMMON_HEADERS: HeaderMap<HeaderValue> = {
-        let mut headers = HeaderMap::new();
-        headers.insert(header::USER_AGENT, HeaderValue::from_static(USER_AGENT));
-        headers
-    };
-    pub static ref REQW_CLIENT: reqwest::Client = reqwest::Client::builder()
+pub static EXT_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)\W(?:png|jpe?g|gif|webp|p[bgpn]m|tiff?|bmp|ico|hdr)\b").unwrap());
+pub static URL_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^(?i)https?://(?:[a-z0-9.-]+|\[[0-9a-f:]+\])(?:$|[:/?#])").unwrap());
+pub static PG_POOL: Lazy<PgPool> = Lazy::new(|| PgPool::new(&SECRETS.postgres.connect));
+pub static COMMON_HEADERS: Lazy<HeaderMap<HeaderValue>> = Lazy::new(|| {
+    let mut headers = HeaderMap::new();
+    headers.insert(header::USER_AGENT, HeaderValue::from_static(USER_AGENT));
+    headers
+});
+pub static REQW_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+    reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .default_headers(COMMON_HEADERS.clone())
         .build()
-        .unwrap();
-}
+        .unwrap()
+});
 
 pub mod user_error {
     use failure::Error;
@@ -355,9 +355,8 @@ mod de_sub {
             where
                 E: de::Error,
             {
-                lazy_static! {
-                    static ref T3_RE: Regex = Regex::new("^t3_([[:alnum:]]+)$").unwrap();
-                }
+                static T3_RE: Lazy<Regex> =
+                    Lazy::new(|| Regex::new("^t3_([[:alnum:]]+)$").unwrap());
 
                 T3_RE
                     .captures(name)
@@ -557,7 +556,5 @@ pub mod config {
     }
 }
 
-lazy_static! {
-    pub static ref SECRETS: secrets::Secrets = secrets::load().unwrap();
-    pub static ref CONFIG: config::Config = config::load().unwrap();
-}
+pub static SECRETS: Lazy<secrets::Secrets> = Lazy::new(|| secrets::load().unwrap());
+pub static CONFIG: Lazy<config::Config> = Lazy::new(|| config::load().unwrap());

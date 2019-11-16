@@ -6,8 +6,8 @@ use future::poll_fn;
 use futures::prelude::*;
 use futures::stream::FuturesUnordered;
 use futures::task::Poll;
-use lazy_static::lazy_static;
 use log::{error, info, warn};
+use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::Deserializer;
 use std::borrow::Cow;
@@ -40,14 +40,12 @@ const NO_BLACKLIST: [&str; 15] = [
     "wikimedia.org",
 ];
 
-lazy_static! {
-    static ref CUSTOM_LIMITS: HashMap<&'static str, Option<u32>> = {
-        let mut map = HashMap::new();
-        map.insert("imgur.com", Some(3));
-        map.insert("i.imgur.com", Some(7));
-        map
-    };
-}
+static CUSTOM_LIMITS: Lazy<HashMap<&'static str, Option<u32>>> = Lazy::new(|| {
+    let mut map = HashMap::new();
+    map.insert("imgur.com", Some(3));
+    map.insert("i.imgur.com", Some(7));
+    map
+});
 
 struct CheckIter<I> {
     iter: I,
@@ -315,10 +313,8 @@ async fn ingest_json<R: Read + Send + 'static>(
 
 #[tokio::main]
 async fn main() -> Result<(), UserError> {
-    lazy_static::lazy_static! {
-        static ref MONTH_RE: Regex = Regex::new(r"-(\d\d)").unwrap();
-        static ref YEAR_RE: Regex = Regex::new(r"\d\d\d\d").unwrap();
-    }
+    static MONTH_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"-(\d\d)").unwrap());
+    static YEAR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\d\d\d\d").unwrap());
 
     setup_logging!();
     let matches = clap_app!(

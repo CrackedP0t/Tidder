@@ -14,33 +14,28 @@ pub fn new_domain_with_path_re(domain: &str) -> Result<Regex, regex::Error> {
 }
 
 pub fn is_link_imgur(link: &str) -> bool {
-    lazy_static! {
-        static ref IMGUR_LINK_RE: Regex = new_domain_with_path_re("imgur.com").unwrap();
-    }
+    static IMGUR_LINK_RE: Lazy<Regex> = Lazy::new(|| new_domain_with_path_re("imgur.com").unwrap());
 
     IMGUR_LINK_RE.is_match(link)
 }
 
 pub fn is_link_gfycat(link: &str) -> bool {
-    lazy_static! {
-        static ref GFYCAT_LINK_RE: Regex = new_domain_with_path_re("gfycat.com").unwrap();
-    }
+    static GFYCAT_LINK_RE: Lazy<Regex> =
+        Lazy::new(|| new_domain_with_path_re("gfycat.com").unwrap());
 
     GFYCAT_LINK_RE.is_match(link)
 }
 
 pub fn is_link_gifsound(link: &str) -> bool {
-    lazy_static! {
-        static ref GIFSOUND_LINK_RE: Regex = new_domain_with_path_re("gifsound.com").unwrap();
-    }
+    static GIFSOUND_LINK_RE: Lazy<Regex> =
+        Lazy::new(|| new_domain_with_path_re("gifsound.com").unwrap());
 
     GIFSOUND_LINK_RE.is_match(link)
 }
 
-lazy_static! {
-    static ref WIKIPEDIA_FILE_RE: Regex =
-               Regex::new(r"(?i)^(?:[^.]+\.)?(?:wikipedia|wiktionary|wikiquote|wikibooks|wikisource|wikinews|wikiversity|wikispecies|mediawiki|wikidata|wikivoyage|wikimedia).org(?-i)/wiki/((?i:Image|File):[^#?]+)").unwrap();
-}
+static WIKIPEDIA_FILE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)^(?:[^.]+\.)?(?:wikipedia|wiktionary|wikiquote|wikibooks|wikisource|wikinews|wikiversity|wikispecies|mediawiki|wikidata|wikivoyage|wikimedia).org(?-i)/wiki/((?i:Image|File):[^#?]+)").unwrap()
+});
 
 pub fn is_wikipedia_file(link: &str) -> bool {
     WIKIPEDIA_FILE_RE.is_match(link)
@@ -68,9 +63,8 @@ pub async fn follow_link(url: Url) -> Result<String, UserError> {
 }
 
 fn follow_gifsound(url: Url) -> Result<String, UserError> {
-    lazy_static! {
-        static ref IMGUR_NO_SCHEME_RE: Regex = Regex::new(r"^(?:[a-z0-9-.]+\.)?imgur.com").unwrap();
-    }
+    static IMGUR_NO_SCHEME_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"^(?:[a-z0-9-.]+\.)?imgur.com").unwrap());
     for (key, value) in url.query_pairs() {
         if key == "gif" {
             return Ok(
@@ -104,9 +98,7 @@ fn follow_gifsound(url: Url) -> Result<String, UserError> {
 }
 
 async fn follow_gfycat(url: Url) -> Result<String, UserError> {
-    lazy_static! {
-        static ref GFY_ID_SEL: Regex = Regex::new(r"^/([[:alpha:]]+)").unwrap();
-    }
+    static GFY_ID_SEL: Lazy<Regex> = Lazy::new(|| Regex::new(r"^/([[:alpha:]]+)").unwrap());
 
     #[derive(Deserialize)]
     struct GfyItem {
@@ -220,9 +212,7 @@ async fn follow_gfycat(url: Url) -> Result<String, UserError> {
 // }
 
 fn get_id(id: &str) -> Option<&str> {
-    lazy_static! {
-        static ref ID_RE: Regex = Regex::new(r"^[[:alnum:]]+").unwrap();
-    }
+    static ID_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[[:alnum:]]+").unwrap());
 
     if id != "all" {
         ID_RE.find(id).map(|m| m.as_str())
@@ -253,19 +243,19 @@ where
 }
 
 async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
-    lazy_static! {
-        static ref GIFV_RE: Regex = Regex::new(r"\.(?:gifv|webm|mp4)($|[?#])").unwrap();
-        static ref EMPTY_RE: Regex = Regex::new(r"^/\.[[:alnum:]]+\b").unwrap();
-        static ref EXT_RE: Regex = Regex::new(r"(?i)[[:alnum:]]\.(?:jpg|png)[[:alnum:]]+").unwrap();
-        static ref HOST_LIMIT_RE: Regex =
-            Regex::new(r"^(?i).+?\.([a-z0-9-]+\.[a-z0-9-]+\.[a-z0-9-]+)$").unwrap();
-        static ref REQW_CLIENT_NO_REDIR: reqwest::r#async::Client =
-            reqwest::r#async::Client::builder()
-                .timeout(Duration::from_secs(30))
-                .redirect(RedirectPolicy::none())
-                .build()
-                .unwrap();
-    }
+    static GIFV_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\.(?:gifv|webm|mp4)($|[?#])").unwrap());
+    static EMPTY_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^/\.[[:alnum:]]+\b").unwrap());
+    static EXT_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(?i)[[:alnum:]]\.(?:jpg|png)[[:alnum:]]+").unwrap());
+    static HOST_LIMIT_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"^(?i).+?\.([a-z0-9-]+\.[a-z0-9-]+\.[a-z0-9-]+)$").unwrap());
+    static REQW_CLIENT_NO_REDIR: Lazy<reqwest::Client> = Lazy::new(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .redirect(RedirectPolicy::none())
+            .build()
+            .unwrap()
+    });
 
     let host = url.host_str().ok_or(ue!("no host in Imgur URL"))?;
 
@@ -421,9 +411,7 @@ async fn follow_wikipedia(url: Url) -> Result<String, UserError> {
     })
 }
 
-lazy_static! {
-    static ref HOST_RE: Regex = Regex::new(r"^https?://([^/:?#]+)").unwrap();
-}
+static HOST_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^https?://([^/:?#]+)").unwrap());
 
 pub fn get_host(url: &str) -> Option<&str> {
     Some(HOST_RE.captures(url)?.get(1)?.as_str())
@@ -445,9 +433,8 @@ pub struct HashGotten {
 }
 
 pub async fn get_hash(orig_link: &str) -> Result<HashGotten, UserError> {
-    lazy_static! {
-        static ref EXT_REPLACE_RE: Regex = Regex::new(r"^(.+?)\.[[:alnum:]]+$").unwrap();
-    }
+    static EXT_REPLACE_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"^(.+?)\.[[:alnum:]]+$").unwrap());
 
     if orig_link.len() > 2000 {
         return Err(ue!("URL too long", Source::User));

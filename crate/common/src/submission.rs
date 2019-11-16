@@ -43,9 +43,7 @@ impl Submission {
         &self,
         image_id: Result<i64, Option<Cow<'static, str>>>,
     ) -> Result<bool, UserError> {
-        lazy_static! {
-            static ref ID_RE: Regex = Regex::new(r"/comments/([^/]+)/").unwrap();
-        }
+        static ID_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"/comments/([^/]+)/").unwrap());
 
         let reddit_id = String::from(
             ID_RE

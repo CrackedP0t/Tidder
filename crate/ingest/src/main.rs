@@ -235,7 +235,7 @@ async fn ingest_post(
         },
     };
 
-    match save_post(&post, image_id).await {
+    match post.save(image_id).await {
         Ok(_) => {
             if verbose {
                 info!("{} successfully saved", post_info);

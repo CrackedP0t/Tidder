@@ -95,7 +95,7 @@ async fn save(id: &str) -> Result<(), UserError> {
 
         let hash_saved = save_hash(&post.url, HashDest::Images).await?;
 
-        save_post(&post, Ok(hash_saved.id)).await?;
+        post.save(Ok(hash_saved.id)).await?;
         Ok(())
     } else {
         println!("{:#}", json);

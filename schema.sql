@@ -123,7 +123,8 @@ CREATE TABLE public.posts (
     thumbnail_height integer,
     updated timestamp without time zone,
     save_error character varying,
-    crosspost_parent bigint
+    crosspost_parent bigint,
+    is_video boolean DEFAULT false NOT NULL
 );
 
 

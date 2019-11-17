@@ -42,8 +42,8 @@ where
         loop {
             match self.iter.next() {
                 None => return None,
-                Some(Err(_e)) => {
-                    // warn!("{}", e);
+                Some(Err(e)) => {
+                    warn!("{}", e);
                     continue;
                 }
                 Some(Ok(v)) => return Some(v),

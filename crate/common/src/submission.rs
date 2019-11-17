@@ -11,6 +11,7 @@ pub struct Submission {
     #[serde(default, deserialize_with = "de_sub::crosspost_parent")]
     pub crosspost_parent: Option<i64>,
     pub is_self: bool,
+    pub is_video: bool,
     pub over_18: bool,
     pub permalink: String,
     pub promoted: Option<bool>,
@@ -63,11 +64,11 @@ impl Submission {
                         "INSERT INTO posts \
                          (reddit_id, link, permalink, author, \
                          created_utc, score, subreddit, title, nsfw, \
-                         spoiler, image_id, reddit_id_int, \
+                         spoiler, image_id, is_video, reddit_id_int, \
                          thumbnail, thumbnail_width, thumbnail_height, \
                          crosspost_parent) \
                          VALUES ($1, $2, $3, $4, $5, $6, $7, \
-                         $8, $9, $10, $11, $12, $13, $14, $15, $16) \
+                         $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) \
                          ON CONFLICT DO NOTHING",
                         &[
                             &reddit_id,
@@ -81,6 +82,7 @@ impl Submission {
                             &self.over_18,
                             &self.spoiler.unwrap_or(false),
                             &image_id,
+                            &self.is_video,
                             &i64::from_str_radix(&reddit_id, 36).unwrap(),
                             &self.thumbnail,
                             &self.thumbnail_width,
@@ -98,9 +100,9 @@ impl Submission {
                          created_utc, score, subreddit, title, nsfw, \
                          spoiler, reddit_id_int, thumbnail, \
                          thumbnail_width, thumbnail_height, save_error, \
-                         crosspost_parent) \
+                         crosspost_parent, is_video) \
                          VALUES ($1, $2, $3, $4, $5, $6, $7, \
-                         $8, $9, $10, $11, $12, $13, $14, $15, $16) \
+                         $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) \
                          ON CONFLICT DO NOTHING",
                         &[
                             &reddit_id,
@@ -119,6 +121,7 @@ impl Submission {
                             &self.thumbnail_height,
                             &save_error,
                             &self.crosspost_parent,
+                            &self.is_video,
                         ],
                     )
                     .await?

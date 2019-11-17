@@ -277,7 +277,7 @@ async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
     } else if EXT_RE.is_match(path) || path_start == "download" {
         Ok(url.into_string())
     } else if path_start == "a" {
-        if CONFIG.enable_imgur_api {
+        if !CONFIG.enable_imgur_api {
             return Err(ue_save!(
                 "Albums are disabled",
                 "imgur_albums_disabled",
@@ -301,7 +301,7 @@ async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
             )
             .to_string())
     } else if path_start == "gallery" {
-        if CONFIG.enable_imgur_api {
+        if !CONFIG.enable_imgur_api {
             return Err(ue_save!(
                 "Albums are disabled",
                 "imgur_albums_disabled",

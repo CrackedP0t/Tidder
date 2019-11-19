@@ -2,6 +2,7 @@ use super::*;
 use future::poll_fn;
 use futures::task::Poll;
 use log::error;
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::RwLock;
 use tokio_postgres::{Client, NoTls, Statement};
@@ -79,30 +80,16 @@ pub struct PgHandle {
     inner: Option<Client>,
 }
 
-// impl PgHandle {
-//     pub fn cache_prepare(
-//         &mut self,
-//         query: &'static str,
-//     ) -> impl Future<Item = Statement, Error = UserError> + '_ {
-//         let prepared = self.prepared.as_mut().unwrap();
-
-//         if let Some(statement) = prepared.get(query) {
-//             return Either::B(ok(statement.clone()));
-//         }
-
-//         Either::A(
-//             self.inner
-//                 .as_mut()
-//                 .unwrap()
-//                 .prepare(query)
-//                 .map_err(map_ue!())
-//                 .map(move |statement| {
-//                     prepared.insert(query, statement.clone());
-//                     statement
-//                 }),
-//         )
-//     }
-// }
+impl PgHandle {
+    pub async fn cache_prepare(&mut self, query: &'static str) -> Result<Statement, UserError> {
+        Ok(match self.prepared.as_mut().unwrap().entry(query) {
+            Entry::Occupied(o) => o.get().clone(),
+            Entry::Vacant(v) => v
+                .insert(self.inner.as_mut().unwrap().prepare(query).await?)
+                .clone(),
+        })
+    }
+}
 
 impl Drop for PgHandle {
     fn drop(&mut self) {

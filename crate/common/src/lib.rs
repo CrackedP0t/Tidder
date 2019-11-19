@@ -423,10 +423,10 @@ impl HashDest {
 }
 
 async fn get_existing(link: &str) -> Result<Option<(Hash, HashDest, i64)>, UserError> {
-    let client = PG_POOL.take().await?;
+    let mut client = PG_POOL.take().await?;
 
     let stmt = client
-        .prepare(
+        .cache_prepare(
             "SELECT hash, id, 'images' as table_name \
              FROM images WHERE link = $1 \
              UNION \

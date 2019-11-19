@@ -9,6 +9,7 @@ Config(
         AnyScheme("i.imgur.com/NibDL0u.gif"),
         AnyScheme("i.imgur.com/gw9loSi.gif"),
         AnyScheme("gifsound.com/?gif=%7B%5Crtf1%5Cansi%5Cansicpg1252%20%7B%5Cfonttbl%5Cf0%5Cfswiss%5Cfcharset0%20Helvetica;%7D%20%7B%5Ccolortbl;%5Cred255%5Cgreen255%5Cblue255;%5Cred0%5Cgreen0%5Cblue0;%5Cred243%5Cgreen243%5Cblue243;%7D%20%5Cdeftab720%20%5Cpard%5Cpardeftab720%5Cpartightenfactor0%20%20%5Cf0%5Cfs26%20%5Ccf2%20%5Ccb3%20%5Cexpnd0%5Cexpndtw0%5Ckerning0%20%5Coutl0%5Cstrokewidth0%20%5Cstrokec2%20[URL=http://yourepe.at/1kE3gZT][IMG]http://cdn.yourepeat.com/media/gif/000/603/391/98e245b290651d9ad6b3e8c34735d060.gif[/IMG][/URL]%7D&v=2-ckIv1tiaU&s=109"),
+        AnyScheme("www.worldcollectorsnet.com/wp-content/uploads/2015/02/pezgal.gif"),
     ],
     custom_limits: {
         "imgur.com": Some(100),

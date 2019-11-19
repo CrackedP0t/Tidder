@@ -55,12 +55,11 @@ impl Submission {
         );
 
         let mut client = PG_POOL.take().await?;
-        let trans = client.transaction().await?;
 
         let modified = match image_id {
             Ok(image_id) => {
-                trans
-                    .execute(
+                let stmt = client
+                    .cache_prepare(
                         "INSERT INTO posts \
                          (reddit_id, link, permalink, author, \
                          created_utc, score, subreddit, title, nsfw, \
@@ -70,6 +69,11 @@ impl Submission {
                          VALUES ($1, $2, $3, $4, $5, $6, $7, \
                          $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) \
                          ON CONFLICT DO NOTHING",
+                    )
+                    .await?;
+                client
+                    .execute(
+                        &stmt,
                         &[
                             &reddit_id,
                             &self.url,
@@ -93,8 +97,8 @@ impl Submission {
                     .await?
             }
             Err(save_error) => {
-                trans
-                    .execute(
+                let stmt = client
+                    .cache_prepare(
                         "INSERT INTO posts \
                          (reddit_id, link, permalink, author, \
                          created_utc, score, subreddit, title, nsfw, \
@@ -104,6 +108,11 @@ impl Submission {
                          VALUES ($1, $2, $3, $4, $5, $6, $7, \
                          $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) \
                          ON CONFLICT DO NOTHING",
+                    )
+                    .await?;
+                client
+                    .execute(
+                        &stmt,
                         &[
                             &reddit_id,
                             &self.url,
@@ -127,8 +136,6 @@ impl Submission {
                     .await?
             }
         };
-
-        trans.commit().await?;
 
         Ok(modified > 0)
     }

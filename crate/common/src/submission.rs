@@ -14,6 +14,8 @@ pub struct Submission {
     pub is_video: Option<bool>,
     pub over_18: bool,
     pub permalink: String,
+    #[serde(default, deserialize_with = "de_sub::preview")]
+    pub preview: Option<String>,
     pub promoted: Option<bool>,
     pub score: i64,
     pub spoiler: Option<bool>,
@@ -63,11 +65,11 @@ impl Submission {
                         "INSERT INTO posts \
                          (reddit_id, link, permalink, author, \
                          created_utc, score, subreddit, title, nsfw, \
-                         spoiler, image_id, is_video, reddit_id_int, \
+                         spoiler, image_id, is_video, preview, reddit_id_int, \
                          thumbnail, thumbnail_width, thumbnail_height, \
                          crosspost_parent) \
                          VALUES ($1, $2, $3, $4, $5, $6, $7, \
-                         $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) \
+                         $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) \
                          ON CONFLICT DO NOTHING",
                     )
                     .await?;
@@ -87,6 +89,7 @@ impl Submission {
                             &self.spoiler.unwrap_or(false),
                             &image_id,
                             &self.is_video,
+                            &self.preview,
                             &i64::from_str_radix(&reddit_id, 36).unwrap(),
                             &self.thumbnail,
                             &self.thumbnail_width,
@@ -104,9 +107,9 @@ impl Submission {
                          created_utc, score, subreddit, title, nsfw, \
                          spoiler, reddit_id_int, thumbnail, \
                          thumbnail_width, thumbnail_height, save_error, \
-                         crosspost_parent, is_video) \
-                         VALUES ($1, $2, $3, $4, $5, $6, $7, \
-                         $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) \
+                         crosspost_parent, is_video, preview) \
+                         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, \
+                         $10, $11, $12, $13, $14, $15, $16, $17, $18) \
                          ON CONFLICT DO NOTHING",
                     )
                     .await?;
@@ -131,6 +134,7 @@ impl Submission {
                             &save_error,
                             &self.crosspost_parent,
                             &self.is_video,
+                            &self.preview,
                         ],
                     )
                     .await?
@@ -236,5 +240,30 @@ mod de_sub {
         }
 
         des.deserialize_option(CrosspostParent)
+    }
+
+    pub fn preview<'de, D>(des: D) -> Result<Option<String>, D::Error>
+    where
+        D: Deserializer<'de>
+    {
+        #[derive(Deserialize)]
+        struct Resolution {
+            url: String
+        }
+
+        #[derive(Deserialize)]
+        struct Image {
+            source: Resolution
+        }
+
+        #[derive(Deserialize)]
+        struct Preview {
+            images: [Image; 1]
+        }
+
+        Ok(Option::<Preview>::deserialize(des)?.map(|p| {
+            let [i] = p.images;
+            i.source.url
+        }))
     }
 }

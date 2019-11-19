@@ -344,7 +344,9 @@ async fn main() -> Result<(), UserError> {
                     .write(true)
                     .open(&arch_path)?;
 
-                let mut resp = REQW_CLIENT.get(&path).send().await?.error_for_status()?;
+                let no_timeout_client = reqwest::Client::builder().build()?;
+
+                let mut resp = no_timeout_client.get(&path).send().await?.error_for_status()?;
 
                 while let Some(chunk) = resp.chunk().await? {
                     arch_file.write_all(&chunk)?;

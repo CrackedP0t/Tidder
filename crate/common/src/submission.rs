@@ -140,3 +140,101 @@ impl Submission {
         Ok(modified > 0)
     }
 }
+
+mod de_sub {
+    use super::*;
+    use serde::de::{self, Deserializer, Unexpected, Visitor};
+    use std::fmt::{self, Formatter};
+
+    pub fn created_utc<'de, D>(des: D) -> Result<NaiveDateTime, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct CreatedUTC;
+        impl<'de> Visitor<'de> for CreatedUTC {
+            type Value = NaiveDateTime;
+
+            fn expecting(&self, formatter: &mut Formatter) -> fmt::Result {
+                write!(formatter, "a number, possibly inside a string")
+            }
+
+            fn visit_u64<E>(self, secs: u64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                self.visit_i64(secs as i64)
+            }
+
+            fn visit_i64<E>(self, secs: i64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(NaiveDateTime::from_timestamp(secs, 0))
+            }
+
+            fn visit_str<E>(self, secs: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                let secs = secs
+                    .parse()
+                    .map_err(|_e| E::invalid_value(Unexpected::Str(secs), &self))?;
+                self.visit_i64(secs)
+            }
+
+            fn visit_f64<E>(self, secs: f64) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                self.visit_i64(secs as i64)
+            }
+        }
+
+        des.deserialize_any(CreatedUTC)
+    }
+
+    pub fn crosspost_parent<'de, D>(des: D) -> Result<Option<i64>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct CrosspostParent;
+        impl<'de> Visitor<'de> for CrosspostParent {
+            type Value = Option<i64>;
+
+            fn expecting(&self, formatter: &mut Formatter) -> fmt::Result {
+                write!(formatter, "t3_<id>")
+            }
+
+            fn visit_some<D>(self, des: D) -> Result<Self::Value, D::Error>
+            where
+                D: Deserializer<'de>,
+            {
+                des.deserialize_str(self)
+            }
+
+            fn visit_str<E>(self, name: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                static T3_RE: Lazy<Regex> =
+                    Lazy::new(|| Regex::new("^t3_([[:alnum:]]+)$").unwrap());
+
+                T3_RE
+                    .captures(name)
+                    .and_then(|cs| cs.get(1))
+                    .and_then(|id| i64::from_str_radix(id.as_str(), 36).ok())
+                    .ok_or_else(|| E::invalid_value(Unexpected::Str(name), &self))
+                    .map(Some)
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                Ok(None)
+            }
+        }
+
+        des.deserialize_option(CrosspostParent)
+    }
+}

@@ -363,16 +363,11 @@ async fn main() -> Result<(), UserError> {
     info!("Processing posts we already have");
 
     let client = PG_POOL.take().await?;
-    let stmt = client
-        .prepare(
-            "SELECT reddit_id_int FROM posts \
-             WHERE EXTRACT(month FROM created_utc) = $1 \
-             AND EXTRACT(year FROM created_utc) = $2",
-        )
-        .await?;
 
     let already_have = client
-        .query(&stmt, &[&month_f, &year_f])
+        .query("SELECT reddit_id_int FROM posts \
+             WHERE EXTRACT(month FROM created_utc) = $1 \
+             AND EXTRACT(year FROM created_utc) = $2", &[&month_f, &year_f])
         .await?
         .into_iter()
         .fold(BTreeSet::new(), move |mut already_have, row| {

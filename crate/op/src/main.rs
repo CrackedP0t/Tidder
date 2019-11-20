@@ -1,4 +1,5 @@
 use clap::clap_app;
+use common::format;
 use common::*;
 use futures::prelude::*;
 use reqwest::{header::USER_AGENT, Client};
@@ -41,9 +42,7 @@ async fn post(id: &str) -> Result<(), UserError> {
             .await?
             .error_for_status()?;
 
-        let post = &resp.json::<Value>().await?["data"]["children"][0]["data"];
-
-        println!("{:#}", post);
+        println!("{:#}", resp.json::<Value>().await?["data"]["children"][0]["data"]);
 
         Ok(())
     } else {

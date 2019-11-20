@@ -1,6 +1,7 @@
 #![recursion_limit = "128"]
 
 use clap::{clap_app, crate_authors, crate_description, crate_version};
+use common::format;
 use common::*;
 use future::poll_fn;
 use futures::prelude::*;

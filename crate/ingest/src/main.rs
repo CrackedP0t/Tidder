@@ -70,12 +70,22 @@ async fn ingest_post(
         info!("{} starting to hash", post_info);
     }
 
+    let is_video = post.is_video;
+
     let post_url_res = (|| {
-        if CONFIG.banned.iter().any(|banned| banned.matches(&post.url)) {
+        let post_url = if is_video {
+            post.preview
+                .as_ref()
+                .ok_or_else(|| ue_save!("is_video but no preview", "video_no_preview"))?
+        } else {
+            &post.url
+        };
+
+        if CONFIG.banned.iter().any(|banned| banned.matches(post_url)) {
             return Err(ue_save!("banned", "banned"));
         }
 
-        let post_url = Url::parse(&post.url).map_err(map_ue_save!("invalid URL", "url_invalid"))?;
+        let post_url = Url::parse(post_url).map_err(map_ue_save!("invalid URL", "url_invalid"))?;
 
         let blacklist_guard = blacklist.read().unwrap();
         if post_url
@@ -228,20 +238,21 @@ async fn ingest_json<R: Read + Send + 'static>(
         .map(|res| res.map_err(map_ue!()).and_then(|sub| sub.finalize()));
 
     let json_iter = CheckIter::new(json_iter).filter(move |post| {
-        !post.is_self
-            && post.promoted.map(|promoted| !promoted).unwrap_or(true)
-            && ((EXT_RE.is_match(&post.url) && URL_RE.is_match(&post.url))
-                || is_link_special(&post.url))
-            && match already_have {
-                None => true,
-                Some(ref mut set) => {
-                    let had = set.remove(&post.id_int);
-                    if set.is_empty() {
-                        already_have = None;
+        post.is_video
+            || (!post.is_self
+                && post.promoted.map(|promoted| !promoted).unwrap_or(true)
+                && ((EXT_RE.is_match(&post.url) && URL_RE.is_match(&post.url))
+                    || is_link_special(&post.url))
+                && match already_have {
+                    None => true,
+                    Some(ref mut set) => {
+                        let had = set.remove(&post.id_int);
+                        if set.is_empty() {
+                            already_have = None;
+                        }
+                        !had
                     }
-                    !had
-                }
-            }
+                })
     });
 
     let blacklist = Arc::new(RwLock::new(HashSet::<String>::new()));
@@ -346,7 +357,11 @@ async fn main() -> Result<(), UserError> {
 
                 let no_timeout_client = reqwest::Client::builder().build()?;
 
-                let mut resp = no_timeout_client.get(&path).send().await?.error_for_status()?;
+                let mut resp = no_timeout_client
+                    .get(&path)
+                    .send()
+                    .await?
+                    .error_for_status()?;
 
                 while let Some(chunk) = resp.chunk().await? {
                     arch_file.write_all(&chunk)?;
@@ -367,9 +382,12 @@ async fn main() -> Result<(), UserError> {
     let client = PG_POOL.take().await?;
 
     let already_have = client
-        .query("SELECT reddit_id_int FROM posts \
+        .query(
+            "SELECT reddit_id_int FROM posts \
              WHERE EXTRACT(month FROM created_utc) = $1 \
-             AND EXTRACT(year FROM created_utc) = $2", &[&month_f, &year_f])
+             AND EXTRACT(year FROM created_utc) = $2",
+            &[&month_f, &year_f],
+        )
         .await?
         .into_iter()
         .fold(BTreeSet::new(), move |mut already_have, row| {

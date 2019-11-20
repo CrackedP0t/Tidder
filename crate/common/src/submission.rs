@@ -11,7 +11,8 @@ pub struct Submission {
     #[serde(default, deserialize_with = "de_sub::crosspost_parent")]
     pub crosspost_parent: Option<i64>,
     pub is_self: bool,
-    pub is_video: Option<bool>,
+    #[serde(default)]
+    pub is_video: bool,
     pub over_18: bool,
     pub permalink: String,
     #[serde(default, deserialize_with = "de_sub::preview")]

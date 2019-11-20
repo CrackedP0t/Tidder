@@ -124,7 +124,8 @@ CREATE TABLE public.posts (
     updated timestamp without time zone,
     save_error character varying,
     crosspost_parent bigint,
-    is_video boolean DEFAULT false
+    is_video boolean DEFAULT false,
+    preview character varying
 );
 
 

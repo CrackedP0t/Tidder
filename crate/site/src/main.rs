@@ -1,36 +1,21 @@
-#![recursion_limit = "128"]
+#![type_length_limit = "5802293"]
 
+use common::format;
 use common::*;
-use fallible_iterator::FallibleIterator;
-use futures::{
-    future::{err, ok, Either},
-    Future, Stream,
-};
-use gotham::{
-    handler::{HandlerFuture, IntoResponse},
-    middleware::logger::RequestLogger,
-    pipeline::{new_pipeline, single::single_pipeline},
-    router::builder::*,
-    state::{FromState, State},
-};
-use gotham_derive::{StateData, StaticResponseExtender};
-use hyper::{self, Body, HeaderMap, StatusCode};
-use lazy_static::{lazy_static, LazyStatic};
-use log::Level;
-use mime::Mime;
-use multipart::server::Multipart;
-use postgres::NoTls;
-use r2d2_postgres::{r2d2, PostgresConnectionManager};
-use regex::Regex;
+use futures::prelude::*;
+use http::StatusCode;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::Read;
 use std::str::FromStr;
 use std::vec::Vec;
 use tera::{Context, Tera};
 use url::Url;
+use warp::filters::*;
+use warp::multipart::FormData;
+use warp::Filter;
 
-#[derive(Deserialize, StateData, StaticResponseExtender)]
+#[derive(Deserialize)]
 struct SearchQuery {
     imagelink: Option<String>,
     distance: Option<String>,
@@ -58,7 +43,7 @@ pub mod utils {
         };
 
         // English uses plural when it isn't one
-        if (num.abs() - 1.).abs() > ::std::f64::EPSILON {
+        if (num.abs() - 1.).abs() > std::f64::EPSILON {
             Ok(to_value(&plural).unwrap())
         } else {
             Ok(to_value(&singular).unwrap())
@@ -207,117 +192,109 @@ impl Params {
     }
 }
 
-lazy_static! {
-    static ref POOL: r2d2::Pool<PostgresConnectionManager<NoTls>> = r2d2::Pool::new(
-        PostgresConnectionManager::new(SECRETS.postgres.connect.parse().unwrap(), NoTls)
-    )
-    .unwrap();
-    static ref TERA: Tera = match Tera::new(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/*")) {
-        Ok(mut t) => {
-            t.register_filter("tern", utils::tern);
-            t.register_filter("plural", utils::pluralize);
-            t.register_tester("null", utils::null);
-            t
-        }
-        Err(e) => {
-            println!("Parsing error(s): {}", e);
-            std::process::exit(1);
-        }
-    };
-}
+static TERA: Lazy<Tera> =
+    Lazy::new(
+        || match Tera::new(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/*")) {
+            Ok(mut t) => {
+                t.register_filter("tern", utils::tern);
+                t.register_filter("plural", utils::pluralize);
+                t.register_tester("null", utils::null);
+                t
+            }
+            Err(e) => {
+                println!("Parsing error(s): {}", e);
+                std::process::exit(1);
+            }
+        },
+    );
 
-fn make_findings(hash: Hash, params: Params) -> Result<Findings, UserError> {
+async fn make_findings(hash: Hash, params: Params) -> Result<Findings, UserError> {
     macro_rules! tosql {
         ($v:expr) => {
-            (&$v as &dyn postgres::types::ToSql)
+            (&$v as &(dyn tokio_postgres::types::ToSql + Sync))
         };
     }
 
-    let matches = POOL
-        .get()
-        .map_err(UserError::from_std)
-        .and_then(|mut conn| {
-            let (s_query, a_query, args) =
-                if params.subreddits.is_empty() && params.authors.is_empty() {
-                    ("", "", vec![tosql!(hash), tosql!(params.distance)])
-                } else if params.authors.is_empty() {
-                    (
-                        "AND LOWER(subreddit) = ANY($3)",
-                        "",
-                        vec![
-                            tosql!(hash),
-                            tosql!(params.distance),
-                            tosql!(params.subreddits),
-                        ],
-                    )
-                } else if params.subreddits.is_empty() {
-                    (
-                        "",
-                        "AND LOWER(author) = ANY($3)",
-                        vec![
-                            tosql!(hash),
-                            tosql!(params.distance),
-                            tosql!(params.authors),
-                        ],
-                    )
-                } else {
-                    (
-                        "AND LOWER(subreddit) = ANY($3)",
-                        "AND LOWER(author) = ANY($4)",
-                        vec![
-                            tosql!(hash),
-                            tosql!(params.distance),
-                            tosql!(params.subreddits),
-                            tosql!(params.authors),
-                        ],
-                    )
-                };
-            conn.query_iter(
-                format_args!(
-                    "SELECT hash <-> $1 as distance, images.link, permalink, \
-                     score, author, created_utc, subreddit, title \
-                     FROM posts INNER JOIN images \
-                     ON hash <@ ($1, $2) \
-                     AND image_id = images.id \
-                     {} \
-                     {} \
-                     {} \
-                     ORDER BY distance ASC, created_utc ASC",
-                    match params.nsfw {
-                        NSFWOption::Only => "AND nsfw = true",
-                        NSFWOption::Allow => "",
-                        NSFWOption::Never => "AND nsfw = false",
-                    },
-                    s_query,
-                    a_query
-                )
-                .to_string()
-                .as_str(),
-                &args,
-            )
-            .map_err(UserError::from_std)
-            .and_then(|rows| {
-                rows.map(move |row| {
-                    Ok(Match {
-                        permalink: format!("https://reddit.com{}", row.get::<_, &str>("permalink")),
-                        distance: row.get("distance"),
-                        score: row.get("score"),
-                        author: row.get("author"),
-                        link: row.get("link"),
-                        created_utc: row.get("created_utc"),
-                        subreddit: row.get("subreddit"),
-                        title: row.get("title"),
-                    })
-                })
-                .collect()
-                .map_err(UserError::from_std)
-            })
-        });
+    let client = PG_POOL.take().await?;
 
-    matches.map(|matches| Findings { matches })
+    let (s_query, a_query, args) = if params.subreddits.is_empty() && params.authors.is_empty() {
+        ("", "", vec![tosql!(hash), tosql!(params.distance)])
+    } else if params.authors.is_empty() {
+        (
+            "AND LOWER(subreddit) = ANY($3)",
+            "",
+            vec![
+                tosql!(hash),
+                tosql!(params.distance),
+                tosql!(params.subreddits),
+            ],
+        )
+    } else if params.subreddits.is_empty() {
+        (
+            "",
+            "AND LOWER(author) = ANY($3)",
+            vec![
+                tosql!(hash),
+                tosql!(params.distance),
+                tosql!(params.authors),
+            ],
+        )
+    } else {
+        (
+            "AND LOWER(subreddit) = ANY($3)",
+            "AND LOWER(author) = ANY($4)",
+            vec![
+                tosql!(hash),
+                tosql!(params.distance),
+                tosql!(params.subreddits),
+                tosql!(params.authors),
+            ],
+        )
+    };
+
+    let rows = client
+        .query(
+            format!(
+                "SELECT hash <-> $1 as distance, images.link, permalink, \
+                 score, author, created_utc, subreddit, title \
+                 FROM posts INNER JOIN images \
+                 ON hash <@ ($1, $2) \
+                 AND image_id = images.id \
+                 {} \
+                 {} \
+                 {} \
+                 ORDER BY distance ASC, created_utc ASC",
+                match params.nsfw {
+                    NSFWOption::Only => "AND nsfw = true",
+                    NSFWOption::Allow => "",
+                    NSFWOption::Never => "AND nsfw = false",
+                },
+                s_query,
+                a_query
+            )
+            .as_str(),
+            &args,
+        )
+        .await?;
+
+    Ok(Findings {
+        matches: rows
+            .iter()
+            .map(move |row| Match {
+                permalink: format!("https://reddit.com{}", row.get::<_, &str>("permalink")),
+                distance: row.get("distance"),
+                score: row.get("score"),
+                author: row.get("author"),
+                link: row.get("link"),
+                created_utc: row.get("created_utc"),
+                subreddit: row.get("subreddit"),
+                title: row.get("title"),
+            })
+            .collect(),
+    })
 }
 
-fn get_search(qs: SearchQuery) -> impl Future<Item = Search, Error = ()> + Send {
+async fn get_search(qs: SearchQuery) -> Search {
     let imagelink = qs.imagelink.clone();
 
     let default_form = Form::default();
@@ -331,86 +308,64 @@ fn get_search(qs: SearchQuery) -> impl Future<Item = Search, Error = ()> + Send 
 
     let err_form = form.clone();
 
-    Future::map(
+    let findings =
         match imagelink {
-            None => Either::B(ok(None)),
+            None => Ok(None),
             Some(link) => {
                 if &link != "" {
                     match Url::parse(&link).map_err(map_ue!("invalid URL")) {
                         Ok(_url) => match Params::from_form(&form) {
                             Ok(params) => {
-                                Either::A(save_hash(link, HashDest::ImageCache).and_then(
-                                    |(hash, _hash_dest, _image_id, _exists)| {
-                                        make_findings(hash, params).map(Some)
-                                    },
-                                ))
+                                save_hash(&link, HashDest::ImageCache)
+                                    .and_then(|hash_saved| {
+                                        async move {
+                                            make_findings(hash_saved.hash, params).await.map(Some)
+                                        }
+                                    })
+                                    .await
                             }
-                            Err(e) => Either::B(err(e)),
+                            Err(e) => Err(e),
                         },
-                        Err(e) => Either::B(err(e)),
+                        Err(e) => Err(e),
                     }
                 } else {
-                    Either::B(ok(None))
+                    Ok(None)
                 }
             }
-        },
-        |findings| Search {
+        };
+
+    match findings {
+        Ok(findings) => Search {
             form,
             error: None,
             findings,
             upload: false,
             ..Default::default()
         },
-    )
-    .or_else(|error| {
-        ok(Search {
+        Err(error) => Search {
             form: err_form,
             error: Some(error),
             findings: None,
             upload: false,
             ..Default::default()
-        })
-    })
+        },
+    }
 }
 
-fn post_search(headers: &HeaderMap, body: Body) -> Search {
+async fn post_search(mut form: FormData) -> Search {
     #[allow(clippy::ptr_arg)]
     fn utf8_to_string(utf8: &Vec<u8>) -> String {
         String::from_utf8_lossy(utf8.as_slice()).to_string()
     }
 
-    lazy_static! {
-        static ref BOUNDARY_RE: Regex = Regex::new(r"boundary=(.+)").unwrap();
-    }
-
-    let output = headers
-        .get("Content-Type")
-        .ok_or_else(|| ue!("no Content-Type header supplied", Source::User))
-        .and_then(|header_value| {
-            let boundary = BOUNDARY_RE
-                .captures(
-                    header_value
-                        .to_str()
-                        .map_err(map_ue!("invalid header", Source::User))?,
-                )
-                .and_then(|captures| captures.get(1))
-                .map(|capture| capture.as_str())
-                .ok_or_else(|| ue!("no boundary in Content-Type", Source::User))?;
-
-            let chunk = body
-                .concat2()
-                .wait()
-                .map_err(map_ue!("couldn't recieve request body"))?;
-            let mut mp = Multipart::with_body(chunk.as_ref(), boundary);
+    let do_findings = move || {
+        async move {
             let mut map: HashMap<String, Vec<u8>> = HashMap::new();
 
-            while let Ok(Some(mut field)) = mp.read_entry() {
-                let mut data = Vec::new();
-                field
-                    .data
-                    .read_to_end(&mut data)
-                    .map_err(map_ue!("request too large", Source::User))?;
-                map.insert(field.headers.name.to_string(), data);
+            while let Some(part) = form.try_next().await? {
+                let name = part.name().to_string();
+                let data = part.concat().await;
+                map.insert(name, data);
             }
 
             let default_form = Form::default();
@@ -441,11 +396,14 @@ fn post_search(headers: &HeaderMap, body: Body) -> Search {
 
             let params = Params::from_form(&form)?;
 
-            match hash {
-                None => Ok((form, None)),
-                Some(hash) => make_findings(hash, params).map(|findings| (form, Some(findings))),
-            }
-        });
+            Ok(match hash {
+                None => (form, None),
+                Some(hash) => (form, Some(make_findings(hash, params).await?)),
+            })
+        }
+    };
+
+    let output = do_findings().await;
 
     let (form, findings, error) = match output {
         Ok((form, findings)) => (form, findings, None),
@@ -461,53 +419,21 @@ fn post_search(headers: &HeaderMap, body: Body) -> Search {
     }
 }
 
-fn get_response(mut state: State) -> Box<HandlerFuture> {
-    Box::new(
-        get_search(SearchQuery::take_from(&mut state)).then(|search| {
-            let search = search.unwrap();
-            let out = Context::from_serialize(&search)
-                .and_then(|context| TERA.render("search.html", context))
-                .map_err(le!());
+async fn get_response(query: SearchQuery) -> impl warp::Reply {
+    let search = get_search(query).await;
 
-            let (page, status) = match out {
-                Ok(page) => (
-                    page,
-                    search
-                        .error
-                        .map(|ue| {
-                            warn!("{}", ue.error);
-                            ue.status_code()
-                        })
-                        .unwrap_or(StatusCode::OK),
-                ),
-                Err(_) => (
-                    "<h1>Error 500: Internal Server Error</h1>".to_string(),
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                ),
-            };
-
-            let response = (status, mime::TEXT_HTML_UTF_8, page).into_response(&state);
-
-            ok((state, response))
-        }),
-    )
-}
-
-fn post_response(mut state: State) -> (State, (StatusCode, Mime, String)) {
-    let body = Body::take_from(&mut state);
-    let headers = HeaderMap::borrow_from(&state);
-    let search = post_search(headers, body);
-
-    let out = Context::from_serialize(&search)
-        .and_then(|context| TERA.render("search.html", context))
-        .map_err(le!());
+    let out =
+        Context::from_serialize(&search).and_then(|context| TERA.render("search.html", &context));
 
     let (page, status) = match out {
         Ok(page) => (
             page,
             search
                 .error
-                .map(|ue| ue.status_code())
+                .map(|ue| {
+                    warn!("{}", ue.error);
+                    ue.status_code()
+                })
                 .unwrap_or(StatusCode::OK),
         ),
         Err(_) => (
@@ -516,37 +442,58 @@ fn post_response(mut state: State) -> (State, (StatusCode, Mime, String)) {
         ),
     };
 
-    (state, (status, mime::TEXT_HTML_UTF_8, page))
+    warp::reply::with_status(warp::reply::html(page), status)
 }
 
-fn run_server() {
-    setup_logging!();
-    TERA::initialize(&TERA);
+async fn post_response(form: FormData) -> impl warp::Reply {
+    let search = post_search(form).await;
 
-    let (chain, pipelines) =
-        single_pipeline(new_pipeline().add(RequestLogger::new(Level::Info)).build());
+    let out =
+        Context::from_serialize(&search).and_then(|context| TERA.render("search.html", &context));
 
-    let router = build_router(chain, pipelines, |route| {
-        route
-            .get("/")
-            .with_query_string_extractor::<SearchQuery>()
-            .to(get_response);
-        route.post("/").to(post_response);
-    });
-
-    gotham::start(
-        (
-            std::env::args()
-                .nth(1)
-                .unwrap_or_else(|| "127.0.0.1".to_string())
-                .parse::<std::net::IpAddr>()
-                .unwrap(),
-            7878,
+    let (page, status) = match out {
+        Ok(page) => (
+            page,
+            search
+                .error
+                .map(|ue| {
+                    warn!("{}", ue.error);
+                    ue.status_code()
+                })
+                .unwrap_or(StatusCode::OK),
         ),
-        router,
-    );
+        Err(_) => (
+            "<h1>Error 500: Internal Server Error</h1>".to_string(),
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ),
+    };
+
+    warp::reply::with_status(warp::reply::html(page), status)
 }
 
-pub fn main() {
-    run_server();
+#[tokio::main]
+async fn main() {
+    setup_logging!();
+    Lazy::force(&TERA);
+
+    let router =
+        warp::path::end().and(
+            method::get()
+                .and(query::query::<SearchQuery>().and_then(|query| {
+                    async { Ok::<_, warp::Rejection>(get_response(query).await) }
+                }))
+                .or(method::post().and(multipart::form()).and_then(|form| {
+                    async move { Ok::<_, warp::Rejection>(post_response(form).await) }
+                })),
+        );
+
+    let ip = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+
+    println!("Serving on http://{}:7878", ip);
+
+    warp::serve(router)
+        .run((ip.parse::<std::net::IpAddr>().unwrap(), 7878))
+        .await;
 }

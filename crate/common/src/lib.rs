@@ -12,6 +12,7 @@ use std::string::ToString;
 use std::time::Duration;
 
 // Get around https://github.com/rust-lang/rust/issues/64960
+#[macro_export]
 macro_rules! format {
     ($($arg:tt)*) => {{
         #[allow(clippy::let_and_return)]

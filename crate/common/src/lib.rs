@@ -455,6 +455,7 @@ pub mod config {
         pub enable_imgur_api: bool,
         pub in_flight_limit: u32,
         pub no_blacklist: Vec<String>,
+        pub worker_count: usize
     }
 
     pub fn load() -> Result<Config, Error> {

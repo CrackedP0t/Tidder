@@ -232,8 +232,6 @@ async fn ingest_json<R: Read + Send + 'static>(
     mut already_have: Option<BTreeSet<i64>>,
     json_stream: R,
 ) {
-    const MAX_SPAWNED: u32 = 256;
-
     let json_iter = Deserializer::from_reader(json_stream)
         .into_iter::<Submission>()
         .map(|res| res.map_err(map_ue!()).and_then(|sub| sub.finalize()));
@@ -262,7 +260,7 @@ async fn ingest_json<R: Read + Send + 'static>(
 
     info!("Starting ingestion!");
 
-    (0..MAX_SPAWNED)
+    (0..CONFIG.worker_count)
         .map(|_i| {
             let blacklist = blacklist.clone();
             let in_flight = in_flight.clone();

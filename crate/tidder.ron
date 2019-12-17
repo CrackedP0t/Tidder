@@ -35,4 +35,5 @@ Config(
         "wikivoyage.org",
         "wikimedia.org",
     ],
+    worker_count: 128
 )

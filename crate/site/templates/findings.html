@@ -33,14 +33,14 @@
      width: 100%;
  }
  .findings {
-     display: grid;
      height: 100%;
-     grid-template-columns: repeat(7, auto);
      text-align: center;
-     gap: .5em;
+     width: 100%;
+     border-spacing: .5em;
  }
- .header {
+ .findings th {
      border-bottom: .05em solid #fefefe;
+     font-weight: normal;
  }
  .title {
      text-align: left;
@@ -49,16 +49,19 @@
 {% set matches_length = findings.matches | length %}
 {% if matches_length > 0  %}
     <div class="findings-container">
-        <div class="findings">
-            <span class="header">Image</span>
-            <span class="header">Distance</span>
-            <span class="header">Score</span>
-            <span class="header">Posted on</span>
-            <span class="header">Title</span>
-            <span class="header">Author</span>
-            <span class="header">Subreddit</span>
+        <table class="findings">
+            <tr>
+                <th scope="col">Image</th>
+                <th scope="col">Distance</th>
+                <th scope="col">Score</th>
+                <th scope="col">Posted on</th>
+                <th scope="col">Title</th>
+                <th scope="col">Author</th>
+                <th scope="col">Subreddit</th>
+            </tr>
             {% for m in findings.matches %}
-                <span>
+            <tr>
+                <td>
                     <label class="thumb_label">
                         <input type="checkbox" class="thumb_check" />
                         <div class="thumb_target">
@@ -66,18 +69,30 @@
                         </div>
                         <img class="zoom_img" src="{{ m.link }}" />
                     </label>
-                </span>
-                <span>{{ m.distance }}</span>
-                <span>{{ m.score }}</span>
-                <span>{{ m.created_utc }}</span>
-                <span class="title"><a href="{{ m.permalink }}">{{ m.title }}</a></span>
+                </td>
+                <td>{{ m.distance }}</td>
+                <td>{{ m.score }}</td>
+                <td>{{ m.created_utc }}</td>
+                <td class="title"><a href="{{ m.permalink }}">{{ m.title }}</a></td>
                 {% if m.author %}
-                <span><a href="https://reddit.com/user/{{ m.author }}">{{ m.author }}</a></span>
+                <td><a href="https://reddit.com/user/{{ m.author }}">{{ m.author }}</a></td>
                 {% else %}
-                <span class="no-author">No author</span>
+                <td class="no-author">No author</td>
                 {% endif %}
-                <span><a href="https://reddit.com/r/{{ m.subreddit }}">/r/{{ m.subreddit }}</a></span>
+                <td><a href="https://reddit.com/r/{{ m.subreddit }}">/r/{{ m.subreddit }}</a></td>
+            </tr>
             {% endfor %}
-        </div>
+        </table>
     </div>
+    <script>
+     for (const input of document.getElementsByClassName("thumb_check")) {
+         input.addEventListener("change", (event) => {
+             for (const other of document.getElementsByClassName("thumb_check")) {
+                 if (other != input) {
+                     other.checked = false;
+                 }
+             }
+         });
+     }
+    </script>
 {% endif %}

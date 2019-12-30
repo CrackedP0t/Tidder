@@ -3,6 +3,8 @@ Config(
         HostEnd("fbcdn.net"),
         HostEnd("livememe.com"),
         HostEnd("lvme.me"),
+        HostEnd("redd.it"),
+        HostEnd("reddit.com"),
         AnyScheme("i.imgur.com/JwhvGDV.jpg"),
         AnyScheme("i.imgur.com/4nmJMzR.jpg"),
         AnyScheme("imgur.com/trtbLIL"),

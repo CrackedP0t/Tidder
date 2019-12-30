@@ -3,8 +3,6 @@ Config(
         HostEnd("fbcdn.net"),
         HostEnd("livememe.com"),
         HostEnd("lvme.me"),
-        HostEnd("redd.it"),
-        HostEnd("reddit.com"),
         AnyScheme("i.imgur.com/JwhvGDV.jpg"),
         AnyScheme("i.imgur.com/4nmJMzR.jpg"),
         AnyScheme("imgur.com/trtbLIL"),
@@ -36,6 +34,8 @@ Config(
         "wikidata.org",
         "wikivoyage.org",
         "wikimedia.org",
+        "redd.it",
+        "reddit.com",
     ],
     worker_count: 128
 )

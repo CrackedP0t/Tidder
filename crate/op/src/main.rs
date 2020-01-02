@@ -3,8 +3,9 @@ use common::format;
 use common::*;
 use futures::prelude::*;
 use reqwest::{header::USER_AGENT, Client};
-use serde::de::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::io::Write;
 
 async fn post(id: &str) -> Result<(), UserError> {
     let client = Client::new();
@@ -42,7 +43,10 @@ async fn post(id: &str) -> Result<(), UserError> {
             .await?
             .error_for_status()?;
 
-        println!("{:#}", resp.json::<Value>().await?["data"]["children"][0]["data"]);
+        println!(
+            "{:#}",
+            resp.json::<Value>().await?["data"]["children"][0]["data"]
+        );
 
         Ok(())
     } else {
@@ -169,6 +173,35 @@ async fn search(link: &str, distance: Option<i64>) -> Result<(), UserError> {
     Ok(())
 }
 
+async fn rank() -> Result<(), UserError> {
+    #[derive(Serialize)]
+    struct CommonImage {
+        num: u64,
+        link: String,
+    };
+
+    let rows = PG_POOL
+        .take()
+        .await?
+        .query(
+            "SELECT COUNT(*) AS num,
+             (SELECT link FROM images AS images2 WHERE images.hash <@ (images2.hash, 0) LIMIT 1) AS link
+             FROM images GROUP BY hash ORDER BY num DESC LIMIT 100", &[]).await?;
+
+    let commons = rows
+        .iter()
+        .map(|row| CommonImage {
+            num: row.get::<_, i64>("num") as u64,
+            link: row.get("link"),
+        })
+        .collect::<Vec<_>>();
+
+    std::fs::File::create(std::env::var("HOME")? + "/stats/top100.ron")?
+        .write_all(ron::ser::to_string_pretty(&commons, Default::default())?.as_bytes())?;
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), UserError> {
     setup_logging!();
@@ -194,8 +227,9 @@ async fn main() -> Result<(), UserError> {
     let op_matches = op_matches.ok_or_else(|| ue!("No subcommand provided"))?;
 
     match op_name {
-        "post" => post(op_matches.value_of("ID").unwrap()).await,
         "hash" => hash(&op_matches.values_of("LINKS").unwrap().collect::<Vec<_>>()).await,
+        "post" => post(op_matches.value_of("ID").unwrap()).await,
+        "rank" => rank().await,
         "save" => save(op_matches.value_of("ID").unwrap()).await,
         "search" => {
             search(

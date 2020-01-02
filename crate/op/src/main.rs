@@ -207,12 +207,13 @@ async fn main() -> Result<(), UserError> {
     setup_logging!();
 
     let matches = clap_app!(op =>
-        (@subcommand post =>
-         (@arg ID: +required "Reddit's ID for the post")
-        )
         (@subcommand hash =>
          (@arg LINKS: +required ... "The links you wish to hash")
         )
+        (@subcommand post =>
+         (@arg ID: +required "Reddit's ID for the post")
+        )
+        (@subcommand rank => )
         (@subcommand save =>
          (@arg ID: +required ... "Reddit's ID for the post you wish to save")
         )

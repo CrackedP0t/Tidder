@@ -1,5 +1,6 @@
 #![type_length_limit = "5802293"]
 
+use bytes::Buf;
 use common::format;
 use common::*;
 use futures::prelude::*;
@@ -192,21 +193,22 @@ impl Params {
     }
 }
 
-static TERA: Lazy<Tera> =
-    Lazy::new(
-        || match Tera::new(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/*")) {
-            Ok(mut t) => {
-                t.register_filter("tern", utils::tern);
-                t.register_filter("plural", utils::pluralize);
-                t.register_tester("null", utils::null);
-                t
-            }
-            Err(e) => {
-                println!("Parsing error(s): {}", e);
-                std::process::exit(1);
-            }
-        },
-    );
+fn create_tera() -> Tera {
+    match Tera::new(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/*")) {
+        Ok(mut t) => {
+            t.register_filter("tern", utils::tern);
+            t.register_filter("plural", utils::pluralize);
+            t.register_tester("null", utils::null);
+            t
+        }
+        Err(e) => {
+            println!("Parsing error(s): {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+static TERA: Lazy<Tera> = Lazy::new(create_tera);
 
 async fn make_findings(hash: Hash, params: Params) -> Result<Findings, UserError> {
     macro_rules! tosql {
@@ -362,9 +364,15 @@ async fn post_search(mut form: FormData) -> Search {
         async move {
             let mut map: HashMap<String, Vec<u8>> = HashMap::new();
 
-            while let Some(part) = form.try_next().await? {
+            while let Some(mut part) = form.try_next().await? {
                 let name = part.name().to_string();
-                let data = part.concat().await;
+                let mut data = Vec::<u8>::new();
+
+                while let Some(b) = part.data().await {
+                    let b = b?;
+                    data.extend(b.bytes());
+                }
+
                 map.insert(name, data);
             }
 
@@ -422,8 +430,14 @@ async fn post_search(mut form: FormData) -> Search {
 async fn get_response(query: SearchQuery) -> impl warp::Reply {
     let search = get_search(query).await;
 
+    #[cfg(debug_assertions)]
+    let tera = create_tera();
+
+    #[cfg(not(debug_assertions))]
+    let tera = TERA.force();
+
     let out =
-        Context::from_serialize(&search).and_then(|context| TERA.render("search.html", &context));
+        Context::from_serialize(&search).and_then(|context| tera.render("search.html", &context));
 
     let (page, status) = match out {
         Ok(page) => (
@@ -448,8 +462,14 @@ async fn get_response(query: SearchQuery) -> impl warp::Reply {
 async fn post_response(form: FormData) -> impl warp::Reply {
     let search = post_search(form).await;
 
+    #[cfg(debug_assertions)]
+    let tera = create_tera();
+
+    #[cfg(not(debug_assertions))]
+    let tera = TERA.force();
+
     let out =
-        Context::from_serialize(&search).and_then(|context| TERA.render("search.html", &context));
+        Context::from_serialize(&search).and_then(|context| tera.render("search.html", &context));
 
     let (page, status) = match out {
         Ok(page) => (

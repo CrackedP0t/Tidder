@@ -19,7 +19,7 @@ use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::iter::Iterator;
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock, TryLockError};
-use tokio::executor::{DefaultExecutor, Executor};
+use tokio_executor::{DefaultExecutor, Executor};
 use url::Url;
 
 struct CheckIter<I> {

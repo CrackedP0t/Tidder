@@ -3,62 +3,79 @@
 {% block title %}Search with Tidder!{% endblock %}
 
 {% block content %}
-    <style>
-     .search-wrapper {
-         margin: 0 5vw;
-         display: flex;
-         flex-direction: column;
-         min-height: 100%;
-         {% if findings is null %}
-         justify-content: center;
-         {% endif %}
-     }
-     .search-header {
-         display: flex;
-         flex-direction: column;
-         align-items: center;
-         width: 100%;
-         {% if findings is null %}
-         transform: translateY(-10vh);
-         {% endif %}
-     }
-     input {
-         background-color: white;
-         color: black;
-         border-radius: 2px;
-         border: none;
-         padding: .15em .25em;
-     }
-     .search-input-label {
-     }
-     .search-input {
-         min-width: 30vw;
-     }
-     #search-distance {
-         min-width: 5vw;
-         max-width: 4em;
-     }
-     #search-form {
-         align-self: stretch;
-         display: flex;
-         width: 100%;
-         flex-direction: column;
-         gap: .5em;
-     }
-     #search-form label, .search-nsfw-box {
-         display: flex;
-         align-items: center;
-         gap: .3em;
-     }
-     .search-row {
-         display: flex;
-         justify-content: center;
-         gap: .5em;
-     }
-     .search-send {
-         min-width: 30vw;
-     }
-    </style>
+<style>
+ .rankings-box {
+     position: absolute;
+     top: 0;
+     left: 0;
+     width: 10rem;
+     height: 4rem;
+     text-align: center;
+     background-color: #242257;
+     display: flex;
+     border-bottom-right-radius: 1rem;
+     justify-content: center;
+     align-items: center;
+ }
+ .rankings-box a {
+     color: white;
+ }
+ .search-wrapper {
+     margin: 0 5vw;
+     display: flex;
+     flex-direction: column;
+     min-height: 100%;
+     {% if findings is null %}
+     justify-content: center;
+     {% endif %}
+ }
+ .search-header {
+     display: flex;
+     flex-direction: column;
+     align-items: center;
+     width: 100%;
+     {% if findings is null %}
+     transform: translateY(-10vh);
+     {% endif %}
+ }
+ input {
+     background-color: white;
+     color: black;
+     border-radius: 2px;
+     border: none;
+     padding: .15em .25em;
+ }
+ .search-input-label {
+ }
+ .search-input {
+     min-width: 30vw;
+ }
+ #search-distance {
+     min-width: 5vw;
+     max-width: 4em;
+ }
+ #search-form {
+     align-self: stretch;
+     display: flex;
+     width: 100%;
+     flex-direction: column;
+     gap: .5em;
+ }
+ #search-form label, .search-nsfw-box {
+     display: flex;
+     align-items: center;
+     gap: .3em;
+ }
+ .search-row {
+     display: flex;
+     justify-content: center;
+     gap: .5em;
+ }
+ .search-send {
+     min-width: 30vw;
+ }
+</style>
+<div class="rankings-box"><a href="/rankings">Top 100 Most Common Images</a></div>
     <div class="search-wrapper">
         <div class="search-header">
             <h1><a href="/">Search for an image!</a></h1>

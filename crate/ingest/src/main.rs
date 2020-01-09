@@ -266,28 +266,25 @@ async fn ingest_json<R: Read + Send + 'static>(
             let in_flight = in_flight.clone();
             let json_iter = json_iter.clone();
 
-
-            // (&mut DefaultExecutor::current() as &mut dyn Executor)
-            // DefaultExecutor::current()
-                tokio::spawn(Box::pin(async move {
-                    while let Some(post) = {
-                        poll_fn(|context| match json_iter.try_lock() {
-                            Ok(mut guard) => {
-                                let post = guard.next();
-                                drop(guard);
-                                Poll::Ready(post)
-                            }
-                            Err(TryLockError::WouldBlock) => {
-                                context.waker().wake_by_ref();
-                                Poll::Pending
-                            }
-                            Err(poison_error) => panic!("{}", poison_error),
-                        })
-                        .await
-                    } {
-                        ingest_post(post, verbose, &blacklist, &in_flight).await;
-                    }
-                }))
+            tokio::spawn(Box::pin(async move {
+                while let Some(post) = {
+                    poll_fn(|context| match json_iter.try_lock() {
+                        Ok(mut guard) => {
+                            let post = guard.next();
+                            drop(guard);
+                            Poll::Ready(post)
+                        }
+                        Err(TryLockError::WouldBlock) => {
+                            context.waker().wake_by_ref();
+                            Poll::Pending
+                        }
+                        Err(poison_error) => panic!("{}", poison_error),
+                    })
+                    .await
+                } {
+                    ingest_post(post, verbose, &blacklist, &in_flight).await;
+                }
+            }))
         })
         .collect::<FuturesUnordered<_>>()
         .map(|_| Ok(()))

@@ -266,7 +266,9 @@ async fn ingest_json<R: Read + Send + 'static>(
             let in_flight = in_flight.clone();
             let json_iter = json_iter.clone();
 
+
             (&mut DefaultExecutor::current() as &mut dyn Executor)
+            // DefaultExecutor::current()
                 .spawn_with_handle(Box::pin(async move {
                     while let Some(post) = {
                         poll_fn(|context| match json_iter.try_lock() {

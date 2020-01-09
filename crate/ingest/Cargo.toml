@@ -18,7 +18,7 @@ xz2 = "0.1.6"
 regex = "1.1.6"
 failure = "0.1.5"
 hyper = "0.13.0-alpha.4"
-tokio = "0.2.6"
+tokio = { version = "0.2.6", features = ["full"] }
 tokio-executor = "0.2.0-alpha.5"
 futures-preview = "0.3.0-alpha.19"
 url = "2.1.0"

@@ -19,7 +19,7 @@ use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::iter::Iterator;
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock, TryLockError};
-use tokio_executor::{DefaultExecutor, Executor};
+// use tokio_executor::{DefaultExecutor, Executor};
 use url::Url;
 
 struct CheckIter<I> {
@@ -267,9 +267,9 @@ async fn ingest_json<R: Read + Send + 'static>(
             let json_iter = json_iter.clone();
 
 
-            (&mut DefaultExecutor::current() as &mut dyn Executor)
+            // (&mut DefaultExecutor::current() as &mut dyn Executor)
             // DefaultExecutor::current()
-                .spawn_with_handle(Box::pin(async move {
+                tokio::spawn(Box::pin(async move {
                     while let Some(post) = {
                         poll_fn(|context| match json_iter.try_lock() {
                             Ok(mut guard) => {
@@ -288,7 +288,6 @@ async fn ingest_json<R: Read + Send + 'static>(
                         ingest_post(post, verbose, &blacklist, &in_flight).await;
                     }
                 }))
-                .unwrap()
         })
         .collect::<FuturesUnordered<_>>()
         .map(|_| Ok(()))

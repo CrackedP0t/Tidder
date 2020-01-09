@@ -8,7 +8,7 @@ edition = "2018"
 chrono = { version = "0.4.7", features = ["serde"] }
 common = { path = "../common" }
 serde = { version = "1.0.92", features = ["derive"] }
-tera = "1.0.0-beta.7"
+tera = "1.0.1"
 url = "2.1.0"
 tokio-postgres = { version = "0.5.1", features = ["with-chrono-0_4"] }
 warp = { git = "https://github.com/seanmonstar/warp" }

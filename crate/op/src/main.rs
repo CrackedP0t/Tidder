@@ -174,12 +174,6 @@ async fn search(link: &str, distance: Option<i64>) -> Result<(), UserError> {
 }
 
 async fn rank() -> Result<(), UserError> {
-    #[derive(Serialize)]
-    struct CommonImage {
-        num: u64,
-        link: String,
-    };
-
     let rows = PG_POOL
         .take()
         .await?

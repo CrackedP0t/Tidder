@@ -6,7 +6,7 @@ use log::LevelFilter;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use reqwest::header::{self, HeaderMap, HeaderValue};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::string::ToString;
 use std::time::Duration;
@@ -310,6 +310,12 @@ pub const IMAGE_MIMES_NO_WEBP: [&str; 11] = [
     "image/vnd.radiance",
 ];
 
+#[derive(Deserialize, Serialize)]
+pub struct CommonImage {
+    pub num: u64,
+    pub link: String,
+}
+
 #[derive(Copy, Debug, Clone, Eq, PartialEq)]
 pub enum HashDest {
     Images,
@@ -455,7 +461,7 @@ pub mod config {
         pub enable_imgur_api: bool,
         pub in_flight_limit: u32,
         pub no_blacklist: Vec<String>,
-        pub worker_count: usize
+        pub worker_count: usize,
     }
 
     pub fn load() -> Result<Config, Error> {

@@ -21,12 +21,14 @@
      color: white;
  }
  .search-wrapper {
-     margin: 0 5vw;
      display: flex;
      flex-direction: column;
      min-height: 100%;
      {% if findings is null %}
      justify-content: center;
+     margin: 0 2rem;
+     {% else %}
+     margin: 2rem;
      {% endif %}
  }
  .search-header {

@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% import "macros.html" as macros %}
+{% block title %}Tidder: Most Common Images{% endblock %}
+
+{% block content %}
+    <style>
+     .search-box {
+         position: absolute;
+         top: 0;
+         left: 0;
+         width: 10rem;
+         height: 4rem;
+         text-align: center;
+         background-color: #242257;
+         display: flex;
+         border-bottom-right-radius: 1rem;
+         justify-content: center;
+         align-items: center;
+     }
+     .search-box a {
+         color: white;
+     }
+     h1 {
+         text-align: center;
+         margin: 2rem 0;
+     }
+     #rankings-container {
+         display: flex;
+         flex-direction: column;
+         align-items: center;
+         width: 100%;
+     }
+     .common-listing {
+         display: flex;
+         flex-direction: row;
+         height: 5rem;
+         width: 70%;
+         align-items: center;
+         text-align: center;
+         margin-top: 1rem;
+     }
+     .common-image {
+         flex-basis: 50%;
+         height: 100%;
+     }
+     .common-image img {
+         height: 100%;
+     }
+     .common-num {
+         flex-basis: 50%;
+         font-size: 1.5rem;
+     }
+    </style>
+    <div class="search-box"><a href="/">Back to Search</a></div>
+    <h1><a href="/rankings">Top 100 Most Common Images</a></h1>
+    <div id="rankings-container">
+        {% for i in images %}
+            <div class="common-listing">
+                <div class="common-image"><img src="{{ i.link }}" /></div>
+                <div class="common-num">{{ i.num }}</div>
+            </div>
+        {% endfor %}
+    </div>
+{% endblock %}

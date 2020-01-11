@@ -9,14 +9,18 @@ use tera::Context;
 
 #[derive(Serialize)]
 struct Rankings {
-    images: Vec<CommonImage>,
+    as_of: String,
+    common_images: Vec<CommonImage>,
 }
 
 pub async fn get_response() -> Result<impl warp::Reply, UserError> {
+    let images: CommonImages = ron::de::from_reader(std::fs::File::open(
+        std::env::var("HOME")? + "/stats/top100.ron",
+    )?)?;
+
     let rankings = Rankings {
-        images: ron::de::from_reader(std::fs::File::open(
-            std::env::var("HOME")? + "/stats/top100.ron",
-        )?)?,
+        as_of: images.as_of.format("%F %T %Z").to_string(),
+        common_images: images.common_images
     };
 
     #[cfg(debug_assertions)]

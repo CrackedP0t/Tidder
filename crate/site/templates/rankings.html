@@ -20,7 +20,8 @@
      .search-box a {
          color: white;
      }
-     h1 {
+     #header {
+         width: 100%;
          text-align: center;
          margin: 2rem 0;
      }
@@ -52,12 +53,15 @@
      }
     </style>
     <div class="search-box"><a href="/">Back to Search</a></div>
-    <h1><a href="/rankings">Top 100 Most Common Images</a></h1>
+    <div id="header">
+        <h1><a href="/rankings">Top 100 Most Common Images</a></h1>
+        <span id="as-of">As of {{ as_of }}</span>
+    </div>
     <div id="rankings-container">
-        {% for i in images %}
+        {% for i in common_images %}
             <div class="common-listing">
                 <div class="common-image"><img src="{{ i.link }}" /></div>
-                <div class="common-num">{{ i.num }}</div>
+                <div class="common-num"><a href="/?imagelink={{ i.link }}">{{ i.num }}</a></div>
             </div>
         {% endfor %}
     </div>

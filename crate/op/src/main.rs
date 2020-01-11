@@ -3,7 +3,7 @@ use common::format;
 use common::*;
 use futures::prelude::*;
 use reqwest::{header::USER_AGENT, Client};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 use std::io::Write;
 
@@ -182,13 +182,16 @@ async fn rank() -> Result<(), UserError> {
              (SELECT link FROM images AS images2 WHERE images.hash <@ (images2.hash, 0) LIMIT 1) AS link
              FROM images GROUP BY hash ORDER BY num DESC LIMIT 100", &[]).await?;
 
-    let commons = rows
-        .iter()
-        .map(|row| CommonImage {
-            num: row.get::<_, i64>("num") as u64,
-            link: row.get("link"),
-        })
-        .collect::<Vec<_>>();
+    let commons = CommonImages {
+        as_of: chrono::offset::Utc::now(),
+        common_images: rows
+            .iter()
+            .map(|row| CommonImage {
+                num: row.get::<_, i64>("num") as u64,
+                link: row.get("link"),
+            })
+            .collect::<Vec<_>>(),
+    };
 
     std::fs::File::create(std::env::var("HOME")? + "/stats/top100.ron")?
         .write_all(ron::ser::to_string_pretty(&commons, Default::default())?.as_bytes())?;

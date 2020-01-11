@@ -311,6 +311,12 @@ pub const IMAGE_MIMES_NO_WEBP: [&str; 11] = [
 ];
 
 #[derive(Deserialize, Serialize)]
+pub struct CommonImages {
+    pub as_of: chrono::DateTime<chrono::Utc>,
+    pub common_images: Vec<CommonImage>
+}
+
+#[derive(Deserialize, Serialize)]
 pub struct CommonImage {
     pub num: u64,
     pub link: String,

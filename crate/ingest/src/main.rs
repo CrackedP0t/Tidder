@@ -94,6 +94,15 @@ async fn ingest_post(
         {
             return Err(ue_save!("blacklisted", "blacklisted"));
         }
+
+        let post_url = if let Some("v.redd.it") = post_url.host_str() {
+            Url::parse(post.preview
+                .as_ref()
+                .ok_or_else(|| ue_save!("v.redd.it but no preview", "v_redd_it_no_preview"))?)?
+        } else {
+            post_url
+        };
+
         drop(blacklist_guard);
 
         Ok(post_url)
@@ -136,7 +145,7 @@ async fn ingest_post(
             })
             .await;
 
-            let res = save_hash(&post.url, HashDest::Images).await;
+            let res = save_hash(post_url.as_str(), HashDest::Images).await;
 
             *in_flight.write().unwrap().get_mut(host).unwrap() -= 1;
 

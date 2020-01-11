@@ -37,5 +37,5 @@ Config(
         "redd.it",
         "reddit.com",
     ],
-    worker_count: 128
+    worker_count: 256
 )

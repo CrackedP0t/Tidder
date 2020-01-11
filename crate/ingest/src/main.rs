@@ -19,7 +19,6 @@ use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::iter::Iterator;
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock, TryLockError};
-// use tokio_executor::{DefaultExecutor, Executor};
 use url::Url;
 
 struct CheckIter<I> {
@@ -44,7 +43,6 @@ where
             match self.iter.next() {
                 None => return None,
                 Some(Err(_e)) => {
-                    // warn!("{}", _e);
                     continue;
                 }
                 Some(Ok(v)) => return Some(v),

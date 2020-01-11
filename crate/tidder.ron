@@ -15,6 +15,8 @@ Config(
     ],
     custom_limits: {
         "imgur.com": Some(100),
+        "i.redd.it": Some(20),
+        "v.redd.it": Some(20)
     },
     enable_imgur_api: false,
     in_flight_limit: 1,

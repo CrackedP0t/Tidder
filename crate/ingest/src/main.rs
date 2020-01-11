@@ -8,8 +8,8 @@ use futures::prelude::*;
 use futures::stream::FuturesUnordered;
 use futures::task::Poll;
 use log::{error, info, warn};
-// use once_cell::sync::Lazy;
-// use regex::Regex;
+use once_cell::sync::Lazy;
+use regex::Regex;
 use serde_json::Deserializer;
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -20,7 +20,6 @@ use std::iter::Iterator;
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock, TryLockError};
 // use tokio_executor::{DefaultExecutor, Executor};
-use chrono::Datelike;
 use url::Url;
 
 struct CheckIter<I> {
@@ -60,10 +59,6 @@ async fn ingest_post(
     blacklist: &RwLock<HashSet<String>>,
     in_flight: &RwLock<HashMap<String, u32>>,
 ) {
-    if post.created_utc.day() > 1 {
-        std::process::exit(0);
-    }
-
     post.url = post
         .url
         .replace("&amp;", "&")
@@ -300,8 +295,8 @@ async fn ingest_json<R: Read + Send + 'static>(
 
 #[tokio::main]
 async fn main() -> Result<(), UserError> {
-    // static MONTH_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"-(\d\d)").unwrap());
-    // static YEAR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\d\d\d\d").unwrap());
+    static MONTH_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"-(\d\d)").unwrap());
+    static YEAR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\d\d\d\d").unwrap());
 
     setup_logging!();
     let matches = clap_app!(
@@ -319,19 +314,19 @@ async fn main() -> Result<(), UserError> {
     let path = matches.value_of("PATH").unwrap().to_string();
     let verbose = matches.is_present("VERBOSE");
 
-    // let month: i32 = MONTH_RE
-    //     .captures(&path)
-    //     .and_then(|caps| caps.get(1))
-    //     .ok_or_else(|| ue!(format!("couldn't find month in {}", path)))
-    //     .and_then(|m| m.as_str().parse().map_err(map_ue!()))?;
+    let month: i32 = MONTH_RE
+        .captures(&path)
+        .and_then(|caps| caps.get(1))
+        .ok_or_else(|| ue!(format!("couldn't find month in {}", path)))
+        .and_then(|m| m.as_str().parse().map_err(map_ue!()))?;
 
-    // let year: i32 = YEAR_RE
-    //     .find(&path)
-    //     .ok_or_else(|| ue!(format!("couldn't find year in {}", path)))
-    //     .and_then(|m| m.as_str().parse().map_err(map_ue!()))?;
+    let year: i32 = YEAR_RE
+        .find(&path)
+        .ok_or_else(|| ue!(format!("couldn't find year in {}", path)))
+        .and_then(|m| m.as_str().parse().map_err(map_ue!()))?;
 
-    // let month_f = f64::from(month);
-    // let year_f = f64::from(year);
+    let month_f = f64::from(month);
+    let year_f = f64::from(year);
 
     info!("Ingesting {}", path);
 
@@ -381,25 +376,23 @@ async fn main() -> Result<(), UserError> {
 
     info!("Processing posts we already have");
 
-    // let client = PG_POOL.take().await?;
+    let client = PG_POOL.take().await?;
 
-    // let already_have = client
-    //     .query(
-    //         "SELECT reddit_id_int FROM posts \
-    //          WHERE EXTRACT(month FROM created_utc) = $1 \
-    //          AND EXTRACT(year FROM created_utc) = $2",
-    //         &[&month_f, &year_f],
-    //     )
-    //     .await?
-    //     .into_iter()
-    //     .fold(BTreeSet::new(), move |mut already_have, row| {
-    //         already_have.insert(row.get(0));
-    //         already_have
-    //     });
+    let already_have = client
+        .query(
+            "SELECT reddit_id_int FROM posts \
+             WHERE EXTRACT(month FROM created_utc) = $1 \
+             AND EXTRACT(year FROM created_utc) = $2",
+            &[&month_f, &year_f],
+        )
+        .await?
+        .into_iter()
+        .fold(BTreeSet::new(), move |mut already_have, row| {
+            already_have.insert(row.get(0));
+            already_have
+        });
 
-    // drop(client);
-
-    let already_have = BTreeSet::new();
+    drop(client);
 
     let already_have_len = already_have.len();
     info!(

@@ -12,7 +12,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::Deserializer;
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashSet};
 use std::error::Error as _;
 use std::fs::{remove_file, File, OpenOptions};
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
@@ -20,6 +20,7 @@ use std::iter::Iterator;
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock, TryLockError};
 use url::Url;
+use dashmap::DashMap;
 
 struct CheckIter<I> {
     iter: I,
@@ -55,7 +56,7 @@ async fn ingest_post(
     mut post: Submission,
     verbose: bool,
     blacklist: &RwLock<HashSet<String>>,
-    in_flight: &RwLock<HashMap<String, u32>>,
+    in_flight: &DashMap<String, u32>,
 ) {
     post.url = post
         .url
@@ -114,17 +115,16 @@ async fn ingest_post(
 
             let custom_limit: Option<&Option<_>> = CONFIG.custom_limits.get(host);
 
-            poll_fn(|context| {
-                let guard = in_flight.read().unwrap();
-                let limit = match custom_limit {
-                    None => Some(CONFIG.in_flight_limit),
-                    Some(&Some(limit)) => Some(limit),
-                    Some(&None) => None,
-                };
+            let limit = match custom_limit {
+                None => Some(CONFIG.in_flight_limit),
+                Some(&Some(limit)) => Some(limit),
+                Some(&None) => None,
+            };
 
+            poll_fn(|context| {
                 let ready = limit
                     .map(|limit| {
-                        guard
+                        in_flight
                             .get(host)
                             .map(|in_flight| *in_flight < limit)
                             .unwrap_or(true)
@@ -132,13 +132,10 @@ async fn ingest_post(
                     .unwrap_or(true);
 
                 if ready {
-                    drop(guard);
-                    let mut write_guard = in_flight.write().unwrap();
-                    *(write_guard.entry(host.to_owned()).or_insert(0)) += 1;
-                    drop(write_guard);
+                    *(in_flight.entry(host.to_owned()).or_insert(0)) += 1;
+
                     Poll::Ready(host.to_owned())
                 } else {
-                    drop(guard);
                     context.waker().wake_by_ref();
                     Poll::Pending
                 }
@@ -147,7 +144,7 @@ async fn ingest_post(
 
             let res = save_hash(post_url.as_str(), HashDest::Images).await;
 
-            *in_flight.write().unwrap().get_mut(host).unwrap() -= 1;
+            *in_flight.get_mut(host).unwrap() -= 1;
 
             res
         }
@@ -262,7 +259,7 @@ async fn ingest_json<R: Read + Send + 'static>(
     });
 
     let blacklist = Arc::new(RwLock::new(HashSet::<String>::new()));
-    let in_flight = Arc::new(RwLock::new(HashMap::<String, u32>::new()));
+    let in_flight = Arc::new(DashMap::<String, u32>::new());
     let json_iter = Arc::new(Mutex::new(json_iter));
 
     info!("Starting ingestion!");

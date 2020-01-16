@@ -3,6 +3,7 @@
 use clap::{clap_app, crate_authors, crate_description, crate_version};
 use common::format;
 use common::*;
+use dashmap::DashMap;
 use future::poll_fn;
 use futures::prelude::*;
 use futures::stream::FuturesUnordered;
@@ -19,8 +20,8 @@ use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::iter::Iterator;
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock, TryLockError};
+use tokio_postgres::types::ToSql;
 use url::Url;
-use dashmap::DashMap;
 
 struct CheckIter<I> {
     iter: I,
@@ -97,9 +98,11 @@ async fn ingest_post(
         }
 
         let post_url = if let Some("v.redd.it") = post_url.host_str() {
-            Url::parse(post.preview
-                .as_ref()
-                .ok_or_else(|| ue_save!("v.redd.it but no preview", "v_redd_it_no_preview"))?)?
+            Url::parse(
+                post.preview
+                    .as_ref()
+                    .ok_or_else(|| ue_save!("v.redd.it but no preview", "v_redd_it_no_preview"))?,
+            )?
         } else {
             post_url
         };
@@ -383,18 +386,16 @@ async fn main() -> Result<(), UserError> {
     let client = PG_POOL.take().await?;
 
     let already_have = client
-        .query(
+        .query_raw(
             "SELECT reddit_id_int FROM posts \
              WHERE EXTRACT(month FROM created_utc) = $1 \
              AND EXTRACT(year FROM created_utc) = $2",
-            &[&month_f, &year_f],
-        )
-        .await?
-        .into_iter()
-        .fold(BTreeSet::new(), move |mut already_have, row| {
+            vec![&month_f as &dyn ToSql, &year_f as &dyn ToSql],
+        ).await?
+        .try_fold(BTreeSet::new(), move |mut already_have, row| async move {
             already_have.insert(row.get(0));
-            already_have
-        });
+            Ok(already_have)
+        }).await?;
 
     drop(client);
 

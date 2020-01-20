@@ -74,28 +74,29 @@ async fn ingest_post(
     let is_video = post.is_video;
 
     let post_url_res = (|| {
-        let post_url = if is_video {
-            post.preview
-                .as_ref()
-                .ok_or_else(|| ue_save!("is_video but no preview", "video_no_preview"))?
-        } else {
-            &post.url
-        };
-
-        if CONFIG.banned.iter().any(|banned| banned.matches(post_url)) {
-            return Err(ue_save!("banned", "banned"));
-        }
-
-        let post_url = Url::parse(post_url).map_err(map_ue_save!("invalid URL", "url_invalid"))?;
+        let mut post_url = post.url.as_str();
 
         let blacklist_guard = blacklist.read().unwrap();
-        if post_url
-            .host_str()
+
+        if get_host(&post_url)
             .map(|host| blacklist_guard.contains(host))
             .unwrap_or(false)
         {
             return Err(ue_save!("blacklisted", "blacklisted"));
         }
+
+        if is_video {
+            post_url = post
+                .preview
+                .as_ref()
+                .ok_or_else(|| ue_save!("is_video but no preview", "video_no_preview"))?
+        }
+
+        if CONFIG.banned.iter().any(|banned| banned.matches(post_url)) {
+            return Err(ue_save!("banned", "banned"));
+        }
+
+        let post_url = Url::parse(&post_url).map_err(map_ue_save!("invalid URL", "url_invalid"))?;
 
         let post_url = if let Some("v.redd.it") = post_url.host_str() {
             Url::parse(
@@ -391,11 +392,15 @@ async fn main() -> Result<(), UserError> {
              WHERE EXTRACT(month FROM created_utc) = $1 \
              AND EXTRACT(year FROM created_utc) = $2",
             vec![&month_f as &dyn ToSql, &year_f as &dyn ToSql],
-        ).await?
-        .try_fold(BTreeSet::new(), move |mut already_have, row| async move {
-            already_have.insert(row.get(0));
-            Ok(already_have)
-        }).await?;
+        )
+        .await?
+        .try_fold(BTreeSet::new(), move |mut already_have, row| {
+            async move {
+                already_have.insert(row.get(0));
+                Ok(already_have)
+            }
+        })
+        .await?;
 
     drop(client);
 

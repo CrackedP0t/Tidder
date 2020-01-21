@@ -85,17 +85,16 @@ async fn ingest_post(
             return Err(ue_save!("blacklisted", "blacklisted"));
         }
 
+        if CONFIG.banned.iter().any(|banned| banned.matches(post_url)) {
+            return Err(ue_save!("banned", "banned"));
+        }
+
         if is_video {
             post_url = post
                 .preview
                 .as_ref()
                 .ok_or_else(|| ue_save!("is_video but no preview", "video_no_preview"))?
         }
-
-        if CONFIG.banned.iter().any(|banned| banned.matches(post_url)) {
-            return Err(ue_save!("banned", "banned"));
-        }
-
         let post_url = Url::parse(&post_url).map_err(map_ue_save!("invalid URL", "url_invalid"))?;
 
         let post_url = if let Some("v.redd.it") = post_url.host_str() {

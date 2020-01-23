@@ -275,29 +275,19 @@ async fn ingest_json<R: Read + Send + 'static>(
 
             tokio::spawn(Box::pin(async move {
                 while let Some(post) = {
-                    poll_fn(|context| match json_iter.try_lock() {
-                        Ok(mut guard) => {
-                            let post = guard.next();
-                            drop(guard);
-                            Poll::Ready(post)
-                        }
-                        Err(TryLockError::WouldBlock) => {
-                            context.waker().wake_by_ref();
-                            Poll::Pending
-                        }
-                        Err(poison_error) => panic!("{}", poison_error),
-                    })
-                    .await
+                    let mut lock = json_iter.lock().unwrap();
+                    let next = lock.next();
+                    drop(lock);
+                    next
                 } {
                     ingest_post(post, verbose, &blacklist, &in_flight).await;
                 }
             }))
         })
         .collect::<FuturesUnordered<_>>()
-        .map(|_| Ok(()))
-        .forward(futures::sink::drain())
+        .map(drop)
+        .collect::<()>()
         .await
-        .unwrap();
 }
 
 #[tokio::main]

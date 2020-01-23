@@ -1,5 +1,6 @@
 #![recursion_limit = "128"]
 
+use chrono::prelude::*;
 use clap::{clap_app, crate_authors, crate_description, crate_version};
 use common::format;
 use common::*;
@@ -311,7 +312,7 @@ async fn main() -> Result<(), UserError> {
     let path = matches.value_of("PATH").unwrap().to_string();
     let verbose = matches.is_present("VERBOSE");
 
-    let month: i32 = MONTH_RE
+    let month: u32 = MONTH_RE
         .captures(&path)
         .and_then(|caps| caps.get(1))
         .ok_or_else(|| ue!(format!("couldn't find month in {}", path)))
@@ -322,8 +323,12 @@ async fn main() -> Result<(), UserError> {
         .ok_or_else(|| ue!(format!("couldn't find year in {}", path)))
         .and_then(|m| m.as_str().parse().map_err(map_ue!()))?;
 
-    let month_f = f64::from(month);
-    let year_f = f64::from(year);
+    let date = NaiveDate::from_ymd(year, month, 1).and_hms(0, 0, 0);
+    let next_month = if date.month() == 12 {
+        NaiveDate::from_ymd(year + 1, 1, 1).and_hms(0, 0, 0)
+    } else {
+        NaiveDate::from_ymd(year, month + 1, 1).and_hms(0, 0, 0)
+    };
 
     info!("Ingesting {}", path);
 
@@ -380,9 +385,8 @@ async fn main() -> Result<(), UserError> {
     let already_have = client
         .query_raw(
             "SELECT reddit_id_int FROM posts \
-             WHERE EXTRACT(month FROM created_utc) = $1 \
-             AND EXTRACT(year FROM created_utc) = $2",
-            vec![&month_f as &dyn ToSql, &year_f as &dyn ToSql],
+             WHERE created_utc >= $1 and created_utc < $2",
+            vec![&date as &dyn ToSql, &next_month as &dyn ToSql],
         )
         .map(|o| {
             info!("Queried");

@@ -384,6 +384,7 @@ async fn main() -> Result<(), UserError> {
         )
         .await?
         .try_fold(BTreeSet::new(), move |mut already_have, row| {
+            println!("Insert!");
             async move {
                 already_have.insert(row.get(0));
                 Ok(already_have)

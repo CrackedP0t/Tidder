@@ -375,6 +375,8 @@ async fn main() -> Result<(), UserError> {
 
     let client = PG_POOL.take().await?;
 
+    info!("Took");
+
     let already_have = client
         .query_raw(
             "SELECT reddit_id_int FROM posts \
@@ -382,6 +384,10 @@ async fn main() -> Result<(), UserError> {
              AND EXTRACT(year FROM created_utc) = $2",
             vec![&month_f as &dyn ToSql, &year_f as &dyn ToSql],
         )
+        .map(|o| {
+            info!("Queried");
+            o
+        })
         .await?
         .try_fold(BTreeSet::new(), move |mut already_have, row| {
             println!("Insert!");

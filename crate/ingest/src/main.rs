@@ -379,22 +379,14 @@ async fn main() -> Result<(), UserError> {
     info!("Processing posts we already have");
 
     let client = PG_POOL.take().await?;
-
-    info!("Took");
-
     let already_have = client
         .query_raw(
             "SELECT reddit_id_int FROM posts \
              WHERE created_utc >= $1 and created_utc < $2",
             vec![&date as &dyn ToSql, &next_month as &dyn ToSql],
         )
-        .map(|o| {
-            info!("Queried");
-            o
-        })
         .await?
         .try_fold(BTreeSet::new(), move |mut already_have, row| {
-            println!("Insert!");
             async move {
                 already_have.insert(row.get(0));
                 Ok(already_have)

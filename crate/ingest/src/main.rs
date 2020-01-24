@@ -20,7 +20,8 @@ use std::fs::{remove_file, File, OpenOptions};
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::iter::Iterator;
 use std::path::Path;
-use std::sync::{Arc, Mutex, RwLock, TryLockError};
+use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
 use tokio_postgres::types::ToSql;
 use url::Url;
 
@@ -75,43 +76,46 @@ async fn ingest_post(
     let is_video = post.is_video;
 
     let post_url_res = (|| {
-        let mut post_url = post.url.as_str();
+        async {
+            let mut post_url = post.url.as_str();
 
-        let blacklist_guard = blacklist.read().unwrap();
+            let blacklist_guard = blacklist.read().await;
 
-        if get_host(&post_url)
-            .map(|host| blacklist_guard.contains(host))
-            .unwrap_or(false)
-        {
-            return Err(ue_save!("blacklisted", "blacklisted"));
-        }
+            if get_host(&post_url)
+                .map(|host| blacklist_guard.contains(host))
+                .unwrap_or(false)
+            {
+                return Err(ue_save!("blacklisted", "blacklisted"));
+            }
 
-        if CONFIG.banned.iter().any(|banned| banned.matches(post_url)) {
-            return Err(ue_save!("banned", "banned"));
-        }
+            if CONFIG.banned.iter().any(|banned| banned.matches(post_url)) {
+                return Err(ue_save!("banned", "banned"));
+            }
 
-        if is_video {
-            post_url = post
-                .preview
-                .as_ref()
-                .ok_or_else(|| ue_save!("is_video but no preview", "video_no_preview"))?
-        }
-        let post_url = Url::parse(&post_url).map_err(map_ue_save!("invalid URL", "url_invalid"))?;
-
-        let post_url = if let Some("v.redd.it") = post_url.host_str() {
-            Url::parse(
-                post.preview
+            if is_video {
+                post_url = post
+                    .preview
                     .as_ref()
-                    .ok_or_else(|| ue_save!("v.redd.it but no preview", "v_redd_it_no_preview"))?,
-            )?
-        } else {
-            post_url
-        };
+                    .ok_or_else(|| ue_save!("is_video but no preview", "video_no_preview"))?
+            }
+            let post_url =
+                Url::parse(&post_url).map_err(map_ue_save!("invalid URL", "url_invalid"))?;
 
-        drop(blacklist_guard);
+            let post_url =
+                if let Some("v.redd.it") = post_url.host_str() {
+                    Url::parse(post.preview.as_ref().ok_or_else(|| {
+                        ue_save!("v.redd.it but no preview", "v_redd_it_no_preview")
+                    })?)?
+                } else {
+                    post_url
+                };
 
-        Ok(post_url)
-    })();
+            drop(blacklist_guard);
+
+            Ok(post_url)
+        }
+    })()
+    .await;
 
     let save_res = match post_url_res {
         Ok(post_url) => {
@@ -180,30 +184,34 @@ async fn ingest_post(
                 std::process::exit(1)
             }
             _ => {
-                let reqwest_save_error = ue.error.downcast_ref::<reqwest::Error>().and_then(|e| {
-                    let hyper_error = e.source().and_then(|he| he.downcast_ref::<hyper::Error>());
+                let reqwest_save_error = match ue.error.downcast_ref::<reqwest::Error>() {
+                    Some(e) => {
+                        let hyper_error =
+                            e.source().and_then(|he| he.downcast_ref::<hyper::Error>());
 
-                    if e.is_timeout() || hyper_error.is_some() {
-                        if let Ok(url) = Url::parse(&post.url) {
-                            if let Some(host) = url.host_str() {
-                                if !CONFIG.no_blacklist.iter().any(|n| host.ends_with(n)) {
-                                    blacklist.write().unwrap().insert(host.to_string());
+                        if e.is_timeout() || hyper_error.is_some() {
+                            if let Ok(url) = Url::parse(&post.url) {
+                                if let Some(host) = url.host_str() {
+                                    if !CONFIG.no_blacklist.iter().any(|n| host.ends_with(n)) {
+                                        blacklist.write().await.insert(host.to_string());
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    e.status()
-                        .map(|status| format!("http_{}", status.as_str()).into())
-                        .or_else(|| {
-                            if e.is_timeout() {
-                                Some("timeout".into())
-                            } else {
-                                None
-                            }
-                        })
-                        .or_else(|| hyper_error.map(|_| "hyper".into()))
-                });
+                        e.status()
+                            .map(|status| format!("http_{}", status.as_str()).into())
+                            .or_else(|| {
+                                if e.is_timeout() {
+                                    Some("timeout".into())
+                                } else {
+                                    None
+                                }
+                            })
+                            .or_else(|| hyper_error.map(|_| "hyper".into()))
+                    }
+                    None => None,
+                };
 
                 let save_error = ue.save_error.or(reqwest_save_error);
 
@@ -276,7 +284,7 @@ async fn ingest_json<R: Read + Send + 'static>(
 
             tokio::spawn(Box::pin(async move {
                 while let Some(post) = {
-                    let mut lock = json_iter.lock().unwrap();
+                    let mut lock = json_iter.lock().await;
                     let next = lock.next();
                     drop(lock);
                     next

@@ -253,21 +253,21 @@ async fn ingest_json<R: Read + Send + 'static>(
         .map(|res| res.map_err(map_ue!()).and_then(|sub| sub.finalize()));
 
     let json_iter = CheckIter::new(json_iter).filter(move |post| {
-        // post.is_video ||
-        (!post.is_self
-            && post.promoted.map(|promoted| !promoted).unwrap_or(true)
-            && ((EXT_RE.is_match(&post.url) && URL_RE.is_match(&post.url))
-                || is_link_special(&post.url))
-            && match already_have {
-                None => true,
-                Some(ref mut set) => {
-                    let had = set.remove(&post.id_int);
-                    if set.is_empty() {
-                        already_have = None;
+        post.is_video
+            || (!post.is_self
+                && post.promoted.map(|promoted| !promoted).unwrap_or(true)
+                && ((EXT_RE.is_match(&post.url) && URL_RE.is_match(&post.url))
+                    || is_link_special(&post.url))
+                && match already_have {
+                    None => true,
+                    Some(ref mut set) => {
+                        let had = set.remove(&post.id_int);
+                        if set.is_empty() {
+                            already_have = None;
+                        }
+                        !had
                     }
-                    !had
-                }
-            })
+                })
     });
 
     let blacklist = Arc::new(RwLock::new(HashSet::<String>::new()));

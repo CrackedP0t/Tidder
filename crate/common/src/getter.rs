@@ -555,7 +555,7 @@ async fn poss_move_row(
             id,
         })
     } else {
-        let mut client = PG_POOL.take().await?;
+        let mut client = PG_POOL.get().await?;
         let trans = client.transaction().await?;
         let stmt = trans
             .prepare(
@@ -603,7 +603,7 @@ pub async fn save_hash(link: &str, hash_dest: HashDest) -> Result<HashSaved, Use
                 .and_then(|s| cache_control::with_str(s).ok());
             let cc = cc.as_ref();
 
-            let mut client = PG_POOL.take().await?;
+            let mut client = PG_POOL.get().await?;
             let trans = client.transaction().await?;
             let stmt = trans
                 .prepare(

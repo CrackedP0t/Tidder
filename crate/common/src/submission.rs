@@ -57,12 +57,12 @@ impl Submission {
                 .as_str(),
         );
 
-        let mut client = PG_POOL.take().await?;
+        let client = PG_POOL.get().await?;
 
         let modified = match image_id {
             Ok(image_id) => {
                 let stmt = client
-                    .cache_prepare(
+                    .prepare(
                         "INSERT INTO posts \
                          (reddit_id, link, permalink, author, \
                          created_utc, score, subreddit, title, nsfw, \
@@ -102,7 +102,7 @@ impl Submission {
             }
             Err(save_error) => {
                 let stmt = client
-                    .cache_prepare(
+                    .prepare(
                         "INSERT INTO posts \
                          (reddit_id, link, permalink, author, \
                          created_utc, score, subreddit, title, nsfw, \

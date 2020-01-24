@@ -1,5 +1,6 @@
 use cache_control::CacheControl;
 use chrono::{DateTime, NaiveDateTime};
+use deadpool_postgres::Pool;
 pub use failure::{self, format_err, Error};
 use futures::prelude::*;
 use log::LevelFilter;
@@ -27,9 +28,6 @@ pub use banned::*;
 mod getter;
 pub use getter::*;
 
-mod pool;
-pub use pool::*;
-
 mod hash;
 pub use hash::*;
 
@@ -44,7 +42,8 @@ pub static EXT_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)\W(?:png|jpe?g|gif|webp|p[bgpn]m|tiff?|bmp|ico|hdr)\b").unwrap());
 pub static URL_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^(?i)https?://(?:[a-z0-9.-]+|\[[0-9a-f:]+\])(?:$|[:/?#])").unwrap());
-pub static PG_POOL: Lazy<PgPool> = Lazy::new(|| PgPool::new(&SECRETS.postgres.connect));
+pub static PG_POOL: Lazy<Pool> =
+    Lazy::new(|| SECRETS.postgres.create_pool(tokio_postgres::NoTls).unwrap());
 pub static COMMON_HEADERS: Lazy<HeaderMap<HeaderValue>> = Lazy::new(|| {
     let mut headers = HeaderMap::new();
     headers.insert(header::USER_AGENT, HeaderValue::from_static(USER_AGENT));
@@ -313,7 +312,7 @@ pub const IMAGE_MIMES_NO_WEBP: [&str; 11] = [
 #[derive(Deserialize, Serialize)]
 pub struct CommonImages {
     pub as_of: chrono::DateTime<chrono::Utc>,
-    pub common_images: Vec<CommonImage>
+    pub common_images: Vec<CommonImage>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -338,10 +337,10 @@ impl HashDest {
 }
 
 async fn get_existing(link: &str) -> Result<Option<(Hash, HashDest, i64)>, UserError> {
-    let mut client = PG_POOL.take().await?;
+    let client = PG_POOL.get().await?;
 
     let stmt = client
-        .cache_prepare(
+        .prepare(
             "SELECT hash, id, 'images' as table_name \
              FROM images WHERE link = $1 \
              UNION \
@@ -428,10 +427,6 @@ pub mod secrets {
         pub rapidapi_key: String,
     }
     #[derive(Debug, Deserialize)]
-    pub struct Postgres {
-        pub connect: String,
-    }
-    #[derive(Debug, Deserialize)]
     pub struct Reddit {
         pub client_id: String,
         pub client_secret: String,
@@ -441,7 +436,7 @@ pub mod secrets {
     #[derive(Debug, Deserialize)]
     pub struct Secrets {
         pub imgur: Imgur,
-        pub postgres: Postgres,
+        pub postgres: deadpool_postgres::Config,
         pub reddit: Reddit,
     }
 

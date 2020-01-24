@@ -386,7 +386,7 @@ async fn main() -> Result<(), UserError> {
 
     info!("Processing posts we already have");
 
-    let client = PG_POOL.take().await?;
+    let client = PG_POOL.get().await?;
     let already_have = client
         .query_raw(
             "SELECT reddit_id_int FROM posts \

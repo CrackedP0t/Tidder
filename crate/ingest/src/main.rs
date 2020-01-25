@@ -20,7 +20,8 @@ use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::iter::Iterator;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{RwLock};
+use parking_lot::Mutex;
 use tokio_postgres::types::ToSql;
 use tracing_futures::Instrument;
 use tracing_subscriber::prelude::*;
@@ -278,7 +279,7 @@ async fn ingest_json<R: Read + Send + 'static>(
 
             tokio::spawn(Box::pin(async move {
                 while let Some(post) = {
-                    let mut lock = json_iter.lock().await;
+                    let mut lock = json_iter.lock();
                     let next = lock.next();
                     drop(lock);
                     next

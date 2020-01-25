@@ -10,6 +10,7 @@ use futures::prelude::*;
 use futures::stream::FuturesUnordered;
 use futures::task::Poll;
 use once_cell::sync::Lazy;
+use parking_lot::Mutex;
 use regex::Regex;
 use serde_json::Deserializer;
 use std::borrow::Cow;
@@ -20,8 +21,7 @@ use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::iter::Iterator;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::{RwLock};
-use parking_lot::Mutex;
+use tokio::sync::RwLock;
 use tokio_postgres::types::ToSql;
 use tracing_futures::Instrument;
 use tracing_subscriber::prelude::*;
@@ -284,7 +284,11 @@ async fn ingest_json<R: Read + Send + 'static>(
                     drop(lock);
                     next
                 } {
-                    let span = info_span!("ingest_post", id = post.id.as_str(), url = post.url.as_str());
+                    let span = info_span!(
+                        "ingest_post",
+                        id = post.id.as_str(),
+                        url = post.url.as_str()
+                    );
                     ingest_post(post, verbose, &blacklist, &in_flight)
                         .instrument(span)
                         .await;

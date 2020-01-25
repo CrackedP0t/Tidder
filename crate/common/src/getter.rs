@@ -454,6 +454,7 @@ pub async fn get_hash(orig_link: &str) -> Result<HashGotten, UserError> {
     let found = get_existing(&link).await?;
 
     if let Some((hash, hash_dest, id)) = found {
+        println!("Found");
         return Ok(HashGotten {
             hash,
             end_link: link,

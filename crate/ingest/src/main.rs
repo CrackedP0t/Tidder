@@ -278,13 +278,9 @@ async fn ingest_json<R: Read + Send + 'static>(
 
             tokio::spawn(Box::pin(async move {
                 while let Some(post) = {
-                    println!("Above lock");
                     let mut lock = json_iter.lock().await;
-                    println!("Under lock");
                     let next = lock.next();
-                    println!("Under next");
                     drop(lock);
-                    println!("Dropped");
                     next
                 } {
                     let span = info_span!("ingest_post", id = post.id.as_str(), url = post.url.as_str());

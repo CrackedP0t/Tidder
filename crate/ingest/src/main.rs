@@ -9,7 +9,6 @@ use future::poll_fn;
 use futures::prelude::*;
 use futures::stream::FuturesUnordered;
 use futures::task::Poll;
-use log::{error, info, warn};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::Deserializer;
@@ -23,8 +22,8 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tokio_postgres::types::ToSql;
+use tracing_futures::Instrument;
 use tracing_subscriber::prelude::*;
-use tracing::instrument;
 use url::Url;
 
 struct CheckIter<I> {
@@ -57,7 +56,6 @@ where
     }
 }
 
-#[instrument(level="info")]
 async fn ingest_post(
     mut post: Submission,
     verbose: bool,
@@ -69,12 +67,6 @@ async fn ingest_post(
         .replace("&amp;", "&")
         .replace("&lt;", "<")
         .replace("&gt;", ">");
-
-    let post_info = format!("{}: {}: {}", post.created_utc, post.id, post.url);
-
-    if verbose {
-        info!("{} starting to hash", post_info);
-    }
 
     let is_video = post.is_video;
 
@@ -164,13 +156,13 @@ async fn ingest_post(
 
     let image_id = match save_res {
         Ok(hash_gotten) => {
-            info!("{} successfully hashed", post_info);
+            info!("successfully hashed");
 
             Ok(hash_gotten.id)
         }
         Err(ue) => match ue.source {
             Source::Internal => {
-                error!(
+                eprintln!(
                     "{}{}{}\n{:#?}\n{:#?}",
                     ue.file.unwrap_or(""),
                     ue.line
@@ -219,8 +211,7 @@ async fn ingest_post(
                 let save_error = ue.save_error.or(reqwest_save_error);
 
                 warn!(
-                    "{} failed{}: {}",
-                    post_info,
+                    "failed to save{}: {}",
                     save_error
                         .as_ref()
                         .map(|se| Cow::Owned(format!(" ({})", se)))
@@ -236,11 +227,11 @@ async fn ingest_post(
     match post.save(image_id).await {
         Ok(_) => {
             if verbose {
-                info!("{} successfully saved", post_info);
+                info!("successfully saved");
             }
         }
         Err(e) => {
-            error!("{} failed to save: {:?}", post_info, e);
+            eprintln!("failed to save: {:?}", e);
             std::process::exit(1);
         }
     }
@@ -292,7 +283,10 @@ async fn ingest_json<R: Read + Send + 'static>(
                     drop(lock);
                     next
                 } {
-                    ingest_post(post, verbose, &blacklist, &in_flight).await;
+                    let span = info_span!("ingest_post", id = post.id.as_str(), url = post.url.as_str());
+                    ingest_post(post, verbose, &blacklist, &in_flight)
+                        .instrument(span)
+                        .await;
                 }
             }))
         })

@@ -57,7 +57,7 @@ where
     }
 }
 
-#[instrument]
+#[instrument(level="info")]
 async fn ingest_post(
     mut post: Submission,
     verbose: bool,

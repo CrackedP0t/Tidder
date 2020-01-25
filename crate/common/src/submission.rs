@@ -57,7 +57,7 @@ impl Submission {
                 .as_str(),
         );
 
-        let client = PG_POOL.try_get().await.unwrap();
+        let client = PG_POOL.get().await?;
 
         let modified = match image_id {
             Ok(image_id) => {

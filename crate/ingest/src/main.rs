@@ -23,6 +23,8 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tokio_postgres::types::ToSql;
+use tracing_subscriber::prelude::*;
+use tracing::instrument;
 use url::Url;
 
 struct CheckIter<I> {
@@ -55,6 +57,7 @@ where
     }
 }
 
+#[instrument]
 async fn ingest_post(
     mut post: Submission,
     verbose: bool,
@@ -303,6 +306,8 @@ async fn ingest_json<R: Read + Send + 'static>(
 async fn main() -> Result<(), UserError> {
     static MONTH_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"-(\d\d)").unwrap());
     static YEAR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\d\d\d\d").unwrap());
+
+    tracing_subscriber::fmt::init();
 
     setup_logging!();
     let matches = clap_app!(

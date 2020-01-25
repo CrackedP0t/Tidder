@@ -337,7 +337,7 @@ impl HashDest {
 }
 
 async fn get_existing(link: &str) -> Result<Option<(Hash, HashDest, i64)>, UserError> {
-    let client = PG_POOL.get().await?;
+    let client = PG_POOL.try_get().await.unwrap();
 
     let stmt = client
         .prepare(

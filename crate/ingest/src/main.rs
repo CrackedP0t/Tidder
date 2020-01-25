@@ -7,10 +7,8 @@ use common::*;
 use dashmap::DashMap;
 use future::poll_fn;
 use futures::prelude::*;
-use futures::stream::FuturesUnordered;
 use futures::task::Poll;
 use once_cell::sync::Lazy;
-use parking_lot::Mutex;
 use regex::Regex;
 use serde_json::Deserializer;
 use std::borrow::Cow;
@@ -267,38 +265,28 @@ async fn ingest_json<R: Read + Send + 'static>(
 
     let blacklist = Arc::new(RwLock::new(HashSet::<String>::new()));
     let in_flight = Arc::new(DashMap::<String, u32>::new());
-    let json_iter = Arc::new(Mutex::new(json_iter));
 
     info!("Starting ingestion!");
 
-    (0..CONFIG.worker_count)
-        .map(|_i| {
-            let blacklist = blacklist.clone();
-            let in_flight = in_flight.clone();
-            let json_iter = json_iter.clone();
+    futures::stream::iter(json_iter.map(|post| {
+        let blacklist = blacklist.clone();
+        let in_flight = in_flight.clone();
 
-            tokio::spawn(Box::pin(async move {
-                while let Some(post) = {
-                    let mut lock = json_iter.lock();
-                    let next = lock.next();
-                    drop(lock);
-                    next
-                } {
-                    let span = info_span!(
-                        "ingest_post",
-                        id = post.id.as_str(),
-                        url = post.url.as_str()
-                    );
-                    ingest_post(post, verbose, &blacklist, &in_flight)
-                        .instrument(span)
-                        .await;
-                }
-            }))
-        })
-        .collect::<FuturesUnordered<_>>()
-        .map(drop)
-        .collect::<()>()
-        .await
+        tokio::spawn(Box::pin(async move {
+            let span = info_span!(
+                "ingest_post",
+                id = post.id.as_str(),
+                url = post.url.as_str()
+            );
+            ingest_post(post, verbose, &blacklist, &in_flight)
+                .instrument(span)
+                .await;
+        }))
+    }))
+    .buffer_unordered(CONFIG.worker_count)
+    .map(drop)
+    .collect::<()>()
+    .await
 }
 
 #[tokio::main]

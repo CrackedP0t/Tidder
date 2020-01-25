@@ -4,10 +4,10 @@ use chrono::prelude::*;
 use clap::{clap_app, crate_authors, crate_description, crate_version};
 use common::format;
 use common::*;
-// use dashmap::DashMap;
-// use future::poll_fn;
+use dashmap::DashMap;
+use future::poll_fn;
 use futures::prelude::*;
-// use futures::task::Poll;
+use futures::task::Poll;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::Deserializer;
@@ -59,7 +59,7 @@ async fn ingest_post(
     mut post: Submission,
     verbose: bool,
     blacklist: &RwLock<HashSet<String>>,
-    // in_flight: &DashMap<String, u32>,
+    in_flight: &DashMap<String, u32>,
 ) {
     post.url = post
         .url
@@ -113,42 +113,42 @@ async fn ingest_post(
 
     let save_res = match post_url_res {
         Ok(post_url) => {
-            // let host = post_url.host_str().unwrap();
+            let host = post_url.host_str().unwrap();
 
-            // let custom_limit: Option<&Option<_>> = CONFIG.custom_limits.get(host);
+            let custom_limit: Option<&Option<_>> = CONFIG.custom_limits.get(host);
 
-            // let limit = match custom_limit {
-            //     None => Some(CONFIG.in_flight_limit),
-            //     Some(&Some(limit)) => Some(limit),
-            //     Some(&None) => None,
-            // };
+            let limit = match custom_limit {
+                None => Some(CONFIG.in_flight_limit),
+                Some(&Some(limit)) => Some(limit),
+                Some(&None) => None,
+            };
 
-            // poll_fn(|context| {
-            //     let ready = limit
-            //         .map(|limit| {
-            //             in_flight
-            //                 .get(host)
-            //                 .map(|in_flight| *in_flight < limit)
-            //                 .unwrap_or(true)
-            //         })
-            //         .unwrap_or(true);
+            poll_fn(|context| {
+                let ready = limit
+                    .map(|limit| {
+                        in_flight
+                            .get(host)
+                            .map(|in_flight| *in_flight < limit)
+                            .unwrap_or(true)
+                    })
+                    .unwrap_or(true);
 
-            //     if ready {
-            //         *(in_flight.entry(host.to_owned()).or_insert(0)) += 1;
+                if ready {
+                    *(in_flight.entry(host.to_owned()).or_insert(0)) += 1;
 
-            //         Poll::Ready(host.to_owned())
-            //     } else {
-            //         context.waker().wake_by_ref();
-            //         Poll::Pending
-            //     }
-            // })
-            // .await;
+                    Poll::Ready(host.to_owned())
+                } else {
+                    context.waker().wake_by_ref();
+                    Poll::Pending
+                }
+            })
+            .await;
 
-            save_hash(post_url.as_str(), HashDest::Images).await
+            let res = save_hash(post_url.as_str(), HashDest::Images).await;
 
-            // *in_flight.get_mut(host).unwrap() -= 1;
+            *in_flight.get_mut(host).unwrap() -= 1;
 
-            // res
+            res
         }
         Err(e) => Err(e),
     };
@@ -264,13 +264,13 @@ async fn ingest_json<R: Read + Send + 'static>(
     });
 
     let blacklist = Arc::new(RwLock::new(HashSet::<String>::new()));
-    // let in_flight = Arc::new(DashMap::<String, u32>::new());
+    let in_flight = Arc::new(DashMap::<String, u32>::new());
 
     info!("Starting ingestion!");
 
     futures::stream::iter(json_iter.map(|post| {
         let blacklist = blacklist.clone();
-        // let in_flight = in_flight.clone();
+        let in_flight = in_flight.clone();
 
         tokio::spawn(Box::pin(async move {
             let span = info_span!(
@@ -278,7 +278,7 @@ async fn ingest_json<R: Read + Send + 'static>(
                 id = post.id.as_str(),
                 url = post.url.as_str()
             );
-            ingest_post(post, verbose, &blacklist)
+            ingest_post(post, verbose, &blacklist, &in_flight)
                 .instrument(span)
                 .await;
         }))

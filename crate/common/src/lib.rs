@@ -34,7 +34,7 @@ pub use hash::*;
 mod submission;
 pub use submission::*;
 
-pub use log::{error, info, warn};
+pub use tracing::{error, info, warn};
 
 pub const USER_AGENT: &str = concat!("Tidder ", env!("CARGO_PKG_VERSION"));
 

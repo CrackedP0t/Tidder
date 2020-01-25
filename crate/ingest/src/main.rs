@@ -309,7 +309,6 @@ async fn main() -> Result<(), UserError> {
 
     tracing_subscriber::fmt::init();
 
-    setup_logging!();
     let matches = clap_app!(
         ingest =>
             (version: crate_version!())

@@ -461,8 +461,6 @@ pub async fn get_hash(orig_link: &str) -> Result<HashGotten, UserError> {
         });
     }
 
-    println!("Getting image");
-
     let resp = REQW_CLIENT
         .get(&link)
         .header(header::ACCEPT, {
@@ -479,8 +477,6 @@ pub async fn get_hash(orig_link: &str) -> Result<HashGotten, UserError> {
         .await?
         .error_for_status()
         .map_err(error_for_status_ue)?;
-
-    println!("Done getting image");
 
     let url = resp.url();
     if url

@@ -272,16 +272,19 @@ async fn ingest_json<R: Read + Send + 'static>(
         let blacklist = blacklist.clone();
         let in_flight = in_flight.clone();
 
-        tokio::spawn(Box::pin(async move {
-            let span = info_span!(
-                "ingest_post",
-                id = post.id.as_str(),
-                url = post.url.as_str()
-            );
-            ingest_post(post, verbose, &blacklist, &in_flight)
-                .instrument(span)
-                .await;
-        }))
+        tokio::time::timeout(
+            tokio::time::Duration::from_secs(30),
+            tokio::spawn(Box::pin(async move {
+                let span = info_span!(
+                    "ingest_post",
+                    id = post.id.as_str(),
+                    url = post.url.as_str()
+                );
+                ingest_post(post, verbose, &blacklist, &in_flight)
+                    .instrument(span)
+                    .await;
+            })),
+        )
     }))
     .buffer_unordered(CONFIG.worker_count)
     .map(drop)

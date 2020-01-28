@@ -287,7 +287,9 @@ async fn ingest_json<R: Read + Send + 'static>(
         )
     }))
     .buffer_unordered(CONFIG.worker_count)
-    .map(drop)
+    .map(|t| {
+        t.unwrap().unwrap()
+    })
     .collect::<()>()
     .await
 }

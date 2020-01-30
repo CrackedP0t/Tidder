@@ -22,7 +22,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_postgres::types::ToSql;
 use tracing_futures::Instrument;
-use tracing_subscriber::prelude::*;
 use url::Url;
 
 async fn ingest_post(

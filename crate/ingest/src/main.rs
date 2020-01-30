@@ -222,7 +222,7 @@ async fn ingest_json<R: Read + Send + 'static>(
                     }
                     return None;
                 } else {
-                    panic!(e)
+                    panic!("{}", e)
                 }
             }
         };

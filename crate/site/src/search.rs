@@ -153,7 +153,7 @@ async fn make_findings(hash: Hash, params: Params) -> Result<Findings, UserError
         };
     }
 
-    let client = PG_POOL.take().await?;
+    let client = PG_POOL.get().await?;
 
     let (s_query, a_query, args) = if params.subreddits.is_empty() && params.authors.is_empty() {
         ("", "", vec![tosql!(hash), tosql!(params.distance)])

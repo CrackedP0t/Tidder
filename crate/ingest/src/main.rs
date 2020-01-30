@@ -218,6 +218,9 @@ async fn ingest_json<R: Read + Send + 'static>(
             Ok(post) => post,
             Err(e) => {
                 if e.is_data() {
+                    if verbose {
+                        warn!("{}", e);
+                    }
                     return None;
                 } else {
                     panic!(e)

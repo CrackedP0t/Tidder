@@ -370,7 +370,7 @@ pub async fn get_response(query: SearchQuery) -> impl warp::Reply {
     let tera = create_tera();
 
     #[cfg(not(debug_assertions))]
-    let tera = TERA.force();
+    let tera = Lazy::force(&TERA);
 
     let out =
         Context::from_serialize(&search).and_then(|context| tera.render("search.html", &context));
@@ -402,7 +402,7 @@ pub async fn post_response(form: FormData) -> impl warp::Reply {
     let tera = create_tera();
 
     #[cfg(not(debug_assertions))]
-    let tera = TERA.force();
+    let tera = Lazy::force(&TERA);
 
     let out =
         Context::from_serialize(&search).and_then(|context| tera.render("search.html", &context));

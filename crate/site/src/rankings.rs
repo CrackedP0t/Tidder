@@ -27,7 +27,7 @@ pub async fn get_response() -> Result<impl warp::Reply, UserError> {
     let tera = create_tera();
 
     #[cfg(not(debug_assertions))]
-    let tera = TERA.force();
+    let tera = Lazy::force(&TERA);
 
     let out = tera.render("rankings.html", &Context::from_serialize(&rankings)?)?;
 

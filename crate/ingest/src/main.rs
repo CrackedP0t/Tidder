@@ -264,6 +264,7 @@ async fn ingest_json<R: Read + Send + 'static>(
             let span = info_span!(
                 "ingest_post",
                 id = post.id.as_str(),
+                date = post.created_utc.to_string().as_str(),
                 url = post.url.as_str()
             );
             ingest_post(post, verbose, &blacklist, &in_flight)

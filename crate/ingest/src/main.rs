@@ -25,36 +25,6 @@ use tracing_futures::Instrument;
 use tracing_subscriber::prelude::*;
 use url::Url;
 
-struct CheckIter<I> {
-    iter: I,
-}
-
-impl<I> CheckIter<I> {
-    fn new(iter: I) -> CheckIter<I> {
-        CheckIter { iter }
-    }
-}
-
-impl<I, T, E> Iterator for CheckIter<I>
-where
-    I: Iterator<Item = Result<T, E>>,
-    E: std::fmt::Display,
-{
-    type Item = T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            match self.iter.next() {
-                None => return None,
-                Some(Err(_e)) => {
-                    continue;
-                }
-                Some(Ok(v)) => return Some(v),
-            }
-        }
-    }
-}
-
 async fn ingest_post(
     mut post: Submission,
     verbose: bool,
@@ -241,12 +211,23 @@ async fn ingest_json<R: Read + Send + 'static>(
     mut already_have: Option<BTreeSet<i64>>,
     json_stream: R,
 ) {
-    let json_iter = Deserializer::from_reader(json_stream)
-        .into_iter::<Submission>()
-        .map(|res| res.map_err(map_ue!()).and_then(|sub| sub.finalize()));
+    let json_iter = Deserializer::from_reader(json_stream).into_iter::<Submission>();
 
-    let json_iter = CheckIter::new(json_iter).filter(move |post| {
-        post.is_video
+    let json_iter = json_iter.filter_map(move |post| {
+        let post = match post {
+            Ok(post) => post,
+            Err(e) => {
+                if e.is_data() {
+                    return None;
+                } else {
+                    panic!(e)
+                }
+            }
+        };
+
+        let post = post.finalize().unwrap();
+
+        if post.is_video
             || (!post.is_self
                 && post.promoted.map(|promoted| !promoted).unwrap_or(true)
                 && ((EXT_RE.is_match(&post.url) && URL_RE.is_match(&post.url))
@@ -261,6 +242,11 @@ async fn ingest_json<R: Read + Send + 'static>(
                         !had
                     }
                 })
+        {
+            Some(post)
+        } else {
+            None
+        }
     });
 
     let blacklist = Arc::new(RwLock::new(HashSet::<String>::new()));

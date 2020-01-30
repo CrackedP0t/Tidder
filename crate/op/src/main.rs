@@ -143,7 +143,7 @@ async fn search(link: &str, distance: Option<i64>) -> Result<(), UserError> {
     let hash = hash_from_memory(&image)?;
 
     let found = PG_POOL
-        .take()
+        .get()
         .await?
         .query(
             "SELECT hash <-> $1 as distance, images.link, permalink, \
@@ -175,7 +175,7 @@ async fn search(link: &str, distance: Option<i64>) -> Result<(), UserError> {
 
 async fn rank() -> Result<(), UserError> {
     let rows = PG_POOL
-        .take()
+        .get()
         .await?
         .query(
             "SELECT COUNT(*) AS num,

@@ -1,7 +1,3 @@
-#[cfg(debug_assertions)]
-use super::render::create_tera;
-#[cfg(not(debug_assertions))]
-use super::render::TERA;
 use common::*;
 use http::StatusCode;
 use serde::Serialize;
@@ -23,11 +19,7 @@ pub async fn get_response() -> Result<impl warp::Reply, UserError> {
         common_images: images.common_images
     };
 
-    #[cfg(debug_assertions)]
-    let tera = create_tera();
-
-    #[cfg(not(debug_assertions))]
-    let tera = Lazy::force(&TERA);
+    let tera = super::get_tera!();
 
     let out = tera.render("rankings.html", &Context::from_serialize(&rankings)?)?;
 

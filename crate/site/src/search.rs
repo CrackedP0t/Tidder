@@ -1,7 +1,3 @@
-#[cfg(debug_assertions)]
-use super::render::create_tera;
-#[cfg(not(debug_assertions))]
-use super::render::TERA;
 use bytes::Buf;
 use common::format;
 use common::*;
@@ -366,11 +362,7 @@ async fn post_search(mut form: FormData) -> Search {
 pub async fn get_response(query: SearchQuery) -> impl warp::Reply {
     let search = get_search(query).await;
 
-    #[cfg(debug_assertions)]
-    let tera = create_tera();
-
-    #[cfg(not(debug_assertions))]
-    let tera = Lazy::force(&TERA);
+    let tera = super::get_tera!();
 
     let out =
         Context::from_serialize(&search).and_then(|context| tera.render("search.html", &context));
@@ -398,11 +390,7 @@ pub async fn get_response(query: SearchQuery) -> impl warp::Reply {
 pub async fn post_response(form: FormData) -> impl warp::Reply {
     let search = post_search(form).await;
 
-    #[cfg(debug_assertions)]
-    let tera = create_tera();
-
-    #[cfg(not(debug_assertions))]
-    let tera = Lazy::force(&TERA);
+    let tera = super::get_tera!();
 
     let out =
         Context::from_serialize(&search).and_then(|context| tera.render("search.html", &context));

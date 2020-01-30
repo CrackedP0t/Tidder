@@ -62,3 +62,17 @@ pub fn create_tera() -> Tera {
 }
 
 pub static TERA: Lazy<Tera> = Lazy::new(create_tera);
+
+#[macro_export]
+macro_rules! get_tera {
+    () => {
+        {
+            #[cfg(debug_assertions)]
+            let tera = crate::render::create_tera();
+            #[cfg(not(debug_assertions))]
+            let tera = once_cell::sync::Lazy::force(&crate::render::TERA);
+
+            tera
+        }
+    }
+}

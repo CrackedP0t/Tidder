@@ -38,45 +38,43 @@ async fn ingest_post(
 
     let is_video = post.is_video;
 
-    let post_url_res = (|| {
-        async {
-            let mut post_url = post.url.as_str();
+    let post_url_res = (|| async {
+        let mut post_url = post.url.as_str();
 
-            let blacklist_guard = blacklist.read().await;
+        let blacklist_guard = blacklist.read().await;
 
-            if get_host(&post_url)
-                .map(|host| blacklist_guard.contains(host))
-                .unwrap_or(false)
-            {
-                return Err(ue_save!("blacklisted", "blacklisted"));
-            }
-
-            if CONFIG.banned.iter().any(|banned| banned.matches(post_url)) {
-                return Err(ue_save!("banned", "banned"));
-            }
-
-            if is_video {
-                post_url = post
-                    .preview
-                    .as_ref()
-                    .ok_or_else(|| ue_save!("is_video but no preview", "video_no_preview"))?
-            }
-            let post_url =
-                Url::parse(&post_url).map_err(map_ue_save!("invalid URL", "url_invalid"))?;
-
-            let post_url =
-                if let Some("v.redd.it") = post_url.host_str() {
-                    Url::parse(post.preview.as_ref().ok_or_else(|| {
-                        ue_save!("v.redd.it but no preview", "v_redd_it_no_preview")
-                    })?)?
-                } else {
-                    post_url
-                };
-
-            drop(blacklist_guard);
-
-            Ok(post_url)
+        if get_host(&post_url)
+            .map(|host| blacklist_guard.contains(host))
+            .unwrap_or(false)
+        {
+            return Err(ue_save!("blacklisted", "blacklisted"));
         }
+
+        if CONFIG.banned.iter().any(|banned| banned.matches(post_url)) {
+            return Err(ue_save!("banned", "banned"));
+        }
+
+        if is_video {
+            post_url = post
+                .preview
+                .as_ref()
+                .ok_or_else(|| ue_save!("is_video but no preview", "video_no_preview"))?
+        }
+        let post_url = Url::parse(&post_url).map_err(map_ue_save!("invalid URL", "url_invalid"))?;
+
+        let post_url = if let Some("v.redd.it") = post_url.host_str() {
+            Url::parse(
+                post.preview
+                    .as_ref()
+                    .ok_or_else(|| ue_save!("v.redd.it but no preview", "v_redd_it_no_preview"))?,
+            )?
+        } else {
+            post_url
+        };
+
+        drop(blacklist_guard);
+
+        Ok(post_url)
     })()
     .await;
 
@@ -229,21 +227,21 @@ async fn ingest_json<R: Read + Send + 'static>(
 
         let post = post.finalize().unwrap();
 
-        if post.is_video
-            || (!post.is_self
-                && post.promoted.map(|promoted| !promoted).unwrap_or(true)
-                && ((EXT_RE.is_match(&post.url) && URL_RE.is_match(&post.url))
-                    || is_link_special(&post.url))
-                && match already_have {
-                    None => true,
-                    Some(ref mut set) => {
-                        let had = set.remove(&post.id_int);
-                        if set.is_empty() {
-                            already_have = None;
-                        }
-                        !had
+        if !post.is_self
+            && post.promoted.map_or(true, |promoted| !promoted)
+            && (post.is_video
+                || (EXT_RE.is_match(&post.url) && URL_RE.is_match(&post.url))
+                || is_link_special(&post.url))
+            && match already_have {
+                None => true,
+                Some(ref mut set) => {
+                    let had = set.remove(&post.id_int);
+                    if set.is_empty() {
+                        already_have = None;
                     }
-                })
+                    !had
+                }
+            }
         {
             Some(post)
         } else {
@@ -374,11 +372,9 @@ async fn main() -> Result<(), UserError> {
             vec![&date as &dyn ToSql, &next_month as &dyn ToSql],
         )
         .await?
-        .try_fold(BTreeSet::new(), move |mut already_have, row| {
-            async move {
-                already_have.insert(row.get(0));
-                Ok(already_have)
-            }
+        .try_fold(BTreeSet::new(), move |mut already_have, row| async move {
+            already_have.insert(row.get(0));
+            Ok(already_have)
         })
         .await?;
 

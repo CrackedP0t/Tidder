@@ -15,9 +15,9 @@ Config(
         AnyScheme("www.jpl.nasa.gov/visions-of-the-future/tif_150/Earth_150.tif"),
     ],
     custom_limits: {
-        "imgur.com": Some(100),
-        "i.redd.it": Some(20),
-        "v.redd.it": Some(20)
+        "imgur.com": None,
+        "i.redd.it": None,
+        "v.redd.it": None
     },
     enable_imgur_api: false,
     in_flight_limit: 1,
@@ -40,5 +40,5 @@ Config(
         "redd.it",
         "reddit.com",
     ],
-    worker_count: 128
+    worker_count: 256
 )

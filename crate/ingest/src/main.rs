@@ -36,6 +36,8 @@ async fn ingest_post(
         .replace("&lt;", "<")
         .replace("&gt;", ">");
 
+    debug!("Starting to ingest");
+
     let is_video = post.is_video;
 
     let post_url_res = (|| async {
@@ -109,7 +111,9 @@ async fn ingest_post(
                     Poll::Pending
                 }
             })
-            .await;
+                .await;
+
+            debug!("Starting to save");
 
             let res = save_hash(post_url.as_str(), HashDest::Images).await;
 

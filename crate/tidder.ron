@@ -13,6 +13,7 @@ Config(
         AnyScheme("www.worldcollectorsnet.com/wp-content/uploads/2015/02/pezgal.gif"),
         AnyScheme("imgur.com/qB8pXfl"),
         AnyScheme("www.jpl.nasa.gov/visions-of-the-future/tif_150/Earth_150.tif"),
+        AnyScheme("i.imgur.com/TSUMR7a.gif"),
     ],
     custom_limits: {
         "imgur.com": None,

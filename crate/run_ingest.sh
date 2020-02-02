@@ -2,9 +2,13 @@
 
 set -e
 
-~/.cargo/bin/cargo build --bin ingest --release
-
-for URL in $(< ingest/todo.txt); do
-    target/release/ingest $@ $URL
-    tail -n +2 ingest/todo.txt | sponge ingest/todo.txt
+for URL in $(< ~/tidder/crate/ingest/todo.txt); do
+    ~/.cargo/bin/cargo build --bin ingest --release
+    cd /mnt/permanent/archives
+    rm *
+    wget $URL
+    7z x *
+    RUST_LOG="info" target/release/ingest $@ !(*.*)
+    tail -n +2i ~/tidder/crate/ingest/todo.txt | sponge ~/tidder/crate/ingest/todo.txt
+    rm *
 done

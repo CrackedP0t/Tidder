@@ -4,9 +4,10 @@ set -e
 shopt -s extglob
 
 for URL in $(< ~/tidder/crate/ingest/todo.txt); do
+    cd ~/tidder/crate/
     ~/.cargo/bin/cargo build --bin ingest --release
     cd /mnt/permanent/archives
-    rm *
+    rm -f *
     wget $URL
     7z x *
     RUST_LOG="info" ~/tidder/crate/target/release/ingest $@ !(*.*)

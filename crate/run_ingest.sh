@@ -10,6 +10,6 @@ for URL in $(< ~/tidder/crate/ingest/todo.txt); do
     wget $URL
     7z x *
     RUST_LOG="info" ~/tidder/crate/target/release/ingest $@ !(*.*)
-    tail -n +2i ~/tidder/crate/ingest/todo.txt | sponge ~/tidder/crate/ingest/todo.txt
+    tail -n +2 ~/tidder/crate/ingest/todo.txt | sponge ~/tidder/crate/ingest/todo.txt
     rm *
 done

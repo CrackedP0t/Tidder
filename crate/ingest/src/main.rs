@@ -12,14 +12,13 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::Deserializer;
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 use std::error::Error as _;
 use std::fs::{remove_file, File, OpenOptions};
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::iter::Iterator;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tokio_postgres::types::ToSql;
 use tracing_futures::Instrument;
 use url::Url;
@@ -27,7 +26,7 @@ use url::Url;
 async fn ingest_post(
     mut post: Submission,
     verbose: bool,
-    blacklist: &RwLock<HashSet<String>>,
+    blacklist: &DashMap<String, ()>,
     in_flight: &DashMap<String, u32>,
 ) {
     post.url = post
@@ -43,10 +42,8 @@ async fn ingest_post(
     let post_url_res = (|| async {
         let mut post_url = post.url.as_str();
 
-        let blacklist_guard = blacklist.read().await;
-
         if get_host(&post_url)
-            .map(|host| blacklist_guard.contains(host))
+            .map(|host| blacklist.contains_key(host))
             .unwrap_or(false)
         {
             return Err(ue_save!("blacklisted", "blacklisted"));
@@ -73,8 +70,6 @@ async fn ingest_post(
         } else {
             post_url
         };
-
-        drop(blacklist_guard);
 
         Ok(post_url)
     })()
@@ -111,7 +106,7 @@ async fn ingest_post(
                     Poll::Pending
                 }
             })
-                .await;
+            .await;
 
             debug!("Starting to save");
 
@@ -158,7 +153,7 @@ async fn ingest_post(
                             if let Ok(url) = Url::parse(&post.url) {
                                 if let Some(host) = url.host_str() {
                                     if !CONFIG.no_blacklist.iter().any(|n| host.ends_with(n)) {
-                                        blacklist.write().await.insert(host.to_string());
+                                        blacklist.insert(host.to_string(), ());
                                     }
                                 }
                             }
@@ -253,7 +248,7 @@ async fn ingest_json<R: Read + Send + 'static>(
         }
     });
 
-    let blacklist = Arc::new(RwLock::new(HashSet::<String>::new()));
+    let blacklist = Arc::new(DashMap::<String, ()>::new());
     let in_flight = Arc::new(DashMap::<String, u32>::new());
 
     info!("Starting ingestion!");

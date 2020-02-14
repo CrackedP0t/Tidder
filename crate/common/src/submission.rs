@@ -33,9 +33,9 @@ pub struct Submission {
 impl Submission {
     pub fn finalize(mut self) -> Result<Self, UserError> {
         fn unescape(s: &str) -> String {
-            s.replace("&amp;", "&")
-                .replace("&lt;", "<")
+            s.replace("&lt;", "<")
                 .replace("&gt;", ">")
+                .replace("&amp;", "&")
         }
 
         self.url = unescape(&self.url);

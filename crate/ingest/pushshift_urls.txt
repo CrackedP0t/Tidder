@@ -163,3 +163,9 @@ https://files.pushshift.io/reddit/submissions/RS_2018-11.zst
 https://files.pushshift.io/reddit/submissions/RS_2018-12.zst
 https://files.pushshift.io/reddit/submissions/RS_2019-01.zst
 https://files.pushshift.io/reddit/submissions/RS_2019-02.zst
+https://files.pushshift.io/reddit/submissions/RS_2019-03.zst
+https://files.pushshift.io/reddit/submissions/RS_2019-04.zst
+https://files.pushshift.io/reddit/submissions/RS_2019-05.zst
+https://files.pushshift.io/reddit/submissions/RS_2019-06.zst
+https://files.pushshift.io/reddit/submissions/RS_2019-07.zst
+https://files.pushshift.io/reddit/submissions/RS_2019-08.zst

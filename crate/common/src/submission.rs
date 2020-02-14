@@ -245,21 +245,21 @@ mod de_sub {
 
     pub fn preview<'de, D>(des: D) -> Result<Option<String>, D::Error>
     where
-        D: Deserializer<'de>
+        D: Deserializer<'de>,
     {
         #[derive(Deserialize)]
         struct Resolution {
-            url: String
+            url: String,
         }
 
         #[derive(Deserialize)]
         struct Image {
-            source: Resolution
+            source: Resolution,
         }
 
         #[derive(Deserialize)]
         struct Preview {
-            images: [Image; 1]
+            images: [Image; 1],
         }
 
         Ok(Option::<Preview>::deserialize(des)?.map(|p| {

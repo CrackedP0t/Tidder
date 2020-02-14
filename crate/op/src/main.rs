@@ -109,24 +109,22 @@ async fn save(id: &str) -> Result<(), UserError> {
 
 async fn hash(links: &[&str]) -> Result<(), UserError> {
     futures::stream::iter(links.iter())
-        .fold(None, move |last, arg| {
-            async move {
-                let HashGotten { hash, end_link, .. } = match get_hash(&arg).await {
-                    Ok(res) => res,
-                    Err(e) => {
-                        warn!("{} failed: {:?}", arg, e);
-                        return last;
-                    }
-                };
-
-                let mut out = format!("{}: {}", end_link, hash);
-                if let Some(last) = last {
-                    out = format!("{} ({})", out, distance(hash, last));
+        .fold(None, move |last, arg| async move {
+            let HashGotten { hash, end_link, .. } = match get_hash(&arg).await {
+                Ok(res) => res,
+                Err(e) => {
+                    warn!("{} failed: {:?}", arg, e);
+                    return last;
                 }
-                println!("{}", out);
+            };
 
-                Some(hash)
+            let mut out = format!("{}: {}", end_link, hash);
+            if let Some(last) = last {
+                out = format!("{} ({})", out, distance(hash, last));
             }
+            println!("{}", out);
+
+            Some(hash)
         })
         .await;
 

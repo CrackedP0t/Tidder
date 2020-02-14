@@ -26,22 +26,22 @@ async fn main() {
     let router = warp::path::end()
         .and(
             method::get()
-                .and(query::query::<SearchQuery>().and_then(|query| {
-                    async { Ok::<_, Rejection>(search::get_response(query).await) }
+                .and(query::query::<SearchQuery>().and_then(|query| async {
+                    Ok::<_, Rejection>(search::get_response(query).await)
                 }))
-                .or(method::post().and(multipart::form()).and_then(|form| {
-                    async move { Ok::<_, Rejection>(search::post_response(form).await) }
-                })),
+                .or(method::post()
+                    .and(multipart::form())
+                    .and_then(|form| async move {
+                        Ok::<_, Rejection>(search::post_response(form).await)
+                    })),
         )
-        .or(warp::path::path("rankings").and_then(|| {
-            async {
-                rankings::get_response()
-                    .map_err(|ue| {
-                        println!("{:?}", ue);
-                        warp::reject::custom(UEReject(ue))
-                    })
-                    .await
-            }
+        .or(warp::path::path("rankings").and_then(|| async {
+            rankings::get_response()
+                .map_err(|ue| {
+                    println!("{:?}", ue);
+                    warp::reject::custom(UEReject(ue))
+                })
+                .await
         }));
 
     let ip = std::env::args()

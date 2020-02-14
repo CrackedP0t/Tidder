@@ -16,7 +16,7 @@ pub async fn get_response() -> Result<impl warp::Reply, UserError> {
 
     let rankings = Rankings {
         as_of: images.as_of.format("%F %T %Z").to_string(),
-        common_images: images.common_images
+        common_images: images.common_images,
     };
 
     let tera = super::get_tera!();

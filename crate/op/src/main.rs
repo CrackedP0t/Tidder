@@ -179,7 +179,7 @@ async fn rank() -> Result<(), UserError> {
         .await?
         .query(
             "SELECT COUNT(*) AS num,
-             (SELECT COALESCE(preview, link) FROM images AS images2 WHERE images.hash <@ (images2.hash, 0) LIMIT 1) AS link
+             (SELECT link FROM images AS images2 WHERE images.hash <@ (images2.hash, 0) LIMIT 1) AS link
              FROM images GROUP BY hash ORDER BY num DESC LIMIT 100", &[]).await?;
 
     let commons = CommonImages {

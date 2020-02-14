@@ -32,6 +32,15 @@ pub struct Submission {
 
 impl Submission {
     pub fn finalize(mut self) -> Result<Self, UserError> {
+        fn unescape(s: &str) -> String {
+            s.replace("&amp;", "&")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+        }
+
+        self.url = unescape(&self.url);
+        self.title = unescape(&self.title);
+
         self.id_int = i64::from_str_radix(&self.id, 36).map_err(|e| {
             UserError::new_source(
                 format!("Couldn't parse number from ID '{}'", self.id),

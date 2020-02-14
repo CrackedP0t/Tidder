@@ -14,6 +14,13 @@ pub fn new_domain_with_path_re(domain: &str) -> Result<Regex, regex::Error> {
     ))
 }
 
+pub fn is_link_reddituploads(link: &str) -> bool {
+    static REDDITUPLOADS_LINK_RE: Lazy<Regex> =
+        Lazy::new(|| new_domain_with_path_re("i.reddituploads.com").unwrap());
+
+    REDDITUPLOADS_LINK_RE.is_match(link)
+}
+
 pub fn is_link_imgur(link: &str) -> bool {
     static IMGUR_LINK_RE: Lazy<Regex> = Lazy::new(|| new_domain_with_path_re("imgur.com").unwrap());
 
@@ -43,7 +50,10 @@ pub fn is_wikipedia_file(link: &str) -> bool {
 }
 
 pub fn is_link_special(link: &str) -> bool {
-    is_link_imgur(link) || is_link_gfycat(link) || is_wikipedia_file(link)
+    is_link_reddituploads(link)
+        || is_link_imgur(link)
+        || is_link_gfycat(link)
+        || is_wikipedia_file(link)
 }
 
 pub async fn follow_link(url: Url) -> Result<String, UserError> {

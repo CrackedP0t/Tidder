@@ -29,12 +29,6 @@ async fn ingest_post(
     blacklist: &DashMap<String, ()>,
     in_flight: &DashMap<String, u32>,
 ) {
-    post.url = post
-        .url
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">");
-
     debug!("Starting to ingest");
 
     let is_video = post.is_video;

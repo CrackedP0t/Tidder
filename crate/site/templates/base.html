@@ -38,6 +38,20 @@
          h1 a:visited {
              color: white;
          }
+         .progress-box {
+             position: absolute;
+             top: 0;
+             left: 50%;
+             transform: translateX(-50%);
+             background-color: #242257;
+             display: flex;
+             flex-direction: column;
+             border-bottom-left-radius: 1rem;
+             border-bottom-right-radius: 1rem;
+             justify-content: center;
+             align-items: center;
+             padding: .5rem .75rem;
+         }
          .info-box {
              position: absolute;
              top: 0;
@@ -56,6 +70,9 @@
         </style>
     </head>
     <body>
+        <div class="progress-box">
+            <span>Currently ingesting {{ progress() }}</span>
+        </div>
         <div class="info-box">
             <span>Made by Elaina Martineau</span>
             <span><a href="https://github..com/CrackedP0t/Tidder">GitHub</a> • <a href="https://linkedin.com/elainamartineau">LinkedIn</a></span>

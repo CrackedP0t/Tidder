@@ -242,31 +242,28 @@ async fn get_search(qs: SearchQuery) -> Search {
 
     let err_form = form.clone();
 
-    let findings =
-        match imagelink {
-            None => Ok(None),
-            Some(link) => {
-                if &link != "" {
-                    match Url::parse(&link).map_err(map_ue!("invalid URL")) {
-                        Ok(_url) => match Params::from_form(&form) {
-                            Ok(params) => {
-                                save_hash(&link, HashDest::ImageCache)
-                                    .and_then(|hash_saved| {
-                                        async move {
-                                            make_findings(hash_saved.hash, params).await.map(Some)
-                                        }
-                                    })
-                                    .await
-                            }
-                            Err(e) => Err(e),
-                        },
+    let findings = match imagelink {
+        None => Ok(None),
+        Some(link) => {
+            if &link != "" {
+                match Url::parse(&link).map_err(map_ue!("invalid URL")) {
+                    Ok(_url) => match Params::from_form(&form) {
+                        Ok(params) => {
+                            save_hash(&link, HashDest::ImageCache)
+                                .and_then(|hash_saved| async move {
+                                    make_findings(hash_saved.hash, params).await.map(Some)
+                                })
+                                .await
+                        }
                         Err(e) => Err(e),
-                    }
-                } else {
-                    Ok(None)
+                    },
+                    Err(e) => Err(e),
                 }
+            } else {
+                Ok(None)
             }
-        };
+        }
+    };
 
     match findings {
         Ok(findings) => Search {
@@ -292,55 +289,53 @@ async fn post_search(mut form: FormData) -> Search {
         String::from_utf8_lossy(utf8.as_slice()).to_string()
     }
 
-    let do_findings = move || {
-        async move {
-            let mut map: HashMap<String, Vec<u8>> = HashMap::new();
+    let do_findings = move || async move {
+        let mut map: HashMap<String, Vec<u8>> = HashMap::new();
 
-            while let Some(mut part) = form.try_next().await? {
-                let name = part.name().to_string();
-                let mut data = Vec::<u8>::new();
+        while let Some(mut part) = form.try_next().await? {
+            let name = part.name().to_string();
+            let mut data = Vec::<u8>::new();
 
-                while let Some(b) = part.data().await {
-                    let b = b?;
-                    data.extend(b.bytes());
-                }
-
-                map.insert(name, data);
+            while let Some(b) = part.data().await {
+                let b = b?;
+                data.extend(b.bytes());
             }
 
-            let default_form = Form::default();
-            let form = Form {
-                distance: map
-                    .get("distance")
-                    .map(utf8_to_string)
-                    .unwrap_or(default_form.distance),
-                nsfw: map
-                    .get("nsfw")
-                    .map(utf8_to_string)
-                    .unwrap_or(default_form.nsfw),
-                subreddits: map
-                    .get("subreddits")
-                    .map(utf8_to_string)
-                    .unwrap_or(default_form.subreddits),
-                authors: map
-                    .get("authors")
-                    .map(utf8_to_string)
-                    .unwrap_or(default_form.authors),
-                ..Default::default()
-            };
-
-            let hash = map
-                .get("imagefile")
-                .map(|bytes| hash_from_memory(bytes))
-                .transpose()?;
-
-            let params = Params::from_form(&form)?;
-
-            Ok(match hash {
-                None => (form, None),
-                Some(hash) => (form, Some(make_findings(hash, params).await?)),
-            })
+            map.insert(name, data);
         }
+
+        let default_form = Form::default();
+        let form = Form {
+            distance: map
+                .get("distance")
+                .map(utf8_to_string)
+                .unwrap_or(default_form.distance),
+            nsfw: map
+                .get("nsfw")
+                .map(utf8_to_string)
+                .unwrap_or(default_form.nsfw),
+            subreddits: map
+                .get("subreddits")
+                .map(utf8_to_string)
+                .unwrap_or(default_form.subreddits),
+            authors: map
+                .get("authors")
+                .map(utf8_to_string)
+                .unwrap_or(default_form.authors),
+            ..Default::default()
+        };
+
+        let hash = map
+            .get("imagefile")
+            .map(|bytes| hash_from_memory(bytes))
+            .transpose()?;
+
+        let params = Params::from_form(&form)?;
+
+        Ok(match hash {
+            None => (form, None),
+            Some(hash) => (form, Some(make_findings(hash, params).await?)),
+        })
     };
 
     let output = do_findings().await;
@@ -378,10 +373,13 @@ pub async fn get_response(query: SearchQuery) -> impl warp::Reply {
                 })
                 .unwrap_or(StatusCode::OK),
         ),
-        Err(_) => (
+        Err(e) => {
+            eprintln!("{}", e);
+            (
             "<h1>Error 500: Internal Server Error</h1>".to_string(),
             StatusCode::INTERNAL_SERVER_ERROR,
-        ),
+            )
+        },
     };
 
     warp::reply::with_status(warp::reply::html(page), status)

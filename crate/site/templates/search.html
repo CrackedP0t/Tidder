@@ -5,16 +5,8 @@
 {% block content %}
 <style>
  .rankings-box {
-     position: absolute;
-     top: 0;
      left: 0;
-     text-align: center;
-     background-color: #242257;
-     display: flex;
      border-bottom-right-radius: 1rem;
-     justify-content: center;
-     align-items: center;
-     padding: .5rem .75rem;
  }
  .rankings-box a {
      color: white;
@@ -27,7 +19,7 @@
      justify-content: center;
      margin: 0 2rem;
      {% else %}
-     margin: 2rem;
+     margin: 4rem 2rem;
      {% endif %}
  }
  .search-header {
@@ -76,7 +68,7 @@
      min-width: 30vw;
  }
 </style>
-<div class="rankings-box"><a href="/rankings">The 100 most common images</a></div>
+<div class="rankings-box top-box"><a href="/rankings">The 100 most common images</a></div>
 <div class="search-wrapper">
     <div class="search-header">
         <h1><a href="/">Search for an image!</a></h1>

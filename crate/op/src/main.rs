@@ -7,11 +7,18 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::io::Write;
 
-async fn post(id: &str) -> Result<(), UserError> {
+async fn post(ids: impl Iterator<Item = &str>) -> Result<(), UserError> {
+    const REDDIT_USER_AGENT: &str = concat!(
+        "linux:xyz.tidder.op:v",
+        env!("CARGO_PKG_VERSION"),
+        " (by /u/CrackedP0t)"
+    );
+
     let client = Client::new();
 
     let auth_resp = client
         .post("https://www.reddit.com/api/v1/access_token")
+        .header(USER_AGENT, REDDIT_USER_AGENT)
         .basic_auth(
             &SECRETS.reddit.client_id,
             Some(&SECRETS.reddit.client_secret),
@@ -32,21 +39,23 @@ async fn post(id: &str) -> Result<(), UserError> {
             .as_str()
             .ok_or_else(|| ue!("Access token not found"))?;
 
-        let link = format!("https://oauth.reddit.com/by_id/t3_{}", id);
+        let link = format!(
+            "https://oauth.reddit.com/by_id/{}",
+            ids.map(|id| format!("t3_{},", id)).collect::<String>()
+        );
 
         let resp = client
             .get(&link)
+            .header(USER_AGENT, REDDIT_USER_AGENT)
             .query(&[("raw_json", "1")])
-            .header(USER_AGENT, "Tidder 0.0.1")
             .bearer_auth(access_token)
             .send()
             .await?
             .error_for_status()?;
 
-        println!(
-            "{:#}",
-            resp.json::<Value>().await?["data"]["children"][0]["data"]
-        );
+        for post in resp.json::<Value>().await?["data"]["children"].as_array().unwrap() {
+            println!("{:#}", post["data"]);
+        }
 
         Ok(())
     } else {
@@ -206,7 +215,7 @@ async fn main() -> Result<(), UserError> {
          (@arg LINKS: +required ... "The links you wish to hash")
         )
         (@subcommand post =>
-         (@arg ID: +required "Reddit's ID for the post")
+         (@arg ID: +required ... "Reddit's IDs for the posts")
         )
         (@subcommand rank => )
         (@subcommand save =>
@@ -224,7 +233,7 @@ async fn main() -> Result<(), UserError> {
 
     match op_name {
         "hash" => hash(&op_matches.values_of("LINKS").unwrap().collect::<Vec<_>>()).await,
-        "post" => post(op_matches.value_of("ID").unwrap()).await,
+        "post" => post(op_matches.values_of("ID").unwrap()).await,
         "rank" => rank().await,
         "save" => save(op_matches.value_of("ID").unwrap()).await,
         "search" => {

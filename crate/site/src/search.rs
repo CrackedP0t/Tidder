@@ -189,7 +189,7 @@ async fn make_findings(hash: Hash, params: Params) -> Result<Findings, UserError
     let rows = client
         .query(
             format!(
-                "SELECT hash <-> $1 as distance, images.link, permalink, \
+                "SELECT hash <-> $1 as distance, COALESCE(posts.preview, images.link) as link, permalink, \
                  score, author, created_utc, subreddit, title \
                  FROM posts INNER JOIN images \
                  ON hash <@ ($1, $2) \

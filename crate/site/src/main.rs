@@ -19,7 +19,7 @@ impl warp::reject::Reject for UEReject {}
 
 #[tokio::main]
 async fn main() {
-    setup_logging!();
+    tracing_subscriber::fmt::init();
 
     Lazy::force(&render::TERA);
 
@@ -48,9 +48,11 @@ async fn main() {
         .nth(1)
         .unwrap_or_else(|| "127.0.0.1".to_string());
 
-    println!("Serving on http://{}:7878", ip);
+    let port = std::env::args().nth(2).map(|p| p.parse().unwrap()).unwrap_or(7878);
+
+    println!("Serving on http://{}:{}", ip, port);
 
     warp::serve(router)
-        .run((ip.parse::<std::net::IpAddr>().unwrap(), 7878))
+        .run((ip.parse::<std::net::IpAddr>().unwrap(), port))
         .await;
 }

@@ -42,13 +42,17 @@ async fn main() {
                     warp::reject::custom(UEReject(ue))
                 })
                 .await
-        }));
+        }))
+        .with(warp::log("site"));
 
     let ip = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "127.0.0.1".to_string());
 
-    let port = std::env::args().nth(2).map(|p| p.parse().unwrap()).unwrap_or(7878);
+    let port = std::env::args()
+        .nth(2)
+        .map(|p| p.parse().unwrap())
+        .unwrap_or(7878);
 
     println!("Serving on http://{}:{}", ip, port);
 

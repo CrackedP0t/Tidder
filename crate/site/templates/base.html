@@ -38,42 +38,37 @@
          h1 a:visited {
              color: white;
          }
-         .progress-box {
+         .top-box {
              position: absolute;
              top: 0;
+             display: flex;
+             flex-direction: column;
+             padding: .5rem .75rem;
+             justify-content: center;
+             align-items: center;
+             background-color: #242257;
+         }
+         .top-box a {
+             color: white;
+         }
+         .progress-box {
              left: 50%;
              transform: translateX(-50%);
-             background-color: #242257;
-             display: flex;
-             flex-direction: column;
              border-bottom-left-radius: 1rem;
              border-bottom-right-radius: 1rem;
-             justify-content: center;
-             align-items: center;
-             padding: .5rem .75rem;
          }
          .info-box {
-             position: absolute;
-             top: 0;
              right: 0;
-             background-color: #242257;
              display: flex;
-             flex-direction: column;
              border-bottom-left-radius: 1rem;
-             justify-content: center;
-             align-items: center;
-             padding: .5rem .75rem;
-         }
-         .info-box a {
-             color: white;
          }
         </style>
     </head>
     <body>
-        <div class="progress-box">
+        <div class="progress-box top-box">
             <span>Currently ingesting {{ progress() }}</span>
         </div>
-        <div class="info-box">
+        <div class="info-box top-box">
             <span>Made by Elaina Martineau</span>
             <span><a href="https://github.com/CrackedP0t/Tidder">GitHub</a> • <a href="https://linkedin.com/in/elainamartineau">LinkedIn</a></span>
         </div>

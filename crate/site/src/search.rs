@@ -92,6 +92,7 @@ struct Search {
     findings: Option<Findings>,
     error: Option<UserError>,
     upload: bool,
+    max_distance: u8,
 }
 
 impl Default for Search {
@@ -102,6 +103,7 @@ impl Default for Search {
             findings: None,
             error: None,
             upload: false,
+            max_distance: CONFIG.max_distance,
         }
     }
 }
@@ -117,12 +119,20 @@ struct Params {
 impl Params {
     pub fn from_form(form: &Form) -> Result<Params, UserError> {
         Ok(Params {
-            distance: if form.distance.is_empty() {
-                1
-            } else {
-                form.distance
-                    .parse()
-                    .map_err(map_ue!("invalid distance parameter", Source::User))?
+            distance: {
+                let distance = if form.distance.is_empty() {
+                    1
+                } else {
+                    form.distance
+                        .parse()
+                        .map_err(map_ue!("invalid distance parameter", Source::User))?
+                };
+
+                if distance > CONFIG.max_distance {
+                    return Err(ue!("distance too large", Source::User));
+                }
+
+                distance as i64
             },
             nsfw: form
                 .nsfw

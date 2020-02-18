@@ -23,6 +23,7 @@ Config(
     },
     enable_imgur_api: false,
     in_flight_limit: 1,
+    max_distance: 3,
     no_blacklist: [
         "imgur.com",
         "gfycat.com",

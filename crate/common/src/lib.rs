@@ -280,7 +280,9 @@ pub use user_error::*;
 
 pub const DEFAULT_DISTANCE: i64 = 1;
 
-pub const IMAGE_MIMES: [&str; 12] = [
+// We need image/* because i.reddituploads.com sends it sometimes
+pub const IMAGE_MIMES: [&str; 13] = [
+    "image/*",
     "image/png",
     "image/jpeg",
     "image/jpg",
@@ -295,7 +297,8 @@ pub const IMAGE_MIMES: [&str; 12] = [
     "image/vnd.radiance",
 ];
 
-pub const IMAGE_MIMES_NO_WEBP: [&str; 11] = [
+pub const IMAGE_MIMES_NO_WEBP: [&str; 12] = [
+    "image/*",
     "image/png",
     "image/jpeg",
     "image/jpg",

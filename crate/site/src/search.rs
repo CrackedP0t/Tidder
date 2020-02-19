@@ -53,6 +53,7 @@ struct Match {
     created_utc: chrono::NaiveDateTime,
     distance: i64,
     link: String,
+    preview: String,
     permalink: String,
     score: i64,
     subreddit: String,
@@ -199,7 +200,7 @@ async fn make_findings(hash: Hash, params: Params) -> Result<Findings, UserError
     let rows = client
         .query(
             format!(
-                "SELECT hash <-> $1 as distance, COALESCE(posts.preview, images.link) as link, permalink, \
+                "SELECT hash <-> $1 as distance, preview, images.link as link, permalink, \
                  score, author, created_utc, subreddit, title \
                  FROM posts INNER JOIN images \
                  ON hash <@ ($1, $2) \
@@ -224,15 +225,23 @@ async fn make_findings(hash: Hash, params: Params) -> Result<Findings, UserError
     Ok(Findings {
         matches: rows
             .iter()
-            .map(move |row| Match {
-                permalink: format!("https://reddit.com{}", row.get::<_, &str>("permalink")),
-                distance: row.get("distance"),
-                score: row.get("score"),
-                author: row.get("author"),
-                link: row.get("link"),
-                created_utc: row.get("created_utc"),
-                subreddit: row.get("subreddit"),
-                title: row.get("title"),
+            .map(move |row| {
+                let link: String = row.get("link");
+                let preview = row
+                    .get::<_, Option<String>>("preview")
+                    .unwrap_or_else(|| link.clone());
+
+                Match {
+                    permalink: format!("https://reddit.com{}", row.get::<_, &str>("permalink")),
+                    distance: row.get("distance"),
+                    score: row.get("score"),
+                    author: row.get("author"),
+                    link,
+                    preview,
+                    created_utc: row.get("created_utc"),
+                    subreddit: row.get("subreddit"),
+                    title: row.get("title"),
+                }
             })
             .collect(),
     })

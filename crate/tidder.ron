@@ -4,6 +4,7 @@ Config(
         HostEnd("livememe.com"),
         HostEnd("lvme.me"),
         HostEnd("magaimg.net"),
+        HostEnd("liuliping.cc"),
         AnyScheme("i.imgur.com/JwhvGDV.jpg"),
         AnyScheme("i.imgur.com/4nmJMzR.jpg"),
         AnyScheme("imgur.com/trtbLIL"),

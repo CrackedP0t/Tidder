@@ -421,8 +421,8 @@ async fn follow_wikipedia(url: Url) -> Result<String, UserError> {
 
 static HOST_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^https?://([^/:?#]+)").unwrap());
 
-pub fn get_host(url: &str) -> Option<&str> {
-    Some(HOST_RE.captures(url)?.get(1)?.as_str())
+pub fn get_host(url: &str) -> Option<String> {
+    Some(HOST_RE.captures(url)?.get(1)?.as_str().to_lowercase())
 }
 
 pub fn host_ends_with(url: &str, end: &str) -> bool {

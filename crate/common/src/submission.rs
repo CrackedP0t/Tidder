@@ -31,16 +31,16 @@ pub struct Submission {
 }
 
 impl Submission {
-    pub fn finalize(mut self) -> Result<Self, UserError> {
-        fn unescape(s: &str) -> String {
-            s.replace("&lt;", "<")
-                .replace("&gt;", ">")
-                .replace("&amp;", "&")
-        }
+    pub fn unescape(s: &str) -> String {
+        s.replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&amp;", "&")
+    }
 
-        self.url = unescape(&self.url);
-        self.title = unescape(&self.title);
-        self.preview = unescape(&self.preview);
+    pub fn finalize(mut self) -> Result<Self, UserError> {
+        self.url = Self::unescape(&self.url);
+        self.title = Self::unescape(&self.title);
+        self.preview = self.preview.map(|p| Self::unescape(&p));
 
         self.id_int = i64::from_str_radix(&self.id, 36).map_err(|e| {
             UserError::new_source(

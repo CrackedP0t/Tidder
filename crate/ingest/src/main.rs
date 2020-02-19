@@ -24,7 +24,7 @@ use tracing_futures::Instrument;
 use url::Url;
 
 async fn ingest_post(
-    mut post: Submission,
+    post: Submission,
     verbose: bool,
     blacklist: &DashMap<String, ()>,
     in_flight: &DashMap<String, u32>,

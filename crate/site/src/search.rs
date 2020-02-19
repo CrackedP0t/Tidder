@@ -229,6 +229,7 @@ async fn make_findings(hash: Hash, params: Params) -> Result<Findings, UserError
                 let link: String = row.get("link");
                 let preview = row
                     .get::<_, Option<String>>("preview")
+                    .map(|p| Submission::unescape(&p))
                     .unwrap_or_else(|| link.clone());
 
                 Match {

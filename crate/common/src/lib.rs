@@ -465,6 +465,7 @@ pub mod config {
         pub enable_imgur_api: bool,
         pub in_flight_limit: u32,
         pub max_distance: u8,
+        pub max_results: i64,
         pub no_blacklist: Vec<String>,
         pub worker_count: usize,
     }

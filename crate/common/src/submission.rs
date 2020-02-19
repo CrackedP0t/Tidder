@@ -40,6 +40,7 @@ impl Submission {
 
         self.url = unescape(&self.url);
         self.title = unescape(&self.title);
+        self.preview = unescape(&self.preview);
 
         self.id_int = i64::from_str_radix(&self.id, 36).map_err(|e| {
             UserError::new_source(

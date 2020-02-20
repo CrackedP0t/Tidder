@@ -51,7 +51,7 @@
         {% for i in common_images %}
             <div class="common-listing">
                 <div class="common-image"><img src="{{ i.link }}" /></div>
-                <div class="common-num"><a href="/?imagelink={{ i.link }}">{{ i.num }}</a></div>
+                <div class="common-num"><a href="/?imagelink={{ i.link }}&distance=0">{{ i.num }}</a></div>
             </div>
         {% endfor %}
     </div>

@@ -37,7 +37,7 @@ async fn ingest_post(
         let mut post_url = post.url.as_str();
 
         if get_host(&post_url)
-            .map(|host| blacklist.contains_key(host))
+            .map(|host| blacklist.contains_key(&host))
             .unwrap_or(false)
         {
             return Err(ue_save!("blacklisted", "blacklisted"));

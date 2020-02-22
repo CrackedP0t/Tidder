@@ -163,34 +163,45 @@ async fn make_findings(hash: Hash, params: Params) -> Result<Findings, UserError
     let client = PG_POOL.get().await?;
 
     let (s_query, a_query, args) = if params.subreddits.is_empty() && params.authors.is_empty() {
-        ("", "", vec![tosql!(hash), tosql!(params.distance)])
-    } else if params.authors.is_empty() {
         (
-            "AND LOWER(subreddit) = ANY($3)",
+            "",
             "",
             vec![
                 tosql!(hash),
                 tosql!(params.distance),
+                tosql!(CONFIG.max_results),
+            ],
+        )
+    } else if params.authors.is_empty() {
+        (
+            "AND LOWER(subreddit) = ANY($4)",
+            "",
+            vec![
+                tosql!(hash),
+                tosql!(params.distance),
+                tosql!(CONFIG.max_results),
                 tosql!(params.subreddits),
             ],
         )
     } else if params.subreddits.is_empty() {
         (
             "",
-            "AND LOWER(author) = ANY($3)",
+            "AND LOWER(author) = ANY($4)",
             vec![
                 tosql!(hash),
                 tosql!(params.distance),
+                tosql!(CONFIG.max_results),
                 tosql!(params.authors),
             ],
         )
     } else {
         (
-            "AND LOWER(subreddit) = ANY($3)",
-            "AND LOWER(author) = ANY($4)",
+            "AND LOWER(subreddit) = ANY($4)",
+            "AND LOWER(author) = ANY($5)",
             vec![
                 tosql!(hash),
                 tosql!(params.distance),
+                tosql!(CONFIG.max_results),
                 tosql!(params.subreddits),
                 tosql!(params.authors),
             ],
@@ -208,14 +219,14 @@ async fn make_findings(hash: Hash, params: Params) -> Result<Findings, UserError
                  {} \
                  {} \
                  {} \
-                 ORDER BY distance ASC, created_utc ASC",
+                 ORDER BY distance ASC, created_utc ASC LIMIT $3",
                 match params.nsfw {
                     NSFWOption::Only => "AND nsfw = true",
                     NSFWOption::Allow => "",
                     NSFWOption::Never => "AND nsfw = false",
                 },
                 s_query,
-                a_query
+                a_query,
             )
             .as_str(),
             &args,

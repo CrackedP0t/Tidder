@@ -5,8 +5,10 @@ use futures::prelude::*;
 use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::error::Error as _;
 use std::vec::Vec;
 use tera::Context;
+use tokio_postgres::error::{DbError, SqlState};
 use url::Url;
 use warp::multipart::FormData;
 
@@ -231,7 +233,20 @@ async fn make_findings(hash: Hash, params: Params) -> Result<Findings, UserError
             .as_str(),
             &args,
         )
-        .await?;
+        .await
+        .map_err(|e| {
+            if let Some(dberror) = e.source().and_then(|e| e.downcast_ref::<DbError>()) {
+                if *dberror.code() == SqlState::QUERY_CANCELED
+                    && dberror.message() == "canceling statement due to statement timeout"
+                {
+                    ue!("query took too long", Source::User)
+                } else {
+                    e.into()
+                }
+            } else {
+                e.into()
+            }
+        })?;
 
     Ok(Findings {
         matches: rows

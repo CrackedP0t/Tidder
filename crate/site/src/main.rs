@@ -4,6 +4,8 @@ use common::*;
 use futures::TryFutureExt;
 use once_cell::sync::Lazy;
 use warp::filters::*;
+use warp::http::{header, Response, StatusCode};
+use warp::path::path;
 use warp::{Filter, Rejection};
 
 mod search;
@@ -35,13 +37,29 @@ async fn main() {
                         Ok::<_, Rejection>(search::post_response(form).await)
                     })),
         )
-        .or(warp::path::path("rankings").and_then(|| async {
+        .or(path("rankings").and_then(|| async {
             rankings::get_response()
                 .map_err(|ue| {
                     println!("{:?}", ue);
                     warp::reject::custom(UEReject(ue))
                 })
                 .await
+        }))
+        .or(path("robots.txt").and_then(|| async {
+            let out = tokio::fs::read_to_string(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/templates/robots.txt"
+            ))
+            .await
+            .map_err(|_e| warp::reject::not_found())?;
+
+            Ok::<_, Rejection>(
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "text/plain")
+                    .body(out)
+                    .unwrap(),
+            )
         }))
         .with(warp::log("site"));
 

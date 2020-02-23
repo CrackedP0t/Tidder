@@ -53,7 +53,10 @@ async fn post(ids: impl Iterator<Item = &str>) -> Result<(), UserError> {
             .await?
             .error_for_status()?;
 
-        for post in resp.json::<Value>().await?["data"]["children"].as_array().unwrap() {
+        for post in resp.json::<Value>().await?["data"]["children"]
+            .as_array()
+            .unwrap()
+        {
             println!("{:#}", post["data"]);
         }
 

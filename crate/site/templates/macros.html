@@ -1,7 +1,7 @@
-{% macro nsfw_checked(input, match) %}
-    {%- if input == match -%}
-        {{ "checked " }}
-    {%- else -%}
-        {{ "" }}
-    {%- endif -%}
+{% macro nsfw_option(o) -%}
+    <option value="{{ o }}"
+            {%- if form.nsfw == o -%}
+            selected="selected"
+            {%- endif -%}
+    >{{ o | capitalize }}</option>
 {% endmacro %}

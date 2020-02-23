@@ -87,10 +87,10 @@
                 <div class="search-nsfw-box">
                     <label>
                         NSFW:
-                        <select id="search-nsfw-select" name="nsfw">
-                            <option value="allow">Allow</option>
-                            <option value="only">Only</option>
-                            <option value="never">Never</option>
+                        <select id="search-nsfw" name="nsfw">
+                            {{ macros::nsfw_option(o="allow") }}
+                            {{ macros::nsfw_option(o="never") }}
+                            {{ macros::nsfw_option(o="only") }}
                         </select>
                     </label>
                 </div>
@@ -209,12 +209,12 @@
         <p>
             Found {{ findings.matches | length }} {{ findings.matches | length | plural(singular="match", plural="matches") }} for {{ " " }}
             {%- if upload -%}
-            your upload
+                your upload
             {%- else -%}
                 <a href="{{ form.link }}">{{ form.link }}</a>
             {%- endif -%}
+            {{ " " }}in {{ findings.took }} seconds
         {% endif %}
-        {{ " " }}in {{ findings.took }} seconds
     </div>
     {% if findings is not null %}
     {% include "findings.html" %}

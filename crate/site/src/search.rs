@@ -65,8 +65,7 @@ struct Match {
 
 #[derive(Debug, Serialize)]
 struct Findings {
-    took_secs: u64,
-    took_millis: u32,
+    took: String,
     matches: Vec<Match>,
 }
 
@@ -256,8 +255,13 @@ async fn make_findings(hash: Hash, params: Params) -> Result<Findings, UserError
     let search_took = search_start.elapsed();
 
     Ok(Findings {
-        took_secs: search_took.as_secs(),
-        took_millis: search_took.subsec_millis(),
+        took: format!(
+            "{}.{:03}",
+            search_took.as_secs(),
+            search_took.subsec_millis()
+        )
+        .trim_end_matches('0')
+        .to_string(),
         matches: rows
             .iter()
             .map(move |row| {

@@ -85,18 +85,13 @@
                            value="{{ form.distance }}"/>
                 </label>
                 <div class="search-nsfw-box">
-                    <span>NSFW:</span>
                     <label>
-                        <span>Only</span>
-                        <input class="search-nsfw" type="radio" name="nsfw" value="only" {{ macros::nsfw_checked(input=form.nsfw, match="only") }}/>
-                    </label>
-                    <label>
-                        <span>Allow</span>
-                        <input class="search-nsfw" type="radio" name="nsfw" value="allow" {{ macros::nsfw_checked(input=form.nsfw, match="allow") }}/>
-                    </label>
-                    <label>
-                        <span>Never</span>
-                        <input class="search-nsfw" type="radio" name="nsfw" value="never" {{ macros::nsfw_checked(input=form.nsfw, match="never") }}/>
+                        NSFW:
+                        <select id="search-nsfw-select" name="nsfw">
+                            <option value="allow">Allow</option>
+                            <option value="only">Only</option>
+                            <option value="never">Never</option>
+                        </select>
                     </label>
                 </div>
             </div>
@@ -142,34 +137,17 @@
 
          distance_input.oninput = default_distance;
 
-         let nsfw_radios = $$(".search-nsfw");
+         let nsfw_select = $("#search-nsfw");
 
          function default_nsfw(event) {
-             let checked;
-             if (event) {
-                 checked = event.target;
+             if (nsfw_select.value === FORM_DEFAULTS.nsfw) {
+                 nsfw_select.removeAttribute("name");
              } else {
-                 checked = $(".search-nsfw:checked");
+                 nsfw_select.name = "nsfw";
              }
-
-             if (checked.value === FORM_DEFAULTS.nsfw) {
-                 for (let el of nsfw_radios) {
-                     el.removeAttribute("name");
-                     el.removeAttribute("checked");
-                 }
-             } else {
-                 for (let el of nsfw_radios) {
-                     el.name = "nsfw";
-                     el.removeAttribute("checked");
-                 }
-             }
-
-             checked.checked = true;
          }
 
-         for (let el of nsfw_radios) {
-             el.oninput = default_nsfw;
-         };
+         nsfw_select.oninput = default_nsfw;
 
          default_distance();
          default_nsfw();
@@ -229,13 +207,14 @@
         <p>Error: {{ error.user_msg }}</p>
         {% elif findings is not null %}
         <p>
-            Found {{ findings.matches | length }} {{ findings.matches | length | plural(singular="match", plural="matches") }} for {{ " " }} in {{ findings.took_secs }}.{{ findings.took_millis }}
+            Found {{ findings.matches | length }} {{ findings.matches | length | plural(singular="match", plural="matches") }} for {{ " " }}
             {%- if upload -%}
             your upload
             {%- else -%}
-            <a href="{{ form.link }}">{{ form.link }}</a>
+                <a href="{{ form.link }}">{{ form.link }}</a>
             {%- endif -%}
-            {% endif %}
+        {% endif %}
+        {{ " " }}in {{ findings.took }} seconds
     </div>
     {% if findings is not null %}
     {% include "findings.html" %}

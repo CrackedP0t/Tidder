@@ -6,6 +6,7 @@ use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error as _;
+use std::time::Instant;
 use std::vec::Vec;
 use tera::Context;
 use tokio_postgres::error::{DbError, SqlState};
@@ -64,6 +65,8 @@ struct Match {
 
 #[derive(Debug, Serialize)]
 struct Findings {
+    took_secs: u64,
+    took_millis: u32,
     matches: Vec<Match>,
 }
 
@@ -210,6 +213,8 @@ async fn make_findings(hash: Hash, params: Params) -> Result<Findings, UserError
         )
     };
 
+    let search_start = Instant::now();
+
     let rows = client
         .query(
             format!(
@@ -248,7 +253,11 @@ async fn make_findings(hash: Hash, params: Params) -> Result<Findings, UserError
             }
         })?;
 
+    let search_took = search_start.elapsed();
+
     Ok(Findings {
+        took_secs: search_took.as_secs(),
+        took_millis: search_took.subsec_millis(),
         matches: rows
             .iter()
             .map(move |row| {

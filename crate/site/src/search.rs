@@ -433,7 +433,7 @@ pub async fn get_response(query: SearchQuery) -> impl warp::Reply {
                 .unwrap_or(StatusCode::OK),
         ),
         Err(e) => {
-            eprintln!("{}", e);
+            error!("{}", e);
             (
                 "<h1>Error 500: Internal Server Error</h1>".to_string(),
                 StatusCode::INTERNAL_SERVER_ERROR,

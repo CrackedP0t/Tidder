@@ -259,9 +259,7 @@ async fn make_findings(hash: Hash, params: Params) -> Result<Findings, UserError
             "{}.{:03}",
             search_took.as_secs(),
             search_took.subsec_millis()
-        )
-        .trim_end_matches('0')
-        .to_string(),
+        ),
         matches: rows
             .iter()
             .map(move |row| {

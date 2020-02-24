@@ -1,6 +1,14 @@
 {% extends "base.html" %}
 {% import "macros.html" as macros %}
-{% block title %}Search with Tidder!{% endblock %}
+
+{% block title %}
+    {%- if findings is null -%}
+        Reverse image search for Reddit
+    {%- else -%}
+        Search results for
+        {%- if upload %} your upload{% else %} {{ form.link }}{% endif %}
+    {%- endif -%}
+{% endblock %}
 
 {% block content %}
     <style>

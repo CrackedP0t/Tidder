@@ -31,7 +31,7 @@ pub mod utils {
     }
 
     pub fn tern(cond: &Value, args: &HashMap<String, Value>) -> Result<Value> {
-        let cond = cond.as_bool().ok_or_else(|| Error::msg("Expected bool"))?;
+        let cond = cond.as_bool().unwrap_or_else(|| !cond.is_null());
         let yes = args
             .get("yes")
             .ok_or_else(|| Error::msg("Argument 'yes' missing"))?

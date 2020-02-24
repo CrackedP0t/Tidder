@@ -87,6 +87,7 @@ pub mod utils {
                             .as_str()
                             .parse::<usize>()
                             .unwrap()
+                            - 1
                     )
                     .ok_or_else(|| Error::msg("Month out of range"))?,
                 caps.get(1)

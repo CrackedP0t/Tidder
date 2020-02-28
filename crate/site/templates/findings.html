@@ -1,5 +1,5 @@
 <style>
- .sort-button {
+ .sort-head {
      cursor: pointer;
  }
  .thumb-check {
@@ -56,12 +56,12 @@
         <thead>
             <tr>
                 <th scope="col">Image</th>
-                <th scope="col">Distance <span class="sort-button">↓</span></th>
-                <th scope="col">Score <span class="sort-button">⇅</span></th>
-                <th scope="col">Posted on <span class="sort-button">⇅</span></th>
-                <th scope="col">Title <span class="sort-button">⇅</span></th>
-                <th scope="col">Author <span class="sort-button">⇅</span></th>
-                <th scope="col">Subreddit <span class="sort-button">⇅</span></th>
+                <th scope="col" class="sort-head">Distance <span class="sort-button">↓</span></th>
+                <th scope="col" class="sort-head">Score <span class="sort-button">⇅</span></th>
+                <th scope="col" class="sort-head">Posted on <span class="sort-button">⇅</span></th>
+                <th scope="col" class="sort-head">Title <span class="sort-button">⇅</span></th>
+                <th scope="col" class="sort-head">Author <span class="sort-button">⇅</span></th>
+                <th scope="col" class="sort-head">Subreddit <span class="sort-button">⇅</span></th>
             </tr>
             </thead>
             <tbody id="findings-body">
@@ -106,7 +106,7 @@
          const sort_index = entry[0] + 1;
          const sort_button = entry[1];
 
-         sort_button.addEventListener("click", (event) => {
+         sort_button.parentNode.addEventListener("click", (event) => {
              let tbody = document.getElementById("findings-body");
 
              let rows = [];

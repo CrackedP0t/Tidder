@@ -23,6 +23,7 @@
          display: flex;
          flex-direction: column;
          min-height: 100%;
+         align-items: center;
          {% if findings is null %}
          justify-content: center;
          margin: 0 2rem;
@@ -72,6 +73,10 @@
      }
      .search-send {
          min-width: 30vw;
+     }
+     .blurb {
+         width: 50vw;
+         text-align: center;
      }
      @media (max-aspect-ratio: 1/1) {
          .search-wrapper {
@@ -228,6 +233,10 @@
     </div>
     {% if findings is not null %}
     {% include "findings.html" %}
+    {% else %}
+        <div class="blurb">
+            Tidder is a reverse image search tool for Reddit. When you search for an image, Tidder searches back through every image ever posted to Reddit and finds visually similar ones to your input. Tidder is open source and its code is <a href="https://github.com/CrackedP0t/Tidder">available on GitHub</a> under the MIT License.
+        </div>
     {% endif %}
 </div>
 {% endblock %}

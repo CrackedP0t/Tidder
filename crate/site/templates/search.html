@@ -11,80 +11,83 @@
 {% endblock %}
 
 {% block content %}
-    <style>
-     .rankings-box {
-         left: 0;
-         border-bottom-right-radius: 1rem;
-     }
-     .rankings-box a {
-         color: white;
-     }
+<style>
+ .rankings-box {
+     left: 0;
+     border-bottom-right-radius: 1rem;
+ }
+ .rankings-box a {
+     color: white;
+ }
+ .search-wrapper {
+     display: flex;
+     flex-direction: column;
+     min-height: 100%;
+     align-items: center;
+     {% if findings is null %}
+     justify-content: center;
+     margin: 0 2rem;
+     {% else %}
+     margin: 4rem 2rem 2rem;
+     {% endif %}
+ }
+ .search-header {
+     display: flex;
+     flex-direction: column;
+     align-items: center;
+     width: 100%;
+     {% if findings is null %}
+     transform: translateY(-10vh);
+     {% endif %}
+ }
+ input {
+     background-color: white;
+     color: black;
+     border-radius: .2rem;
+     border: none;
+ }
+ .search-input {
+     min-width: 30vw;
+ }
+ #search-distance {
+     min-width: 5vw;
+     max-width: 4em;
+ }
+ #search-form {
+     align-self: stretch;
+     display: flex;
+     width: 100%;
+     flex-direction: column;
+     gap: .5em;
+ }
+ #search-form label {
+     display: flex;
+     align-items: center;
+     gap: .3em;
+ }
+ .search-row {
+     display: flex;
+     justify-content: center;
+     gap: .5em;
+ }
+ .link-wrapper {
+     display: flex;
+     align-items: center;
+ }
+ .search-send {
+     min-width: 30vw;
+ }
+ .blurb {
+     width: 50vw;
+     text-align: center;
+ }
+ @media (max-aspect-ratio: 1/1) {
      .search-wrapper {
-         display: flex;
-         flex-direction: column;
-         min-height: 100%;
-         align-items: center;
-         {% if findings is null %}
-         justify-content: center;
-         margin: 0 2rem;
-         {% else %}
-         margin: 4rem 2rem 2rem;
-         {% endif %}
+         margin-left: 0;
+         margin-right: 0;
      }
-     .search-header {
-         display: flex;
-         flex-direction: column;
-         align-items: center;
-         width: 100%;
-         {% if findings is null %}
-         transform: translateY(-10vh);
-         {% endif %}
-     }
-     input {
-         background-color: white;
-         color: black;
-         border-radius: 2px;
-         border: none;
-         padding: .15em .25em;
-     }
-     .search-input {
-         min-width: 30vw;
-     }
-     #search-distance {
-         min-width: 5vw;
-         max-width: 4em;
-     }
-     #search-form {
-         align-self: stretch;
-         display: flex;
-         width: 100%;
-         flex-direction: column;
-         gap: .5em;
-     }
-     #search-form label {
-         display: flex;
-         align-items: center;
-         gap: .3em;
-     }
-     .search-row {
-         display: flex;
-         justify-content: center;
-         gap: .5em;
-     }
-     .search-send {
-         min-width: 30vw;
-     }
-     .blurb {
-         width: 50vw;
-         text-align: center;
-     }
-     @media (max-aspect-ratio: 1/1) {
-         .search-wrapper {
-             margin-left: 0;
-             margin-right: 0;
-         }
-     }
-    </style>
+ }
+</style>
 <div class="rankings-box top-box"><a href="/rankings">The 100 most common images</a></div>
 <div class="search-wrapper">
     <div class="search-header">
@@ -216,7 +219,6 @@
                  link_input.focus();
              }
          }
-
         </script>
         {% if error %}
         <p>Error: {{ error.user_msg }}</p>

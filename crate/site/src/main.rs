@@ -25,6 +25,8 @@ async fn main() {
 
     Lazy::force(&render::TERA);
 
+    let head = method::head().map(|| StatusCode::OK);
+
     let router = warp::path::end()
         .and(
             method::get()
@@ -35,32 +37,41 @@ async fn main() {
                     .and(multipart::form())
                     .and_then(|form| async move {
                         Ok::<_, Rejection>(search::post_response(form).await)
-                    })),
+                    }))
+                .or(head),
         )
-        .or(path("rankings").and_then(|| async {
-            rankings::get_response()
-                .map_err(|ue| {
-                    println!("{:?}", ue);
-                    warp::reject::custom(UEReject(ue))
+        .or(path("rankings").and(
+            method::get()
+                .and_then(|| async {
+                    rankings::get_response()
+                        .map_err(|ue| {
+                            println!("{:?}", ue);
+                            warp::reject::custom(UEReject(ue))
+                        })
+                        .await
                 })
-                .await
-        }))
-        .or(path("robots.txt").and_then(|| async {
-            let out = tokio::fs::read_to_string(concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/templates/robots.txt"
-            ))
-            .await
-            .map_err(|_e| warp::reject::not_found())?;
+                .or(head),
+        ))
+        .or(path("robots.txt").and(
+            method::get()
+                .and_then(|| async {
+                    let out = tokio::fs::read_to_string(concat!(
+                        env!("CARGO_MANIFEST_DIR"),
+                        "/templates/robots.txt"
+                    ))
+                    .await
+                    .map_err(|_e| warp::reject::not_found())?;
 
-            Ok::<_, Rejection>(
-                Response::builder()
-                    .status(StatusCode::OK)
-                    .header(header::CONTENT_TYPE, "text/plain")
-                    .body(out)
-                    .unwrap(),
-            )
-        }))
+                    Ok::<_, Rejection>(
+                        Response::builder()
+                            .status(StatusCode::OK)
+                            .header(header::CONTENT_TYPE, "text/plain")
+                            .body(out)
+                            .unwrap(),
+                    )
+                })
+                .or(head),
+        ))
         .with(warp::log("site"));
 
     let ip = std::env::args()

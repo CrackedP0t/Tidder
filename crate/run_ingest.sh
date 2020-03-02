@@ -10,7 +10,7 @@ for URL in $(< ~/tidder/crate/ingest/todo.txt); do
 
     ARCHIVE="${URL##*/}"
     UNPACK="${ARCHIVE%%.*}"
-    EXT="${UNPACK##*.}"
+    EXT="${ARCHIVE##*.}"
 
     if [[ ! -e "$ARCHIVE" ]]; then
         wget $URL

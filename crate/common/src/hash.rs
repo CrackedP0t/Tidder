@@ -1,9 +1,6 @@
-use super::{map_ue_save, UserError};
+use super::{map_ue_save, ue_save, Source, UserError};
 use bytes::BytesMut;
-use image::{
-    imageops, load_from_memory, DynamicImage, GenericImageView, GrayImage, ImageBgr8, ImageBgra8,
-    ImageLuma8, ImageLumaA8, ImageRgb8, ImageRgba8,
-};
+use image::{imageops, load_from_memory, DynamicImage, GenericImageView, GrayImage};
 use std::fmt::{self, Display, Formatter};
 use tokio_postgres::types;
 
@@ -32,8 +29,8 @@ impl types::ToSql for Hash {
     types::to_sql_checked!();
 }
 
-pub fn dhash(img: DynamicImage) -> Hash {
-    let small_img = imageops::thumbnail(&grayscale(&img), 9, 8);
+pub fn dhash(img: DynamicImage) -> Result<Hash, UserError> {
+    let small_img = imageops::thumbnail(&grayscale(&img)?, 9, 8);
 
     let mut hash: u64 = 0;
 
@@ -45,7 +42,7 @@ pub fn dhash(img: DynamicImage) -> Hash {
         }
     }
 
-    Hash(hash)
+    Ok(Hash(hash))
 }
 
 pub fn distance(a: Hash, b: Hash) -> u32 {
@@ -53,67 +50,64 @@ pub fn distance(a: Hash, b: Hash) -> u32 {
 }
 
 pub fn hash_from_memory(image: &[u8]) -> Result<Hash, UserError> {
-    Ok(dhash(
-        load_from_memory(&image).map_err(map_ue_save!("invalid image", "image_invalid"))?,
-    ))
+    dhash(load_from_memory(&image).map_err(map_ue_save!("invalid image", "image_invalid"))?)
 }
 
 fn rgb_to_luma(r: u8, g: u8, b: u8) -> u8 {
     ((u32::from(r) * 2126 + u32::from(g) * 7152 + u32::from(b) * 722) / 10000) as u8
 }
 
-pub fn grayscale(img: &DynamicImage) -> DynamicImage {
+pub fn grayscale(img: &DynamicImage) -> Result<DynamicImage, UserError> {
     let width = img.width();
     let height = img.height();
-    match img {
-        ImageLuma8(gray) => ImageLuma8(gray.clone()),
-        ImageLumaA8(gray_alpha) => ImageLuma8(
-            GrayImage::from_vec(
-                width,
-                height,
-                gray_alpha.chunks(2).map(|data| data[0]).collect(),
-            )
-            .unwrap(),
-        ),
-        ImageRgb8(rgb) => ImageLuma8(
-            GrayImage::from_vec(
-                width,
-                height,
-                rgb.chunks(3)
-                    .map(|data| rgb_to_luma(data[0], data[1], data[2]))
-                    .collect(),
-            )
-            .unwrap(),
-        ),
-        ImageRgba8(rgba) => ImageLuma8(
-            GrayImage::from_vec(
-                width,
-                height,
-                rgba.chunks(4)
-                    .map(|data| rgb_to_luma(data[0], data[1], data[2]))
-                    .collect(),
-            )
-            .unwrap(),
-        ),
-        ImageBgr8(bgr) => ImageLuma8(
-            GrayImage::from_vec(
-                width,
-                height,
-                bgr.chunks(3)
-                    .map(|data| rgb_to_luma(data[2], data[1], data[0]))
-                    .collect(),
-            )
-            .unwrap(),
-        ),
-        ImageBgra8(bgra) => ImageLuma8(
-            GrayImage::from_vec(
-                width,
-                height,
-                bgra.chunks(4)
-                    .map(|data| rgb_to_luma(data[2], data[1], data[0]))
-                    .collect(),
-            )
-            .unwrap(),
-        ),
-    }
+
+    use DynamicImage::*;
+    Ok(ImageLuma8(match img {
+        ImageLuma8(gray) => gray.clone(),
+        ImageLumaA8(gray_alpha) => GrayImage::from_vec(
+            width,
+            height,
+            gray_alpha.chunks(2).map(|data| data[0]).collect(),
+        )
+        .unwrap(),
+        ImageRgb8(rgb) => GrayImage::from_vec(
+            width,
+            height,
+            rgb.chunks(3)
+                .map(|data| rgb_to_luma(data[0], data[1], data[2]))
+                .collect(),
+        )
+        .unwrap(),
+        ImageRgba8(rgba) => GrayImage::from_vec(
+            width,
+            height,
+            rgba.chunks(4)
+                .map(|data| rgb_to_luma(data[0], data[1], data[2]))
+                .collect(),
+        )
+        .unwrap(),
+        ImageBgr8(bgr) => GrayImage::from_vec(
+            width,
+            height,
+            bgr.chunks(3)
+                .map(|data| rgb_to_luma(data[2], data[1], data[0]))
+                .collect(),
+        )
+        .unwrap(),
+        ImageBgra8(bgra) => GrayImage::from_vec(
+            width,
+            height,
+            bgra.chunks(4)
+                .map(|data| rgb_to_luma(data[2], data[1], data[0]))
+                .collect(),
+        )
+        .unwrap(),
+        _ => {
+            return Err(ue_save!(
+                "unsupported image color space",
+                "image_color_space",
+                Source::User
+            ))
+        }
+    }))
 }

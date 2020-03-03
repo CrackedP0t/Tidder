@@ -16,6 +16,9 @@ Config(
         AnyScheme("www.jpl.nasa.gov/visions-of-the-future/tif_150/Earth_150.tif"),
         AnyScheme("i.imgur.com/TSUMR7a.gif"),
         AnyScheme("i.imgur.com/TSUMR7a.gifv"),
+        AnyScheme("imgur.com/b6twNgB"),
+        AnyScheme("i.imgur.com/b6twNgB.gif"),
+        AnyScheme("i.imgur.com/b6twNgB.gifv"),
     ],
     custom_limits: {
         "imgur.com": None,

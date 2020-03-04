@@ -67,13 +67,13 @@ pub fn grayscale(img: &DynamicImage) -> Result<DynamicImage, UserError> {
         ImageLumaA8(gray_alpha) => GrayImage::from_vec(
             width,
             height,
-            gray_alpha.chunks(2).map(|data| data[0]).collect(),
+            gray_alpha.chunks_exact(2).map(|data| data[0]).collect(),
         )
         .unwrap(),
         ImageRgb8(rgb) => GrayImage::from_vec(
             width,
             height,
-            rgb.chunks(3)
+            rgb.chunks_exact(3)
                 .map(|data| rgb_to_luma(data[0], data[1], data[2]))
                 .collect(),
         )
@@ -81,7 +81,7 @@ pub fn grayscale(img: &DynamicImage) -> Result<DynamicImage, UserError> {
         ImageRgba8(rgba) => GrayImage::from_vec(
             width,
             height,
-            rgba.chunks(4)
+            rgba.chunks_exact(4)
                 .map(|data| rgb_to_luma(data[0], data[1], data[2]))
                 .collect(),
         )
@@ -89,7 +89,7 @@ pub fn grayscale(img: &DynamicImage) -> Result<DynamicImage, UserError> {
         ImageBgr8(bgr) => GrayImage::from_vec(
             width,
             height,
-            bgr.chunks(3)
+            bgr.chunks_exact(3)
                 .map(|data| rgb_to_luma(data[2], data[1], data[0]))
                 .collect(),
         )
@@ -97,7 +97,7 @@ pub fn grayscale(img: &DynamicImage) -> Result<DynamicImage, UserError> {
         ImageBgra8(bgra) => GrayImage::from_vec(
             width,
             height,
-            bgra.chunks(4)
+            bgra.chunks_exact(4)
                 .map(|data| rgb_to_luma(data[2], data[1], data[0]))
                 .collect(),
         )

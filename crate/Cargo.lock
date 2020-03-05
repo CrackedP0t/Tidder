@@ -748,6 +748,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "hash_trie"
+version = "0.0.1"
+dependencies = [
+ "rand 0.7.3 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "headers"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

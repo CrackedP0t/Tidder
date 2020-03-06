@@ -531,13 +531,8 @@ pub async fn get_hash(orig_link: &str) -> Result<HashGotten, UserError> {
         .map_err(map_ue_save!("couldn't download image", "download_image"))
         .await?;
 
-    let hash = match std::panic::catch_unwind(|| hash_from_memory(image)) {
-        Ok(r) => r?,
-        Err(e) => {
-            error!("{} panicked!", orig_link);
-            std::panic::resume_unwind(e)
-        }
-    };
+    let hash = std::panic::catch_unwind(|| hash_from_memory(image))
+        .map_err(|_e| ue_save!("image panicked!", "image_panic", Source::User))??;
 
     Ok(HashGotten {
         hash,

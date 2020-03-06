@@ -17,3 +17,4 @@ common = { path = "../common" }
 reqwest = { version = "0.10.0-alpha.1", features = ["gzip", "json"] }
 chrono = "0.4.10"
 ron = "0.5.1"
+hash_trie = { path = "../hash_trie" }

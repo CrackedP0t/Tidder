@@ -2,6 +2,7 @@ use clap::clap_app;
 use common::format;
 use common::*;
 use futures::prelude::*;
+use hash_trie::HashTrie;
 use reqwest::{header::USER_AGENT, Client};
 use serde::Deserialize;
 use serde_json::Value;
@@ -209,6 +210,26 @@ async fn rank() -> Result<(), UserError> {
     Ok(())
 }
 
+async fn trie(path: impl AsRef<std::path::Path>) -> Result<(), UserError> {
+    let mut hashes = Box::pin(
+        PG_POOL
+            .get()
+            .await?
+            .query_raw("SELECT hash FROM images", std::iter::empty())
+            .await?,
+    );
+
+    let mut trie = HashTrie::new();
+
+    while let Some(row) = hashes.next().await {
+        trie.insert(row?.get::<_, i64>("hash") as u64);
+    }
+
+    trie.write_out(path)?;
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), UserError> {
     setup_logging!();
@@ -227,6 +248,9 @@ async fn main() -> Result<(), UserError> {
         (@subcommand search =>
          (@arg LINK: +required ... "The link to the image you wish to search for")
          (@arg distance: -d --distance +takes_value "The max distance you'll accept")
+        )
+        (@subcommand trie =>
+         (@arg PATH: +required ... "The path to save the trie to")
         )
     )
     .get_matches();
@@ -249,6 +273,7 @@ async fn main() -> Result<(), UserError> {
             )
             .await
         }
+        "trie" => trie(op_matches.value_of::<&str>("PATH").unwrap()).await,
         unknown => Err(ue!(format!("Unknown subcommand '{}'", unknown))),
     }
 }

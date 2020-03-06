@@ -24,7 +24,7 @@ for URL in $(< ~/tidder/crate/ingest/todo.txt); do
         fi
     fi
 
-    RUST_LOG="info" ~/tidder/crate/target/release/ingest $@ "$UNPACK"
+    RUST_LOG="info" ~/tidder/crate/target/release/ingest $@ "$UNPACK" | tee -a ~/logs/ingest.log
     tail -n +2 ~/tidder/crate/ingest/todo.txt | sponge ~/tidder/crate/ingest/todo.txt
 
     rm "$ARCHIVE" "$UNPACK"

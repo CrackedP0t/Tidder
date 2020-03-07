@@ -5,22 +5,46 @@ use std::path::Path;
 mod hash;
 use hash::*;
 
+pub trait HashTreeStorage {
+    fn get(&self, index: usize) -> &Node;
+    fn get_mut(&mut self, index: usize) -> &mut Node;
+    fn push(&mut self, node: Node);
+    fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl HashTreeStorage for Vec<Node> {
+    fn get(&self, index: usize) -> &Node {
+        &self[index]
+    }
+    fn get_mut(&mut self, index: usize) -> &mut Node {
+        &mut self[index]
+    }
+    fn push(&mut self, node: Node) {
+        self.push(node);
+    }
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+
 #[derive(Debug, Default, PartialEq)]
 pub struct Node {
-    zero: Option<usize>,
-    one: Option<usize>,
+    zero: usize,
+    one: usize,
 }
 
 #[derive(Debug, Default)]
-pub struct HashTrie {
-    haystack: Vec<Node>,
+pub struct HashTrie<S: HashTreeStorage> {
+    haystack: S,
 }
 
-impl HashTrie {
-    pub fn new() -> Self {
-        Self {
-            haystack: vec![Node::default()],
-        }
+impl<S: HashTreeStorage> HashTrie<S> {
+    pub fn new(mut storage: S) -> Self {
+        storage.push(Node::default());
+        Self { haystack: storage }
     }
 
     pub fn insert(&mut self, hash: u64) -> bool {
@@ -36,9 +60,9 @@ impl HashTrie {
             self.haystack.push(new_node);
 
             if bit == 0 {
-                self.haystack[index].zero = Some(new_index);
+                self.haystack.get_mut(index).zero = new_index;
             } else if bit == 1 {
-                self.haystack[index].one = Some(new_index);
+                self.haystack.get_mut(index).one = new_index;
             }
 
             index = new_index;
@@ -48,29 +72,35 @@ impl HashTrie {
     }
 
     fn search(&self, needle: u64) -> (u8, usize) {
-        let mut current_node = &self.haystack[0];
+        let mut current_node = self.haystack.get(0);
 
         let mut next_index = 0;
 
         for (pos, bit) in HashBits::new(needle).enumerate() {
-            next_index = if let (0, Some(index)) = (bit, current_node.zero) {
-                index
-            } else if let (1, Some(index)) = (bit, current_node.one) {
-                index
+            next_index = if bit == 0 && current_node.zero != 0 {
+                current_node.zero
+            } else if bit == 1 && current_node.one != 0 {
+                current_node.one
             } else {
                 return (pos as u8, next_index);
             };
 
-            current_node = &self.haystack[next_index];
+            current_node = self.haystack.get(next_index);
         }
 
         (63, next_index)
     }
 
-    pub fn similar(&self, needle: u64, max_distance: u8) -> Similar {
+    pub fn similar(&self, needle: u64, max_distance: u8) -> Similar<S> {
         Similar::new(self, needle, max_distance)
     }
 
+    pub fn hashes(&self) -> HashIter<S> {
+        HashIter::new(self)
+    }
+}
+
+impl HashTrie<Vec<Node>> {
     pub fn read_in(path: impl AsRef<Path>) -> io::Result<Self> {
         let file = OpenOptions::new().read(true).open(path)?;
 
@@ -78,7 +108,9 @@ impl HashTrie {
 
         let mut file = BufReader::new(file);
 
-        let mut new = HashTrie { haystack: Vec::new() };
+        let mut new = Self {
+            haystack: Vec::new(),
+        };
 
         for _i in 0..len / 16 {
             let mut zero_bytes = [0, 0, 0, 0, 0, 0, 0, 0];
@@ -87,13 +119,10 @@ impl HashTrie {
             file.read_exact(&mut zero_bytes)?;
             file.read_exact(&mut one_bytes)?;
 
-            let zero = u64::from_le_bytes(zero_bytes);
-            let one = u64::from_le_bytes(one_bytes);
+            let zero = usize::from_le_bytes(zero_bytes);
+            let one = usize::from_le_bytes(one_bytes);
 
-            new.haystack.push(Node {
-                zero: if zero == 0 { None } else { Some(zero as usize) },
-                one: if one == 0 { None } else { Some(one as usize) },
-            });
+            new.haystack.push(Node { zero, one });
         }
 
         Ok(new)
@@ -109,24 +138,20 @@ impl HashTrie {
         );
 
         for node in self.haystack.iter() {
-            file.write_all(&node.zero.map(|z| z as u64).unwrap_or(0).to_le_bytes())?;
-            file.write_all(&node.one.map(|o| o as u64).unwrap_or(0).to_le_bytes())?;
+            file.write_all(&node.zero.to_le_bytes())?;
+            file.write_all(&node.one.to_le_bytes())?;
         }
 
         file.flush()
     }
-
-    pub fn hashes(&self) -> HashIter {
-        HashIter::new(self)
-    }
 }
 
-impl std::iter::FromIterator<u64> for HashTrie {
+impl std::iter::FromIterator<u64> for HashTrie<Vec<Node>> {
     fn from_iter<T>(iter: T) -> Self
     where
         T: IntoIterator<Item = u64>,
     {
-        let mut new = Self::new();
+        let mut new = Self::new(Vec::new());
 
         for hash in iter {
             new.insert(hash);
@@ -143,15 +168,15 @@ struct SimilarBranch<'a> {
     node: &'a Node,
 }
 
-pub struct Similar<'a> {
-    trie: &'a HashTrie,
+pub struct Similar<'a, S: HashTreeStorage> {
+    trie: &'a HashTrie<S>,
     needle: u64,
     max_distance: u8,
     branches: Vec<SimilarBranch<'a>>,
 }
 
-impl<'a> Similar<'a> {
-    fn new(trie: &'a HashTrie, needle: u64, max_distance: u8) -> Self {
+impl<'a, S: HashTreeStorage> Similar<'a, S> {
+    fn new(trie: &'a HashTrie<S>, needle: u64, max_distance: u8) -> Self {
         Self {
             trie,
             needle,
@@ -160,13 +185,13 @@ impl<'a> Similar<'a> {
                 hash: 0,
                 pos: 0,
                 distance: 0,
-                node: &trie.haystack[0],
+                node: &trie.haystack.get(0),
             }],
         }
     }
 }
 
-impl<'a> Iterator for Similar<'a> {
+impl<'a, S: HashTreeStorage> Iterator for Similar<'a, S> {
     type Item = u64;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -179,11 +204,11 @@ impl<'a> Iterator for Similar<'a> {
         {
             for pos in start_pos..=64 {
                 let index = match (node.zero, node.one) {
-                    (None, None) => {
+                    (0, 0) => {
                         debug_assert_eq!(pos, 64);
                         return Some(hash);
                     }
-                    (Some(index), None) => {
+                    (index, 0) => {
                         if get_bit(self.needle, pos) == 0 {
                             index
                         } else {
@@ -195,7 +220,7 @@ impl<'a> Iterator for Similar<'a> {
                             }
                         }
                     }
-                    (None, Some(index)) => {
+                    (0, index) => {
                         hash |= 1 << pos;
 
                         if get_bit(self.needle, pos) == 1 {
@@ -209,7 +234,7 @@ impl<'a> Iterator for Similar<'a> {
                             }
                         }
                     }
-                    (Some(zero_index), Some(one_index)) => {
+                    (zero_index, one_index) => {
                         let needle_bit = get_bit(self.needle, pos);
 
                         if needle_bit == 1 || distance < self.max_distance {
@@ -223,7 +248,7 @@ impl<'a> Iterator for Similar<'a> {
                                 hash: hash | 1 << pos,
                                 pos: pos + 1,
                                 distance: branch_distance,
-                                node: &self.trie.haystack[one_index],
+                                node: &self.trie.haystack.get(one_index),
                             });
                         }
 
@@ -240,7 +265,7 @@ impl<'a> Iterator for Similar<'a> {
                     }
                 };
                 debug_assert_ne!(pos, 64);
-                node = &self.trie.haystack[index];
+                node = &self.trie.haystack.get(index);
             }
         }
 
@@ -248,44 +273,44 @@ impl<'a> Iterator for Similar<'a> {
     }
 }
 
-pub struct HashIter<'a> {
-    trie: &'a HashTrie,
+pub struct HashIter<'a, S: HashTreeStorage> {
+    trie: &'a HashTrie<S>,
     branches: Vec<(u64, u8, &'a Node)>,
 }
 
-impl<'a> HashIter<'a> {
-    fn new(trie: &'a HashTrie) -> Self {
+impl<'a, S: HashTreeStorage> HashIter<'a, S> {
+    fn new(trie: &'a HashTrie<S>) -> Self {
         Self {
             trie,
-            branches: vec![(0, 0, &trie.haystack[0])],
+            branches: vec![(0, 0, &trie.haystack.get(0))],
         }
     }
 }
 
-impl<'a> Iterator for HashIter<'a> {
+impl<'a, S: HashTreeStorage> Iterator for HashIter<'a, S> {
     type Item = u64;
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some((mut hash, start_pos, mut node)) = self.branches.pop() {
             for pos in start_pos..64 {
                 let index = match (node.zero, node.one) {
-                    (None, None) => unreachable!(),
-                    (Some(index), None) => index,
-                    (None, Some(index)) => {
+                    (0, 0) => unreachable!(),
+                    (index, 0) => index,
+                    (0, index) => {
                         hash |= 1 << pos;
                         index
                     }
-                    (Some(zero_index), Some(one_index)) => {
+                    (zero_index, one_index) => {
                         self.branches.push((
                             hash | 1 << pos,
                             pos + 1,
-                            &self.trie.haystack[one_index],
+                            &self.trie.haystack.get(one_index),
                         ));
                         zero_index
                     }
                 };
                 debug_assert_ne!(pos, 64);
-                node = &self.trie.haystack[index];
+                node = &self.trie.haystack.get(index);
             }
 
             Some(hash)
@@ -304,7 +329,7 @@ mod test {
     fn inout() {
         let mut input = vec![1, 54, 0, std::u64::MAX, 766];
 
-        let trie: HashTrie = input.iter().copied().collect();
+        let trie: HashTrie<Vec<_>> = input.iter().copied().collect();
         let mut output = trie.hashes().collect::<Vec<_>>();
 
         input.sort();
@@ -319,7 +344,7 @@ mod test {
 
         let mut input: Vec<_> = std::iter::repeat_with(|| rng.gen()).take(1000).collect();
 
-        let trie: HashTrie = input.iter().copied().collect();
+        let trie: HashTrie<Vec<_>> = input.iter().copied().collect();
         let mut output: Vec<_> = trie.hashes().collect();
 
         input.sort();
@@ -334,7 +359,7 @@ mod test {
             0b1001, 0b0100, 0b0010, 0b0101, 0b0110, 0b0001, 0b0000, 0b1111, 0b0011,
         ];
 
-        let trie: HashTrie = input.iter().copied().collect();
+        let trie: HashTrie<Vec<_>> = input.iter().copied().collect();
 
         let needle = 0b0010;
         let max_distance = 1;
@@ -351,9 +376,9 @@ mod test {
     fn save() {
         let mut rng = thread_rng();
 
-        let mut input: Vec<u64> = std::iter::repeat_with(|| rng.gen()).take(20000).collect();
+        let input: Vec<u64> = std::iter::repeat_with(|| rng.gen()).take(100).collect();
 
-        let in_trie: HashTrie = input.iter().copied().collect();
+        let in_trie: HashTrie<Vec<_>> = input.iter().copied().collect();
 
         in_trie.write_out("/tmp/test.hashtrie").unwrap();
 

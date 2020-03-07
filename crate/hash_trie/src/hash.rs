@@ -36,7 +36,3 @@ impl Iterator for HashBits {
         }
     }
 }
-
-pub fn distance(a: u64, b: u64) -> u8 {
-    (a ^ b).count_ones() as u8
-}

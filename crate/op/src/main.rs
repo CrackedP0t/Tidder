@@ -6,7 +6,7 @@ use hash_trie::HashTrie;
 use reqwest::{header::USER_AGENT, Client};
 use serde::Deserialize;
 use serde_json::Value;
-use std::io::Write;
+use std::io::{Read, Write};
 
 async fn post(ids: impl Iterator<Item = &str>) -> Result<(), UserError> {
     const REDDIT_USER_AGENT: &str = concat!(
@@ -210,22 +210,44 @@ async fn rank() -> Result<(), UserError> {
     Ok(())
 }
 
-async fn trie(path: impl AsRef<std::path::Path>) -> Result<(), UserError> {
+async fn trie(path: &str, id_path: &str) -> Result<(), UserError> {
+    let mut id_file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(id_path)?;
+
+    let mut old_id = String::new();
+    id_file.read_to_string(&mut old_id)?;
+    let old_id: i64 = old_id.parse()?;
+
+    let mut client = PG_POOL.get().await?;
+
+    let trans = client.transaction().await?;
+
     let mut hashes = Box::pin(
-        PG_POOL
-            .get()
-            .await?
-            .query_raw("SELECT hash FROM images", std::iter::empty())
+        trans
+            .query_raw(
+                "SELECT hash FROM images WHERE id > $1",
+                std::iter::once(&old_id as &dyn tokio_postgres::types::ToSql),
+            )
             .await?,
     );
 
-    let mut trie = HashTrie::new();
+    let mut trie = HashTrie::<hash_trie::FileMap>::new(path.to_string());
 
     while let Some(row) = hashes.next().await {
         trie.insert(row?.get::<_, i64>("hash") as u64);
     }
 
-    trie.write_out(path)?;
+    let last_id: i64 = trans
+        .query_one("SELECT id FROM images ORDER BY id DESC LIMIT 1", &[])
+        .await?
+        .get("id");
+
+    id_file.write_all(last_id.to_string().as_ref())?;
+
+    trans.commit().await?;
 
     Ok(())
 }
@@ -251,6 +273,7 @@ async fn main() -> Result<(), UserError> {
         )
         (@subcommand trie =>
          (@arg PATH: +required ... "The path to save the trie to")
+         (@arg ID_PATH: +required ... "The path to save the last ID to")
         )
     )
     .get_matches();
@@ -273,7 +296,13 @@ async fn main() -> Result<(), UserError> {
             )
             .await
         }
-        "trie" => trie(op_matches.value_of::<&str>("PATH").unwrap()).await,
+        "trie" => {
+            trie(
+                op_matches.value_of("PATH").unwrap(),
+                op_matches.value_of("ID_PATH").unwrap(),
+            )
+            .await
+        }
         unknown => Err(ue!(format!("Unknown subcommand '{}'", unknown))),
     }
 }

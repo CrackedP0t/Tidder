@@ -8,3 +8,6 @@ edition = "2018"
 
 [dev-dependencies]
 rand = "0.7.3"
+
+[dependencies]
+memmap = "0.7.0"

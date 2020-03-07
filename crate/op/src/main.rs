@@ -219,7 +219,11 @@ async fn trie(path: &str, id_path: &str) -> Result<(), UserError> {
 
     let mut old_id = String::new();
     id_file.read_to_string(&mut old_id)?;
-    let old_id: i64 = old_id.parse()?;
+    let old_id: i64 = if old_id.is_empty() {
+        0
+    } else {
+        old_id.parse()?
+    };
 
     let mut client = PG_POOL.get().await?;
 

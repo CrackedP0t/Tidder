@@ -8,6 +8,8 @@ use std::path::Path;
 mod hash;
 use hash::*;
 
+const NODE_SIZE: usize = 8;
+
 fn u32ize<T>(n: T) -> u32
 where
     T: TryInto<u32>,
@@ -16,19 +18,20 @@ where
     n.try_into().unwrap()
 }
 
-unsafe fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
-    ::std::slice::from_raw_parts((p as *const T) as *const u8, ::std::mem::size_of::<T>())
-}
-
 pub trait HashTreeStorage {
     type Data;
     fn new(data: Self::Data) -> Self;
-    fn get(&self, index: u32) -> &Node;
-    fn get_mut(&mut self, index: u32) -> &mut Node;
-    fn push(&mut self, node: Node);
+    fn get_zero(&self, index: u32) -> u32;
+    fn get_one(&self, index: u32) -> u32;
+    fn set_zero(&mut self, index: u32, val: u32);
+    fn set_one(&mut self, index: u32, val: u32);
+    fn push(&mut self, zero: u32, one: u32);
     fn len(&self) -> u32;
     fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+    fn get_both(&self, index: u32) -> (u32, u32) {
+        (self.get_zero(index), self.get_one(index))
     }
 }
 
@@ -37,14 +40,20 @@ impl HashTreeStorage for Vec<Node> {
     fn new(_data: Self::Data) -> Self {
         vec![Node::default()]
     }
-    fn get(&self, index: u32) -> &Node {
-        &self[index as usize]
+    fn get_zero(&self, index: u32) -> u32 {
+        self[index as usize].zero
     }
-    fn get_mut(&mut self, index: u32) -> &mut Node {
-        &mut self[index as usize]
+    fn get_one(&self, index: u32) -> u32 {
+        self[index as usize].one
     }
-    fn push(&mut self, node: Node) {
-        self.push(node);
+    fn set_zero(&mut self, index: u32, val: u32) {
+        self[index as usize].zero = val
+    }
+    fn set_one(&mut self, index: u32, val: u32) {
+        self[index as usize].one = val
+    }
+    fn push(&mut self, zero: u32, one: u32) {
+        self.push(Node { zero, one });
     }
     fn len(&self) -> u32 {
         u32ize(self.len())
@@ -75,35 +84,28 @@ impl HashTreeStorage for FileMap {
 
         Self { file, mmap }
     }
-    fn get(&self, index: u32) -> &Node {
-        let slice = unsafe {
-            #[allow(clippy::cast_ptr_alignment)]
-            std::slice::from_raw_parts(
-                self.mmap.as_ref().as_ptr() as *const Node,
-                self.mmap.len() / std::mem::size_of::<Node>(),
-            )
-        };
-        &slice[index as usize]
+    fn get_zero(&self, index: u32) -> u32 {
+        let index = index as usize * NODE_SIZE;
+        u32::from_le_bytes(self.mmap[index..index + 4].try_into().unwrap())
     }
-
-    fn get_mut(&mut self, index: u32) -> &mut Node {
-        let slice = unsafe {
-            #[allow(clippy::cast_ptr_alignment)]
-            std::slice::from_raw_parts_mut(
-                self.mmap.as_mut().as_mut_ptr() as *mut Node,
-                self.mmap.len() / std::mem::size_of::<Node>(),
-            )
-        };
-        &mut slice[index as usize]
+    fn get_one(&self, index: u32) -> u32 {
+        let index = index as usize * NODE_SIZE;
+        u32::from_le_bytes(self.mmap[index + 4..index + 8].try_into().unwrap())
     }
+    fn set_zero(&mut self, index: u32, val: u32) {
+        let index = index as usize * NODE_SIZE;
+        self.mmap[index..index + 4].copy_from_slice(&val.to_le_bytes());
+    }
+    fn set_one(&mut self, index: u32, val: u32) {
+        let index = index as usize * NODE_SIZE;
+        self.mmap[index + 4..index + 8].copy_from_slice(&val.to_le_bytes());
+    }
+    fn push(&mut self, zero: u32, one: u32) {
+        let mut out = [0, 0, 0, 0, 0, 0, 0, 0];
+        out[0..4].copy_from_slice(&zero.to_le_bytes());
+        out[4..8].copy_from_slice(&one.to_le_bytes());
 
-    fn push(&mut self, node: Node) {
-        self.file
-            .write_all_at(
-                unsafe { any_as_u8_slice(&node) },
-                self.len() as u64 * std::mem::size_of::<Node>() as u64,
-            )
-            .unwrap();
+        self.file.write_all_at(&out, self.len() as u64 * NODE_SIZE as u64).unwrap();
 
         std::mem::replace(&mut self.mmap, unsafe {
             MmapMut::map_mut(&self.file).unwrap()
@@ -111,7 +113,7 @@ impl HashTreeStorage for FileMap {
     }
 
     fn len(&self) -> u32 {
-        u32ize(self.mmap.len() / std::mem::size_of::<Node>())
+        u32ize(self.mmap.len() / NODE_SIZE)
     }
 }
 
@@ -135,45 +137,44 @@ impl<S: HashTreeStorage> HashTrie<S> {
     }
 
     pub fn insert(&mut self, hash: u64) -> bool {
-        let (start_pos, mut index) = self.search(hash);
+        let (start_pos, mut prev_index) = self.search(hash);
 
         if start_pos == 63 {
             return true;
         }
 
         for bit in HashBits::new_at(hash, start_pos) {
-            let new_node = Node::default();
-
             let new_index = self.haystack.len();
-            self.haystack.push(new_node);
+            self.haystack.push(0, 0);
 
             if bit == 0 {
-                self.haystack.get_mut(index).zero = new_index;
+                self.haystack.set_zero(prev_index, new_index);
             } else if bit == 1 {
-                self.haystack.get_mut(index).one = new_index;
+                self.haystack.set_one(prev_index, new_index);
             }
 
-            index = new_index;
+            prev_index = new_index;
         }
 
         false
     }
 
     fn search(&self, needle: u64) -> (u8, u32) {
-        let mut current_node = self.haystack.get(0);
+        let haystack = &self.haystack;
 
+        let mut current_index = 0;
         let mut next_index = 0;
 
         for (pos, bit) in HashBits::new(needle).enumerate() {
-            next_index = if bit == 0 && current_node.zero != 0 {
-                current_node.zero
-            } else if bit == 1 && current_node.one != 0 {
-                current_node.one
+            next_index = if bit == 0 && haystack.get_zero(current_index) != 0 {
+                haystack.get_zero(current_index)
+            } else if bit == 1 && haystack.get_one(current_index) != 0 {
+                haystack.get_one(current_index)
             } else {
                 return (pos as u8, next_index);
             };
 
-            current_node = self.haystack.get(next_index);
+            current_index = next_index;
         }
 
         (63, next_index)
@@ -249,18 +250,18 @@ impl std::iter::FromIterator<u64> for HashTrie<Vec<Node>> {
     }
 }
 
-struct SimilarBranch<'a> {
+struct SimilarBranch {
     hash: u64,
     pos: u8,
     distance: u8,
-    node: &'a Node,
+    index: u32,
 }
 
 pub struct Similar<'a, S: HashTreeStorage> {
     trie: &'a HashTrie<S>,
     needle: u64,
     max_distance: u8,
-    branches: Vec<SimilarBranch<'a>>,
+    branches: Vec<SimilarBranch>,
 }
 
 impl<'a, S: HashTreeStorage> Similar<'a, S> {
@@ -273,7 +274,7 @@ impl<'a, S: HashTreeStorage> Similar<'a, S> {
                 hash: 0,
                 pos: 0,
                 distance: 0,
-                node: &trie.haystack.get(0),
+                index: 0,
             }],
         }
     }
@@ -287,11 +288,14 @@ impl<'a, S: HashTreeStorage> Iterator for Similar<'a, S> {
             mut hash,
             mut distance,
             pos: start_pos,
-            mut node,
+            index: mut current_index,
         }) = self.branches.pop()
         {
             for pos in start_pos..=64 {
-                let index = match (node.zero, node.one) {
+                current_index = match (
+                    self.trie.haystack.get_zero(current_index),
+                    self.trie.haystack.get_one(current_index),
+                ) {
                     (0, 0) => {
                         debug_assert_eq!(pos, 64);
                         return Some(hash);
@@ -336,7 +340,7 @@ impl<'a, S: HashTreeStorage> Iterator for Similar<'a, S> {
                                 hash: hash | 1 << pos,
                                 pos: pos + 1,
                                 distance: branch_distance,
-                                node: &self.trie.haystack.get(one_index),
+                                index: one_index,
                             });
                         }
 
@@ -353,7 +357,6 @@ impl<'a, S: HashTreeStorage> Iterator for Similar<'a, S> {
                     }
                 };
                 debug_assert_ne!(pos, 64);
-                node = &self.trie.haystack.get(index);
             }
         }
 
@@ -363,14 +366,14 @@ impl<'a, S: HashTreeStorage> Iterator for Similar<'a, S> {
 
 pub struct HashIter<'a, S: HashTreeStorage> {
     trie: &'a HashTrie<S>,
-    branches: Vec<(u64, u8, &'a Node)>,
+    branches: Vec<(u64, u8, u32)>,
 }
 
 impl<'a, S: HashTreeStorage> HashIter<'a, S> {
     fn new(trie: &'a HashTrie<S>) -> Self {
         Self {
             trie,
-            branches: vec![(0, 0, &trie.haystack.get(0))],
+            branches: vec![(0, 0, 0)],
         }
     }
 }
@@ -379,9 +382,9 @@ impl<'a, S: HashTreeStorage> Iterator for HashIter<'a, S> {
     type Item = u64;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some((mut hash, start_pos, mut node)) = self.branches.pop() {
+        if let Some((mut hash, start_pos, mut current_index)) = self.branches.pop() {
             for pos in start_pos..64 {
-                let index = match (node.zero, node.one) {
+                current_index = match self.trie.haystack.get_both(current_index) {
                     (0, 0) => unreachable!(),
                     (index, 0) => index,
                     (0, index) => {
@@ -392,13 +395,12 @@ impl<'a, S: HashTreeStorage> Iterator for HashIter<'a, S> {
                         self.branches.push((
                             hash | 1 << pos,
                             pos + 1,
-                            &self.trie.haystack.get(one_index),
+                            one_index,
                         ));
                         zero_index
                     }
                 };
                 debug_assert_ne!(pos, 64);
-                node = &self.trie.haystack.get(index);
             }
 
             Some(hash)

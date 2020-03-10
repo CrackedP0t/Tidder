@@ -466,7 +466,7 @@ mod test {
     fn save() {
         let mut rng = thread_rng();
 
-        let input: Vec<u64> = std::iter::repeat_with(|| rng.gen()).take(1).collect();
+        let input: Vec<u64> = std::iter::repeat_with(|| rng.gen()).take(100).collect();
 
         let in_trie: HashTrie<Vec<_>> = input.iter().copied().collect();
 

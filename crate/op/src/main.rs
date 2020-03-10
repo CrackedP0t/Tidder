@@ -229,6 +229,8 @@ async fn trie(path: &str, id_path: &str) -> Result<(), UserError> {
 
     let trans = client.transaction().await?;
 
+    println!("Startng to query...");
+
     let mut hashes = Box::pin(
         trans
             .query_raw(
@@ -237,6 +239,8 @@ async fn trie(path: &str, id_path: &str) -> Result<(), UserError> {
             )
             .await?,
     );
+
+    println!("Recieved start of query!");
 
     let mut trie = HashTrie::<hash_trie::FileMap>::new(path.to_string());
 

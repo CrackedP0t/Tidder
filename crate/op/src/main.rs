@@ -232,7 +232,7 @@ async fn trie(path: &str, id_path: &str) -> Result<(), UserError> {
     let mut hashes = Box::pin(
         trans
             .query_raw(
-                "SELECT hash FROM images WHERE id > $1",
+                "SELECT DISTINCT (hash) hash FROM images WHERE id > $1",
                 std::iter::once(&old_id as &dyn tokio_postgres::types::ToSql),
             )
             .await?,

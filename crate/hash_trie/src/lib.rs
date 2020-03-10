@@ -1,4 +1,5 @@
 use memmap::MmapMut;
+use std::convert::TryInto;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::os::unix::fs::FileExt;
@@ -7,6 +8,14 @@ use std::path::Path;
 mod hash;
 use hash::*;
 
+fn u32ize<T>(n: T) -> u32
+where
+    T: TryInto<u32>,
+    T::Error: std::fmt::Debug,
+{
+    n.try_into().unwrap()
+}
+
 unsafe fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
     ::std::slice::from_raw_parts((p as *const T) as *const u8, ::std::mem::size_of::<T>())
 }
@@ -14,10 +23,10 @@ unsafe fn any_as_u8_slice<T: Sized>(p: &T) -> &[u8] {
 pub trait HashTreeStorage {
     type Data;
     fn new(data: Self::Data) -> Self;
-    fn get(&self, index: usize) -> &Node;
-    fn get_mut(&mut self, index: usize) -> &mut Node;
+    fn get(&self, index: u32) -> &Node;
+    fn get_mut(&mut self, index: u32) -> &mut Node;
     fn push(&mut self, node: Node);
-    fn len(&self) -> usize;
+    fn len(&self) -> u32;
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -28,17 +37,17 @@ impl HashTreeStorage for Vec<Node> {
     fn new(_data: Self::Data) -> Self {
         vec![Node::default()]
     }
-    fn get(&self, index: usize) -> &Node {
-        &self[index]
+    fn get(&self, index: u32) -> &Node {
+        &self[index as usize]
     }
-    fn get_mut(&mut self, index: usize) -> &mut Node {
-        &mut self[index]
+    fn get_mut(&mut self, index: u32) -> &mut Node {
+        &mut self[index as usize]
     }
     fn push(&mut self, node: Node) {
         self.push(node);
     }
-    fn len(&self) -> usize {
-        self.len()
+    fn len(&self) -> u32 {
+        u32ize(self.len())
     }
 }
 
@@ -59,15 +68,14 @@ impl HashTreeStorage for FileMap {
             .unwrap();
 
         if file.metadata().unwrap().len() == 0 {
-            file.write_all(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-                .unwrap();
+            file.write_all(&[0, 0, 0, 0, 0, 0, 0, 0]).unwrap();
         }
 
         let mmap = unsafe { MmapMut::map_mut(&file).unwrap() };
 
         Self { file, mmap }
     }
-    fn get(&self, index: usize) -> &Node {
+    fn get(&self, index: u32) -> &Node {
         let slice = unsafe {
             #[allow(clippy::cast_ptr_alignment)]
             std::slice::from_raw_parts(
@@ -75,10 +83,10 @@ impl HashTreeStorage for FileMap {
                 self.mmap.len() / std::mem::size_of::<Node>(),
             )
         };
-        &slice[index]
+        &slice[index as usize]
     }
 
-    fn get_mut(&mut self, index: usize) -> &mut Node {
+    fn get_mut(&mut self, index: u32) -> &mut Node {
         let slice = unsafe {
             #[allow(clippy::cast_ptr_alignment)]
             std::slice::from_raw_parts_mut(
@@ -86,14 +94,14 @@ impl HashTreeStorage for FileMap {
                 self.mmap.len() / std::mem::size_of::<Node>(),
             )
         };
-        &mut slice[index]
+        &mut slice[index as usize]
     }
 
     fn push(&mut self, node: Node) {
         self.file
             .write_all_at(
                 unsafe { any_as_u8_slice(&node) },
-                (self.len() * std::mem::size_of::<Node>()) as u64,
+                self.len() as u64 * std::mem::size_of::<Node>() as u64,
             )
             .unwrap();
 
@@ -102,16 +110,16 @@ impl HashTreeStorage for FileMap {
         });
     }
 
-    fn len(&self) -> usize {
-        self.mmap.len() / std::mem::size_of::<Node>()
+    fn len(&self) -> u32 {
+        u32ize(self.mmap.len() / std::mem::size_of::<Node>())
     }
 }
 
 #[derive(Debug, Default, PartialEq)]
 #[repr(C)]
 pub struct Node {
-    zero: usize,
-    one: usize,
+    zero: u32,
+    one: u32,
 }
 
 #[derive(Debug, Default)]
@@ -151,7 +159,7 @@ impl<S: HashTreeStorage> HashTrie<S> {
         false
     }
 
-    fn search(&self, needle: u64) -> (u8, usize) {
+    fn search(&self, needle: u64) -> (u8, u32) {
         let mut current_node = self.haystack.get(0);
 
         let mut next_index = 0;
@@ -192,15 +200,15 @@ impl HashTrie<Vec<Node>> {
             haystack: Vec::new(),
         };
 
-        for _i in 0..len / 16 {
-            let mut zero_bytes = [0, 0, 0, 0, 0, 0, 0, 0];
-            let mut one_bytes = [0, 0, 0, 0, 0, 0, 0, 0];
+        for _i in 0..len / (2 * std::mem::size_of::<u32>() as u64) {
+            let mut zero_bytes = [0, 0, 0, 0];
+            let mut one_bytes = [0, 0, 0, 0];
 
             file.read_exact(&mut zero_bytes)?;
             file.read_exact(&mut one_bytes)?;
 
-            let zero = usize::from_le_bytes(zero_bytes);
-            let one = usize::from_le_bytes(one_bytes);
+            let zero = u32::from_le_bytes(zero_bytes);
+            let one = u32::from_le_bytes(one_bytes);
 
             new.haystack.push(Node { zero, one });
         }
@@ -456,7 +464,7 @@ mod test {
     fn save() {
         let mut rng = thread_rng();
 
-        let input: Vec<u64> = std::iter::repeat_with(|| rng.gen()).take(100).collect();
+        let input: Vec<u64> = std::iter::repeat_with(|| rng.gen()).take(1).collect();
 
         let in_trie: HashTrie<Vec<_>> = input.iter().copied().collect();
 

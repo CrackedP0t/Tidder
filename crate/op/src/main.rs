@@ -210,7 +210,7 @@ async fn rank() -> Result<(), UserError> {
     Ok(())
 }
 
-async fn trie(path: &str, id_path: &str) -> Result<(), UserError> {
+async fn trie_build(path: &str, id_path: &str) -> Result<(), UserError> {
     let mut id_file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -260,6 +260,22 @@ async fn trie(path: &str, id_path: &str) -> Result<(), UserError> {
     Ok(())
 }
 
+async fn trie_insert(path: &str, hashes: impl Iterator<Item = u64>) -> Result<(), UserError> {
+    let mut trie = HashTrie::<hash_trie::FileMap>::new(path.to_string());
+
+    for hash in hashes {
+        let existed = trie.insert(hash);
+
+        if existed {
+            println!("Hash {:020} already exists", hash);
+        } else {
+            println!("Hash {:020} successfully inserted", hash);
+        }
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), UserError> {
     setup_logging!();
@@ -273,15 +289,19 @@ async fn main() -> Result<(), UserError> {
         )
         (@subcommand rank => )
         (@subcommand save =>
-         (@arg ID: +required ... "Reddit's ID for the post you wish to save")
+         (@arg ID: +required "Reddit's ID for the post you wish to save")
         )
         (@subcommand search =>
-         (@arg LINK: +required ... "The link to the image you wish to search for")
+         (@arg LINK: +required "The link to the image you wish to search for")
          (@arg distance: -d --distance +takes_value "The max distance you'll accept")
         )
-        (@subcommand trie =>
-         (@arg PATH: +required ... "The path to save the trie to")
-         (@arg ID_PATH: +required ... "The path to save the last ID to")
+        (@subcommand trie_build =>
+         (@arg PATH: +required "The path to save the trie to")
+         (@arg ID_PATH: +required "The path to save the last ID to")
+        )
+        (@subcommand trie_insert =>
+         (@arg PATH: +required "The path of the trie file")
+         (@arg HASHES: +required ... "The hashes you wish to save")
         )
     )
     .get_matches();
@@ -304,10 +324,25 @@ async fn main() -> Result<(), UserError> {
             )
             .await
         }
-        "trie" => {
-            trie(
+        "trie_build" => {
+            trie_build(
                 op_matches.value_of("PATH").unwrap(),
                 op_matches.value_of("ID_PATH").unwrap(),
+            )
+            .await
+        }
+        "trie_insert" => {
+            trie_insert(
+                op_matches.value_of("PATH").unwrap(),
+                op_matches
+                    .values_of("HASHES")
+                    .unwrap()
+                    .try_fold(Vec::new(), |mut v, h| {
+                        v.push(h.parse()?);
+                        Ok::<_, UserError>(v)
+                    })?
+                    .iter()
+                    .copied(),
             )
             .await
         }

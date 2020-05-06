@@ -98,10 +98,7 @@ pub mod utils {
         }
 
         match progress_res() {
-            Err(e) => {
-                common::error!("Error getting progress: {}", e);
-                Ok(Value::Null)
-            }
+            Err(e) => Ok(Value::Null),
             Ok(progress) => Ok(progress),
         }
     }

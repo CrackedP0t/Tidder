@@ -98,7 +98,7 @@ pub mod utils {
         }
 
         match progress_res() {
-            Err(e) => Ok(Value::Null),
+            Err(_e) => Ok(Value::Null),
             Ok(progress) => Ok(progress),
         }
     }

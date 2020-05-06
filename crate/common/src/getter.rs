@@ -409,7 +409,7 @@ async fn follow_wikipedia(url: Url) -> Result<String, UserError> {
         .1
         .imageinfo
         .into_iter()
-        .nth(0)
+        .next()
         .ok_or(ue!("Wikipedia API returned no images", Source::User))?;
 
     Ok(if IMAGE_MIMES.contains(&imageinfo.mime.as_str()) {

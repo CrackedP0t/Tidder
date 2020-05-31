@@ -271,8 +271,7 @@ async fn ingest_json<R: Read + Send + 'static>(
 
 #[tokio::main]
 async fn main() -> Result<(), UserError> {
-    static MONTH_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"-(\d\d)").unwrap());
-    static YEAR_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\d\d\d\d").unwrap());
+    static DATE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(\d\d\d\d)-(\d\d)-(\d\d)?").unwrap());
 
     tracing_subscriber::fmt::init();
 
@@ -291,23 +290,48 @@ async fn main() -> Result<(), UserError> {
     let path = matches.value_of("PATH").unwrap().to_string();
     let verbose = matches.is_present("VERBOSE");
 
-    let month: u32 = MONTH_RE
+    let (year, month, day): (i32, u32, Option<u32>) = DATE_RE
         .captures(&path)
-        .and_then(|caps| caps.get(1))
-        .ok_or_else(|| ue!(format!("couldn't find month in {}", path)))
-        .and_then(|m| m.as_str().parse().map_err(map_ue!()))?;
+        .ok_or_else(|| ue!(format!("couldn't find date in {}", path)))
+        .and_then(|caps| {
+            Ok((
+                caps.get(1)
+                    .ok_or_else(|| ue!(format!("couldn't find year in {}", path)))?
+                    .as_str()
+                    .parse()
+                    .map_err(map_ue!())?,
+                caps.get(2)
+                    .ok_or_else(|| ue!(format!("couldn't find month in {}", path)))?
+                    .as_str()
+                    .parse()
+                    .map_err(map_ue!())?,
+                caps.get(3)
+                    .map(|s| s.as_str().parse().map_err(map_ue!()))
+                    .transpose()?,
+            ))
+        })?;
 
-    let year: i32 = YEAR_RE
-        .find(&path)
-        .ok_or_else(|| ue!(format!("couldn't find year in {}", path)))
-        .and_then(|m| m.as_str().parse().map_err(map_ue!()))?;
+    let date = NaiveDate::from_ymd(year, month, day.unwrap_or(1)).and_hms(0, 0, 0);
 
-    let date = NaiveDate::from_ymd(year, month, 1).and_hms(0, 0, 0);
-    let next_month = if date.month() == 12 {
-        NaiveDate::from_ymd(year + 1, 1, 1).and_hms(0, 0, 0)
+    let next_date = if let Some(day) = day {
+        const MONTH_LENGTHS: [u32; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+        // >= for leap years
+        if day >= MONTH_LENGTHS[day as usize] {
+            if month == 12 {
+                NaiveDate::from_ymd(year + 1, 1, 1)
+            } else {
+                NaiveDate::from_ymd(year, month + 1, 1)
+            }
+        } else {
+            NaiveDate::from_ymd(year, month, day + 1)
+        }
+    } else if month == 12 {
+        NaiveDate::from_ymd(year + 1, 1, 1)
     } else {
-        NaiveDate::from_ymd(year, month + 1, 1).and_hms(0, 0, 0)
-    };
+        NaiveDate::from_ymd(year, month + 1, 1)
+    }
+    .and_hms(0, 0, 0);
 
     info!("Ingesting {}", path);
 
@@ -362,7 +386,7 @@ async fn main() -> Result<(), UserError> {
         .query_raw(
             "SELECT reddit_id_int FROM posts \
              WHERE created_utc >= $1 and created_utc < $2",
-            vec![&date as &dyn ToSql, &next_month as &dyn ToSql],
+            [&date as &dyn ToSql, &next_date as &dyn ToSql].iter().copied(),
         )
         .await?
         .try_fold(BTreeSet::new(), move |mut already_have, row| async move {
@@ -397,6 +421,13 @@ async fn main() -> Result<(), UserError> {
             verbose,
             already_have,
             zstd::stream::read::Decoder::new(input)?,
+        )
+        .await;
+    } else if path.ends_with("gz") {
+        ingest_json(
+            verbose,
+            already_have,
+            flate2::bufread::GzDecoder::new(input),
         )
         .await;
     } else {

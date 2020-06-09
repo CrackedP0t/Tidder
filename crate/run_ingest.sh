@@ -5,7 +5,7 @@ shopt -s extglob
 
 for URL in $(< ~/tidder/crate/ingest/todo.txt); do
     cd ~/tidder/crate/
-    ~/.cargo/bin/cargo build --bin ingest --release
+    ~/.cargo/bin/cargo build --bin ingest --release || exit 1
     cd /mnt/permanent/archives
 
     ARCHIVE="${URL##*/}"
@@ -13,7 +13,7 @@ for URL in $(< ~/tidder/crate/ingest/todo.txt); do
     EXT="${ARCHIVE##*.}"
 
     if [[ ! -e "$ARCHIVE" ]]; then
-        wget $URL
+        wget $URL || exit 1
     fi
 
     if [[ ! -e "$UNPACK" ]]; then

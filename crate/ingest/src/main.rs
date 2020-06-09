@@ -317,7 +317,7 @@ async fn main() -> Result<(), UserError> {
         const MONTH_LENGTHS: [u32; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
         // >= for leap years
-        if day >= MONTH_LENGTHS[day as usize] {
+        if day >= MONTH_LENGTHS[month as usize - 1] {
             if month == 12 {
                 NaiveDate::from_ymd(year + 1, 1, 1)
             } else {

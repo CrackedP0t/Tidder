@@ -271,7 +271,7 @@ async fn ingest_json<R: Read + Send + 'static>(
 
 #[tokio::main]
 async fn main() -> Result<(), UserError> {
-    static DATE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(\d\d\d\d)-(\d\d)-(\d\d)?").unwrap());
+    static DATE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(\d\d\d\d)-(\d\d)(?:-(\d\d))?").unwrap());
 
     tracing_subscriber::fmt::init();
 

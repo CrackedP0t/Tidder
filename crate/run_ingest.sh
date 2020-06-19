@@ -1,6 +1,7 @@
 #!/bin/bash
 
 set -e
+set -o pipefail
 shopt -s extglob
 
 for URL in $(< ~/tidder/crate/ingest/todo.txt); do

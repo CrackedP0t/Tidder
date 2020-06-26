@@ -26,6 +26,10 @@ Config(
         AnyScheme("i.redd.it/p5j2m5u8f1j21.jpg"),
         AnyScheme("i.redd.it/rdwk5rg0a2j21.jpg"),
         AnyScheme("i.redd.it/rdwk5rg0a2j21.jpg"),
+        AnyScheme("i.redd.it/es10qqrtn3q21.gif"),
+        AnyScheme("i.redd.it/5s2d5j4zn3q21.gif"),
+        AnyScheme("i.redd.it/vy9hkzout3q21.gif"),
+        AnyScheme("i.redd.it/ux8lbxmgu3q21.gif"),
     ],
     custom_limits: {
         "imgur.com": None,

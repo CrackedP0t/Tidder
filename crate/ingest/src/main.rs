@@ -29,7 +29,9 @@ async fn ingest_post(
     blacklist: &DashMap<String, ()>,
     in_flight: &DashMap<String, u32>,
 ) {
-    debug!("Starting to ingest");
+    if verbose {
+        info!("Starting to ingest");
+    }
 
     let is_video = post.is_video;
 
@@ -102,7 +104,9 @@ async fn ingest_post(
             })
             .await;
 
-            debug!("Starting to save");
+            if verbose {
+                info!("Starting to save");
+            }
 
             let res = save_hash(post_url.as_str(), HashDest::Images).await;
 

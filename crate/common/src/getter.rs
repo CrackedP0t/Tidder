@@ -459,6 +459,11 @@ pub async fn get_hash(orig_link: &str) -> Result<HashGotten, UserError> {
         .map(|h| h.ends_with("photobucket.com"))
         .unwrap_or(false);
 
+    let is_pixiv = is_photobucket
+        || get_host(url.as_str())
+            .map(|h| h.ends_with("i.pximg.net"))
+            .unwrap_or(false);
+
     let mut link = follow_link(url).await?;
 
     let found = get_existing(&link).await?;
@@ -481,7 +486,15 @@ pub async fn get_hash(orig_link: &str) -> Result<HashGotten, UserError> {
             }
             .join(",")
         })
-        .header(header::USER_AGENT, USER_AGENT)
+        .header(header::USER_AGENT, USER_AGENT);
+
+    let resp = if is_pixiv {
+        resp.header(header::REFERER, "https://www.pixiv.net")
+    } else {
+        resp
+    };
+
+    let resp = resp
         .send()
         .map_err(map_ue!("couldn't connect to image host"))
         .await?

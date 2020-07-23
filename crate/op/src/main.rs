@@ -149,9 +149,7 @@ async fn search(link: &str, distance: Option<i64>) -> Result<(), UserError> {
 
     let distance = distance.unwrap_or(DEFAULT_DISTANCE);
 
-    let resp = reqwest::get(link).await?.error_for_status()?;
-    let image = resp.bytes().await?;
-    let hash = hash_from_memory(&image)?;
+    let hash = get_hash(link).await?.hash;
 
     let found = PG_POOL
         .get()

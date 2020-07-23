@@ -3,10 +3,7 @@ use tera::Tera;
 
 #[allow(clippy::implicit_hasher)]
 pub mod utils {
-    use once_cell::sync::Lazy;
-    use regex::Regex;
     use std::collections::HashMap;
-    use std::io::BufRead;
     use tera::{to_value, try_get_value, Error, Result, Value};
 
     pub fn pluralize(value: &Value, args: &HashMap<String, Value>) -> Result<Value> {

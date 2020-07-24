@@ -1,4 +1,5 @@
 use super::*;
+use url::Url;
 
 #[derive(Deserialize, Debug)]
 pub struct Submission {
@@ -31,6 +32,31 @@ pub struct Submission {
 }
 
 impl Submission {
+    pub fn choose_url(&self) -> Result<Url, UserError> {
+        if self.is_video {
+            return Url::parse(
+                &self
+                    .preview
+                    .as_ref()
+                    .ok_or_else(|| ue_save!("is_video but no preview", "video_no_preview"))?,
+            )
+            .map_err(map_ue_save!("invalid URL", "url_invalid"));
+        }
+
+        let post_url = Url::parse(&self.url).map_err(map_ue_save!("invalid URL", "url_invalid"))?;
+
+        if let Some("v.redd.it") = post_url.host_str() {
+            Url::parse(
+                self.preview
+                    .as_ref()
+                    .ok_or_else(|| ue_save!("v.redd.it but no preview", "v_redd_it_no_preview"))?,
+            )
+            .map_err(map_ue_save!("invalid URL", "url_invalid"))
+        } else {
+            Ok(post_url)
+        }
+    }
+
     pub fn unescape(s: &str) -> String {
         s.replace("&lt;", "<")
             .replace("&gt;", ">")

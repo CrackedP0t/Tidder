@@ -33,39 +33,19 @@ async fn ingest_post(
         info!("Starting to ingest");
     }
 
-    let is_video = post.is_video;
-
     let post_url_res = (|| async {
-        let mut post_url = post.url.as_str();
+        let post_url = post.choose_url()?;
 
-        if get_host(&post_url)
+        if get_host(post_url.as_str())
             .map(|host| blacklist.contains_key(&host))
             .unwrap_or(false)
         {
             return Err(ue_save!("blacklisted", "blacklisted"));
         }
 
-        if CONFIG.banned.iter().any(|banned| banned.matches(post_url)) {
+        if CONFIG.banned.iter().any(|banned| banned.matches(post_url.as_str())) {
             return Err(ue_save!("banned", "banned"));
         }
-
-        if is_video {
-            post_url = post
-                .preview
-                .as_ref()
-                .ok_or_else(|| ue_save!("is_video but no preview", "video_no_preview"))?
-        }
-        let post_url = Url::parse(&post_url).map_err(map_ue_save!("invalid URL", "url_invalid"))?;
-
-        let post_url = if let Some("v.redd.it") = post_url.host_str() {
-            Url::parse(
-                post.preview
-                    .as_ref()
-                    .ok_or_else(|| ue_save!("v.redd.it but no preview", "v_redd_it_no_preview"))?,
-            )?
-        } else {
-            post_url
-        };
 
         Ok(post_url)
     })()

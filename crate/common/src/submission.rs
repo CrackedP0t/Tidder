@@ -32,6 +32,14 @@ pub struct Submission {
 }
 
 impl Submission {
+    pub fn desirable(&self) -> bool {
+        !self.is_self
+            && self.promoted.map_or(true, |promoted| !promoted)
+            && (self.is_video
+                || (EXT_RE.is_match(&self.url) && URL_RE.is_match(&self.url))
+                || is_link_special(&self.url))
+    }
+
     pub fn choose_url(&self) -> Result<Url, UserError> {
         if self.is_video {
             return Url::parse(

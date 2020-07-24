@@ -204,12 +204,7 @@ async fn ingest_json<R: Read + Send + 'static>(
 
         let post = post.finalize().unwrap();
 
-        if !post.is_self
-            && post.promoted.map_or(true, |promoted| !promoted)
-            && (post.is_video
-                || (EXT_RE.is_match(&post.url) && URL_RE.is_match(&post.url))
-                || is_link_special(&post.url))
-            && match already_have {
+        if post.desirable() && match already_have {
                 None => true,
                 Some(ref mut set) => {
                     let had = set.remove(&post.id_int);

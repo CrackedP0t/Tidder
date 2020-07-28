@@ -464,7 +464,7 @@ pub async fn get_hash(orig_link: &str) -> Result<HashGotten, UserError> {
             .map(|h| h.ends_with("i.pximg.net"))
             .unwrap_or(false);
 
-    let link = follow_link(url).await?;
+    let mut link = follow_link(url).await?;
 
     let found = get_existing(&link).await?;
 
@@ -523,19 +523,18 @@ pub async fn get_hash(orig_link: &str) -> Result<HashGotten, UserError> {
             ));
         }
 
-        // Turned off because of issues with caching
-        // if url
-        //     .host_str()
-        //     .map(|host| host == "i.imgur.com")
-        //     .unwrap_or(false)
-        // {
-        //     let new_ext = ct.split('/').nth(1).unwrap();
-        //     let new_ext = if new_ext == "jpeg" { "jpg" } else { new_ext };
-        //     link = EXT_REPLACE_RE
-        //         .replace(&link, format!("$1.{}", new_ext).as_str())
-        //         .to_owned()
-        //         .to_string();
-        // }
+        if url
+            .host_str()
+            .map(|host| host == "i.imgur.com")
+            .unwrap_or(false)
+        {
+            let new_ext = ct.split('/').nth(1).unwrap();
+            let new_ext = if new_ext == "jpeg" { "jpg" } else { new_ext };
+            link = EXT_REPLACE_RE
+                .replace(&link, format!("$1.{}", new_ext).as_str())
+                .to_owned()
+                .to_string();
+        }
     }
 
     let headers = resp.headers().to_owned();

@@ -534,6 +534,16 @@ pub async fn get_hash(orig_link: &str) -> Result<HashGotten, UserError> {
                 .replace(&link, format!("$1.{}", new_ext).as_str())
                 .to_owned()
                 .to_string();
+
+            let found = get_existing(&link).await?;
+
+            if let Some((hash, hash_dest, id)) = found {
+                return Ok(HashGotten {
+                    hash,
+                    end_link: link,
+                    get_kind: GetKind::Cache(hash_dest, id),
+                });
+            }
         }
     }
 

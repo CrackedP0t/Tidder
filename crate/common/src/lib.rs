@@ -12,16 +12,6 @@ use std::borrow::Cow;
 use std::string::ToString;
 use std::time::Duration;
 
-// Get around https://github.com/rust-lang/rust/issues/64960
-#[macro_export]
-macro_rules! format {
-    ($($arg:tt)*) => {{
-        #[allow(clippy::let_and_return)]
-        let res = std::fmt::format(format_args!($($arg)*));
-        res
-    }}
-}
-
 mod banned;
 pub use banned::*;
 
@@ -351,6 +341,7 @@ async fn get_existing(link: &str) -> Result<Option<(Hash, HashDest, i64)>, UserE
              FROM image_cache WHERE link = $1",
         )
         .await?;
+
     let rows = client.query(&stmt, &[&link]).await?;
 
     Ok(rows.first().map(|row| {

@@ -43,7 +43,11 @@ async fn ingest_post(
             return Err(ue_save!("blacklisted", "blacklisted"));
         }
 
-        if CONFIG.banned.iter().any(|banned| banned.matches(post_url.as_str())) {
+        if CONFIG
+            .banned
+            .iter()
+            .any(|banned| banned.matches(post_url.as_str()))
+        {
             return Err(ue_save!("banned", "banned"));
         }
 
@@ -99,7 +103,9 @@ async fn ingest_post(
 
     let image_id = match save_res {
         Ok(hash_gotten) => {
-            info!("successfully hashed");
+            if verbose {
+                info!("successfully hashed");
+            }
 
             Ok(hash_gotten.id)
         }
@@ -169,9 +175,7 @@ async fn ingest_post(
 
     match post.save(image_id).await {
         Ok(_) => {
-            if verbose {
-                info!("successfully saved");
-            }
+            info!("successfully saved");
         }
         Err(e) => {
             eprintln!("failed to save: {:?}", e);
@@ -204,7 +208,8 @@ async fn ingest_json<R: Read + Send + 'static>(
 
         let post = post.finalize().unwrap();
 
-        if post.desirable() && match already_have {
+        if post.desirable()
+            && match already_have {
                 None => true,
                 Some(ref mut set) => {
                     let had = set.remove(&post.id_int);
@@ -250,7 +255,8 @@ async fn ingest_json<R: Read + Send + 'static>(
 
 #[tokio::main]
 async fn main() -> Result<(), UserError> {
-    static DATE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(\d\d\d\d)-(\d\d)(?:-(\d\d))?").unwrap());
+    static DATE_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"(\d\d\d\d)-(\d\d)(?:-(\d\d))?").unwrap());
 
     tracing_subscriber::fmt::init();
 
@@ -365,7 +371,9 @@ async fn main() -> Result<(), UserError> {
         .query_raw(
             "SELECT reddit_id_int FROM posts \
              WHERE created_utc >= $1 and created_utc < $2",
-            [&date as &dyn ToSql, &next_date as &dyn ToSql].iter().copied(),
+            [&date as &dyn ToSql, &next_date as &dyn ToSql]
+                .iter()
+                .copied(),
         )
         .await?
         .try_fold(BTreeSet::new(), move |mut already_have, row| async move {

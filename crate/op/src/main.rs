@@ -1,5 +1,4 @@
 use clap::clap_app;
-use common::format;
 use common::*;
 use futures::prelude::*;
 use hash_trie::HashTrie;
@@ -111,7 +110,11 @@ async fn save(id: &str) -> Result<(), UserError> {
 
         let hash_saved = save_hash(&post.url, HashDest::Images).await?;
 
-        post.save(Ok(hash_saved.id)).await?;
+        if post.save(Ok(hash_saved.id)).await? {
+            println!("already have");
+        } else {
+            println!("successfully saved");
+        }
         Ok(())
     } else {
         println!("{:#}", json);

@@ -240,19 +240,28 @@ async fn stream(mut last_id: Option<i64>) -> Result<(), (Option<i64>, UserError)
 async fn main() -> Result<(), UserError> {
     tracing_subscriber::fmt::init();
 
+    let mut get_id = !std::env::args().skip(1).any(|a| a == "-i");
+
     let client = PG_POOL.get().await?;
 
     loop {
-        let last_id = client
-            .query_one(
-                "SELECT reddit_id_int FROM posts ORDER BY reddit_id_int DESC LIMIT 1",
-                &[],
-            )
-            .await?
-            .get("reddit_id_int");
-        info!("Last ID: {}", last_id);
+        let last_id = if get_id {
+            let last_id = client
+                .query_one(
+                    "SELECT reddit_id_int FROM posts ORDER BY reddit_id_int DESC LIMIT 1",
+                    &[],
+                )
+                .await?
+                .get("reddit_id_int");
 
-        if let Err((_last_id, ue)) = stream(Some(last_id)).await {
+            info!("Last ID: {}", last_id);
+            Some(last_id)
+        } else {
+            get_id = true;
+            None
+        };
+
+        if let Err((_last_id, ue)) = stream(last_id).await {
             error!("{}", ue);
         }
 

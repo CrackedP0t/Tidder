@@ -6,7 +6,6 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use std::borrow::Cow;
 use std::error::Error;
-use std::sync::{Arc, Mutex};
 use tokio::time::{delay_for, Duration};
 use tracing_futures::Instrument;
 
@@ -98,7 +97,7 @@ async fn ingest_post(post: Submission) -> bool {
     }
 }
 
-async fn process_events(data: &[u8], counter: Arc<Mutex<u64>>) -> Result<Option<i64>, UserError> {
+async fn process_events(data: &[u8]) -> Result<Option<i64>, UserError> {
     static PARSER: Lazy<Regex> =
         Lazy::new(|| Regex::new(r"id: (\d+)\nevent: (\w+)\ndata: (.+)\n\n").unwrap());
 
@@ -123,22 +122,14 @@ async fn process_events(data: &[u8], counter: Arc<Mutex<u64>>) -> Result<Option<
                     .unwrap();
 
                 if post.desirable() {
-                    let y_counter = counter.clone();
-
                     Some(tokio::spawn(async move {
-                        let span = {
-                            let mut guard = y_counter.lock().unwrap();
-                            *guard += 1;
-                            info_span!(
-                                "ingest_post",
-                                id = post.id.as_str(),
-                                date = post.created_utc.to_string().as_str(),
-                                url = post.url.as_str(),
-                                counter = *guard
-                            )
-                        };
+                        let span = info_span!(
+                            "ingest_post",
+                            id = post.id.as_str(),
+                            date = post.created_utc.to_string().as_str(),
+                            url = post.url.as_str(),
+                        );
                         ingest_post(post).instrument(span).await;
-                        *y_counter.lock().unwrap() -= 1;
 
                         id
                     }))
@@ -201,8 +192,6 @@ async fn stream(mut last_id: Option<i64>) -> Result<(), (Option<i64>, UserError)
 
     let mut current_data = BytesMut::new();
 
-    let counter = Arc::new(Mutex::new(0));
-
     loop {
         let bytes = bytes_stream
             .try_next()
@@ -220,13 +209,10 @@ async fn stream(mut last_id: Option<i64>) -> Result<(), (Option<i64>, UserError)
         if let Some(index) = boundary {
             info!("Done collecting chunks; processing events");
 
-            last_id = process_events(
-                &current_data[0..current_data.len() - index],
-                counter.clone(),
-            )
-            .await
-            .map_err(|e| (last_id, e))?
-            .or(last_id);
+            last_id = process_events(&current_data[0..current_data.len() - index])
+                .await
+                .map_err(|e| (last_id, e))?
+                .or(last_id);
 
             current_data.clear();
             current_data.extend_from_slice(&bytes.slice(bytes.len() - index..bytes.len()));

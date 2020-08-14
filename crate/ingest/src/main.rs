@@ -2,7 +2,6 @@
 
 use chrono::prelude::*;
 use clap::{clap_app, crate_authors, crate_description, crate_version};
-use common::format;
 use common::*;
 use dashmap::DashMap;
 use future::poll_fn;

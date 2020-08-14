@@ -1,5 +1,4 @@
 use bytes::Buf;
-use common::format;
 use common::*;
 use futures::prelude::*;
 use http::StatusCode;

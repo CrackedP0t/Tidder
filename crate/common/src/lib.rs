@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::string::ToString;
 use std::time::Duration;
+use std::fmt;
 
 mod banned;
 pub use banned::*;
@@ -267,6 +268,51 @@ pub mod user_error {
 }
 
 pub use user_error::*;
+
+pub struct Base36 {
+    x: i64
+}
+
+impl Base36 {
+    pub fn new(x: i64) -> Self {
+        Self {x}
+    }
+}
+
+impl fmt::Display for Base36 {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut x = self.x;
+        // Good for binary formatting of `u128`s
+        let mut result = ['\0'; 20];
+        let mut used = 0;
+        let negative = x < 0;
+        if negative {
+            x*=-1;
+        }
+        let mut x = x as u32;
+        loop {
+            let m = x % 36;
+            x /= 36;
+
+            result[used] = std::char::from_digit(m, 36).unwrap();
+            used += 1;
+
+            if x == 0 {
+                break;
+            }
+        }
+
+        if negative {
+            write!(f, "-")?;
+        }
+
+        for c in result[..used].iter().rev() {
+            write!(f, "{}", c)?;
+        }
+
+        Ok(())
+    }
+}
 
 pub const DEFAULT_DISTANCE: i64 = 1;
 

@@ -161,7 +161,7 @@ async fn main() -> Result<(), UserError> {
             Base36::new(next_id)
         );
 
-        let next_100 = get_100(start_id..=next_id).await.unwrap();
+        let next_100 = get_100(start_id..=next_id).await?;
 
         let later = Instant::now() + Duration::from_secs(2);
 
@@ -177,7 +177,7 @@ async fn main() -> Result<(), UserError> {
                 Base36::new(next_id)
             );
 
-            let next_id = ingest_100(next_100).await.unwrap();
+            let next_id = ingest_100(next_100).await?;
 
             if next_id != 0 {
                 start_id = next_id + 1;

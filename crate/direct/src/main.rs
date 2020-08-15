@@ -59,7 +59,7 @@ async fn ingest_post(post: Submission) -> bool {
                     None => None,
                 };
 
-                let save_error = ue.save_error.or(reqwest_save_error);
+                let save_error = reqwest_save_error.or(ue.save_error);
 
                 warn!(
                     "failed to hash{}: {}",

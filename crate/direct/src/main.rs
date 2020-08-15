@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use std::error::Error;
 use tokio::time::{delay_until, Duration, Instant};
 use tracing_futures::Instrument;
+use std::cmp::Ord;
 
 mod info;
 
@@ -119,7 +120,7 @@ async fn get_100(range: impl Iterator<Item = i64>) -> Result<Vec<Submission>, Us
         .collect())
 }
 
-async fn ingest_100(posts: Vec<Submission>) -> Result<i64, UserError> {
+async fn ingest_100(posts: Vec<Submission>) -> Result<(), UserError> {
     futures::stream::iter(posts.into_iter())
         .filter_map(|post| async move {
             if post.desirable() {
@@ -130,16 +131,14 @@ async fn ingest_100(posts: Vec<Submission>) -> Result<i64, UserError> {
                         date = post.created_utc.to_string().as_str(),
                         url = post.url.as_str(),
                     );
-                    let id = post.id_int;
                     ingest_post(post).instrument(span).await;
-                    id
                 }))
             } else {
                 None
             }
         })
         .buffer_unordered(CONFIG.worker_count)
-        .try_fold(0, |l, t| async move { Ok(std::cmp::max(l, t)) })
+        .try_collect::<()>()
         .await
         .map_err(From::from)
 }
@@ -165,11 +164,11 @@ async fn main() -> Result<(), UserError> {
 
         let later = Instant::now() + Duration::from_secs(2);
 
-        if let Some(next_post) = next_100.last() {
+        if let Some(next_post) = next_100.iter().max_by(|a, b| a.id_int.cmp(&b.id_int)) {
             let next_id = next_post.id_int;
 
             info!(
-                "Downloading {} posts within {} ({}) and {} ({})",
+                "Ingesting {} posts within {} ({}) and {} ({})",
                 next_100.len(),
                 start_id,
                 Base36::new(start_id),
@@ -177,11 +176,9 @@ async fn main() -> Result<(), UserError> {
                 Base36::new(next_id)
             );
 
-            let next_id = ingest_100(next_100).await?;
+            ingest_100(next_100).await?;
 
-            if next_id != 0 {
-                start_id = next_id + 1;
-            }
+            start_id = next_id;
         }
 
         delay_until(later).await;

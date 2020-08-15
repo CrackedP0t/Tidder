@@ -11,7 +11,7 @@ mod info;
 
 const BASE_GET_URL: &str = "https://api.reddit.com/api/info/?id=";
 
-const RATE_LIMIT_WAIT: Duration = Duration::from_secs(2);
+const RATE_LIMIT_WAIT: Duration = Duration::from_secs(1);
 
 async fn ingest_post(post: Submission) -> bool {
     let post_url_res = post.choose_url();

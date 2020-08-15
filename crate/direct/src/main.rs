@@ -3,13 +3,15 @@ use common::*;
 use futures::prelude::*;
 use std::borrow::Cow;
 use std::error::Error;
-use tokio::time::{delay_until, Duration, Instant};
+use tokio::time::{delay_for, Duration};
 use tracing_futures::Instrument;
 use std::cmp::Ord;
 
 mod info;
 
 const BASE_GET_URL: &str = "https://api.reddit.com/api/info/?id=";
+
+const RATE_LIMIT_WAIT: Duration = Duration::from_secs(2);
 
 async fn ingest_post(post: Submission) -> bool {
     let post_url_res = post.choose_url();
@@ -149,38 +151,30 @@ async fn main() -> Result<(), UserError> {
 
     let mut start_id = i64::from_str_radix(&std::env::args().nth(1).unwrap(), 36)?;
 
+    let mut this_100 = get_100(start_id..start_id + 100).await?;
+
     loop {
-        let next_id = start_id + 99;
-
-        info!(
-            "Requesting from {} ({}) to {} ({})",
-            start_id,
-            Base36::new(start_id),
-            next_id,
-            Base36::new(next_id)
-        );
-
-        let next_100 = get_100(start_id..=next_id).await?;
-
-        let later = Instant::now() + Duration::from_secs(2);
-
-        if let Some(next_post) = next_100.iter().max_by(|a, b| a.id_int.cmp(&b.id_int)) {
+        if let Some(next_post) = this_100.iter().max_by(|a, b| a.id_int.cmp(&b.id_int)) {
             let next_id = next_post.id_int;
 
             info!(
                 "Ingesting {} posts within {} ({}) and {} ({})",
-                next_100.len(),
+                this_100.len(),
                 start_id,
                 Base36::new(start_id),
                 next_id,
                 Base36::new(next_id)
             );
 
-            ingest_100(next_100).await?;
+            this_100 = tokio::try_join!(async {
+                delay_for(RATE_LIMIT_WAIT).await;
+
+                get_100(next_id..next_id + 100).await
+            }, ingest_100(this_100))?.0;
 
             start_id = next_id;
+        } else {
+            delay_for(RATE_LIMIT_WAIT).await;
         }
-
-        delay_until(later).await;
     }
 }

@@ -154,9 +154,9 @@ async fn main() -> Result<(), UserError> {
         Poll::Ready(Ok(this_100)) => {
             this_id = this_100
                 .iter()
-                .max_by(|a, b| a.id_int.cmp(&b.id_int))
+                .map(|p| p.id_int)
+                .max()
                 .unwrap()
-                .id_int
                 + 1;
 
             getter_fut = Box::pin(get_100(

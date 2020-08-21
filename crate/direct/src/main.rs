@@ -6,7 +6,7 @@ use futures::task::Poll;
 use std::borrow::Cow;
 use std::cmp::Ord;
 use std::error::Error;
-use tokio::time::{delay_until, Instant, Duration};
+use tokio::time::{delay_until, Duration, Instant};
 use tracing_futures::Instrument;
 
 mod info;
@@ -14,6 +14,7 @@ mod info;
 const BASE_GET_URL: &str = "https://api.reddit.com/api/info/?id=";
 
 const RATE_LIMIT_WAIT: Duration = Duration::from_secs(1);
+const ERROR_WAIT: Duration = Duration::from_secs(5);
 
 async fn ingest_post(post: Submission) -> bool {
     let post_url_res = post.choose_url();
@@ -99,7 +100,10 @@ async fn ingest_post(post: Submission) -> bool {
     }
 }
 
-async fn get_100(next_req: Instant, range: impl Iterator<Item = i64>) -> Result<Vec<Submission>, UserError> {
+async fn get_100(
+    next_req: Instant,
+    range: impl Iterator<Item = i64>,
+) -> Result<Vec<Submission>, UserError> {
     delay_until(next_req).await;
 
     let client = reqwest::Client::builder().user_agent(USER_AGENT).build()?;
@@ -133,25 +137,40 @@ async fn main() -> Result<(), UserError> {
     let start_id = i64::from_str_radix(&std::env::args().nth(1).unwrap(), 36)?;
 
     let mut getter_fut = Box::pin(get_100(Instant::now(), start_id..start_id + 100));
+    let mut this_id = start_id;
     let get_stream = poll_fn(|ctx| match Future::poll(getter_fut.as_mut(), ctx) {
         Poll::Pending => Poll::Pending,
-        Poll::Ready(r) => {
-            let this_100 = r.unwrap();
-            let next_id = this_100
+        Poll::Ready(Err(e)) => {
+            error!(
+                "Error getting posts starting at {} ({}): {}",
+                this_id,
+                Base36::new(this_id),
+                e
+            );
+            getter_fut = Box::pin(get_100(Instant::now() + ERROR_WAIT, this_id..this_id + 100));
+
+            Poll::Pending
+        }
+        Poll::Ready(Ok(this_100)) => {
+            this_id = this_100
                 .iter()
                 .max_by(|a, b| a.id_int.cmp(&b.id_int))
                 .unwrap()
                 .id_int
                 + 1;
-            getter_fut = Box::pin(get_100(Instant::now() + RATE_LIMIT_WAIT, next_id..next_id + 100));
+
+            getter_fut = Box::pin(get_100(
+                Instant::now() + RATE_LIMIT_WAIT,
+                this_id..this_id + 100,
+            ));
 
             info!(
                 "Ingesting {} posts within {} ({}) and {} ({})",
                 this_100.len(),
-                next_id,
-                Base36::new(next_id),
-                next_id + 99,
-                Base36::new(next_id + 99)
+                this_id,
+                Base36::new(this_id),
+                this_id + 99,
+                Base36::new(this_id + 99)
             );
 
             Poll::Ready(Some(futures::stream::iter(this_100)))

@@ -1,11 +1,13 @@
 use common::*;
 
 use futures::prelude::*;
+use futures::stream::poll_fn;
+use futures::task::Poll;
 use std::borrow::Cow;
-use std::error::Error;
-use tokio::time::{delay_for, Duration};
-use tracing_futures::Instrument;
 use std::cmp::Ord;
+use std::error::Error;
+use tokio::time::{delay_until, Instant, Duration};
+use tracing_futures::Instrument;
 
 mod info;
 
@@ -97,7 +99,9 @@ async fn ingest_post(post: Submission) -> bool {
     }
 }
 
-async fn get_100(range: impl Iterator<Item = i64>) -> Result<Vec<Submission>, UserError> {
+async fn get_100(next_req: Instant, range: impl Iterator<Item = i64>) -> Result<Vec<Submission>, UserError> {
+    delay_until(next_req).await;
+
     let client = reqwest::Client::builder().user_agent(USER_AGENT).build()?;
 
     let mut url = BASE_GET_URL.to_string();
@@ -122,8 +126,40 @@ async fn get_100(range: impl Iterator<Item = i64>) -> Result<Vec<Submission>, Us
         .collect())
 }
 
-async fn ingest_100(posts: Vec<Submission>) -> Result<(), UserError> {
-    futures::stream::iter(posts.into_iter())
+#[tokio::main]
+async fn main() -> Result<(), UserError> {
+    tracing_subscriber::fmt::init();
+
+    let start_id = i64::from_str_radix(&std::env::args().nth(1).unwrap(), 36)?;
+
+    let mut getter_fut = Box::pin(get_100(Instant::now(), start_id..start_id + 100));
+    let get_stream = poll_fn(|ctx| match Future::poll(getter_fut.as_mut(), ctx) {
+        Poll::Pending => Poll::Pending,
+        Poll::Ready(r) => {
+            let this_100 = r.unwrap();
+            let next_id = this_100
+                .iter()
+                .max_by(|a, b| a.id_int.cmp(&b.id_int))
+                .unwrap()
+                .id_int
+                + 1;
+            getter_fut = Box::pin(get_100(Instant::now() + RATE_LIMIT_WAIT, next_id..next_id + 100));
+
+            info!(
+                "Ingesting {} posts within {} ({}) and {} ({})",
+                this_100.len(),
+                next_id,
+                Base36::new(next_id),
+                next_id + 99,
+                Base36::new(next_id + 99)
+            );
+
+            Poll::Ready(Some(futures::stream::iter(this_100)))
+        }
+    });
+
+    get_stream
+        .flatten()
         .filter_map(|post| async move {
             if post.desirable() {
                 Some(tokio::spawn(async move {
@@ -143,38 +179,4 @@ async fn ingest_100(posts: Vec<Submission>) -> Result<(), UserError> {
         .try_collect::<()>()
         .await
         .map_err(From::from)
-}
-
-#[tokio::main]
-async fn main() -> Result<(), UserError> {
-    tracing_subscriber::fmt::init();
-
-    let mut start_id = i64::from_str_radix(&std::env::args().nth(1).unwrap(), 36)?;
-
-    let mut this_100 = get_100(start_id..start_id + 100).await?;
-
-    loop {
-        if let Some(next_post) = this_100.iter().max_by(|a, b| a.id_int.cmp(&b.id_int)) {
-            let next_id = next_post.id_int;
-
-            info!(
-                "Ingesting {} posts within {} ({}) and {} ({})",
-                this_100.len(),
-                start_id,
-                Base36::new(start_id),
-                next_id,
-                Base36::new(next_id)
-            );
-
-            this_100 = tokio::try_join!(async {
-                delay_for(RATE_LIMIT_WAIT).await;
-
-                get_100(next_id..next_id + 100).await
-            }, ingest_100(this_100))?.0;
-
-            start_id = next_id;
-        } else {
-            delay_for(RATE_LIMIT_WAIT).await;
-        }
-    }
 }

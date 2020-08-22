@@ -149,6 +149,8 @@ async fn main() -> Result<(), UserError> {
             );
             getter_fut = Box::pin(get_100(Instant::now() + ERROR_WAIT, this_id..this_id + 100));
 
+            ctx.waker().wake_by_ref();
+
             Poll::Pending
         }
         Poll::Ready(Ok(this_100)) => {

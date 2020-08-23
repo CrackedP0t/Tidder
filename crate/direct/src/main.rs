@@ -5,7 +5,7 @@ use futures::stream::poll_fn;
 use futures::task::Poll;
 use std::borrow::Cow;
 use std::error::Error;
-use tokio::time::{delay_until, Duration, Instant};
+use tokio::time::{delay_for, delay_until, Duration, Instant};
 use tracing_futures::Instrument;
 
 mod info;
@@ -113,18 +113,22 @@ async fn get_100(
         url += &format!("t3_{},", Base36::new(id));
     }
 
-    let res = client
-        .get(&url)
-        .send()
-        .await?;
+    let res = client.get(&url).send().await?;
 
     if res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        panic!("Too many requests");
+        let wait = res
+            .headers()
+            .get("x-ratelimit-reset")
+            .expect("No ratelimit reset header")
+            .to_str()
+            .expect("Non-unicode reset header value")
+            .parse()
+            .expect("Non-integer reset header value");
+        error!("Too many requests; waiting for {} seconds", wait);
+        delay_for(Duration::from_secs(wait)).await;
     }
 
-    let info = .error_for_status()?
-        .json::<info::Info>()
-        .await?;
+    let info = res.error_for_status()?.json::<info::Info>().await?;
 
     Ok(info
         .data
@@ -140,13 +144,14 @@ async fn main() -> Result<(), UserError> {
 
     let start_id = i64::from_str_radix(&std::env::args().nth(1).unwrap(), 36)?;
 
-    let mut getter_fut = Box::pin(tokio::spawn(get_100(Instant::now(), start_id..start_id + 100)));
+    let mut getter_fut = Box::pin(tokio::spawn(get_100(
+        Instant::now(),
+        start_id..start_id + 100,
+    )));
     let mut this_id = start_id;
     let get_stream = poll_fn(|ctx| match Future::poll(getter_fut.as_mut(), ctx) {
         Poll::Pending => Poll::Pending,
-        Poll::Ready(Err(e)) => {
-            panic!("tokio error: {}", e)
-        }
+        Poll::Ready(Err(e)) => panic!("tokio error: {}", e),
         Poll::Ready(Ok(Err(e))) => {
             error!(
                 "Error getting posts starting at {} ({}): {}",
@@ -154,19 +159,17 @@ async fn main() -> Result<(), UserError> {
                 Base36::new(this_id),
                 e
             );
-            getter_fut = Box::pin(tokio::spawn(get_100(Instant::now() + ERROR_WAIT, this_id..this_id + 100)));
+            getter_fut = Box::pin(tokio::spawn(get_100(
+                Instant::now() + ERROR_WAIT,
+                this_id..this_id + 100,
+            )));
 
             ctx.waker().wake_by_ref();
 
             Poll::Pending
         }
         Poll::Ready(Ok(Ok(this_100))) => {
-            this_id = this_100
-                .iter()
-                .map(|p| p.id_int)
-                .max()
-                .unwrap()
-                + 1;
+            this_id = this_100.iter().map(|p| p.id_int).max().unwrap() + 1;
 
             getter_fut = Box::pin(tokio::spawn(get_100(
                 Instant::now() + RATE_LIMIT_WAIT,

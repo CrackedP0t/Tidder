@@ -113,11 +113,16 @@ async fn get_100(
         url += &format!("t3_{},", Base36::new(id));
     }
 
-    let info = client
+    let res = client
         .get(&url)
         .send()
-        .await?
-        .error_for_status()?
+        .await?;
+
+    if res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        panic!("Too many requests");
+    }
+
+    let info = .error_for_status()?
         .json::<info::Info>()
         .await?;
 

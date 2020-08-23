@@ -99,10 +99,12 @@ async fn ingest_post(post: Submission) -> bool {
 }
 
 async fn get_100(
-    next_req: Instant,
+    next_req: Option<Instant>,
     range: impl Iterator<Item = i64>,
-) -> Result<(u64, Vec<Submission>), UserError> {
-    delay_until(next_req).await;
+) -> Result<(Option<u64>, Vec<Submission>), UserError> {
+    if let Some(next_req) = next_req {
+        delay_until(next_req).await;
+    }
 
     let client = reqwest::Client::builder().user_agent(USER_AGENT).build()?;
 
@@ -124,9 +126,9 @@ async fn get_100(
             .parse()
             .expect("Non-integer reset header value");
         error!("Too many requests; waiting for {} seconds", wait);
-        wait
+        Some(wait)
     } else {
-        0
+        None
     };
 
     let info = res.error_for_status()?.json::<info::Info>().await?;
@@ -146,7 +148,7 @@ async fn main() -> Result<(), UserError> {
     let start_id = i64::from_str_radix(&std::env::args().nth(1).unwrap(), 36)?;
 
     let mut getter_fut = Box::pin(tokio::spawn(get_100(
-        Instant::now(),
+        None,
         start_id..start_id + 100,
     )));
     let mut this_id = start_id;
@@ -161,7 +163,7 @@ async fn main() -> Result<(), UserError> {
                 e
             );
             getter_fut = Box::pin(tokio::spawn(get_100(
-                Instant::now() + ERROR_WAIT,
+                Some(Instant::now() + ERROR_WAIT),
                 this_id..this_id + 100,
             )));
 
@@ -173,7 +175,7 @@ async fn main() -> Result<(), UserError> {
             this_id = this_100.iter().map(|p| p.id_int).max().unwrap() + 1;
 
             getter_fut = Box::pin(tokio::spawn(get_100(
-                Instant::now() + Duration::from_secs(wait),
+                wait.map(|wait| Instant::now() + Duration::from_secs(wait)),
                 this_id..this_id + 100,
             )));
 

@@ -4,7 +4,6 @@ use futures::prelude::*;
 use futures::stream::poll_fn;
 use futures::task::Poll;
 use std::borrow::Cow;
-use std::cmp::Ord;
 use std::error::Error;
 use tokio::time::{delay_until, Duration, Instant};
 use tracing_futures::Instrument;
@@ -136,24 +135,27 @@ async fn main() -> Result<(), UserError> {
 
     let start_id = i64::from_str_radix(&std::env::args().nth(1).unwrap(), 36)?;
 
-    let mut getter_fut = Box::pin(get_100(Instant::now(), start_id..start_id + 100));
+    let mut getter_fut = Box::pin(tokio::spawn(get_100(Instant::now(), start_id..start_id + 100)));
     let mut this_id = start_id;
     let get_stream = poll_fn(|ctx| match Future::poll(getter_fut.as_mut(), ctx) {
         Poll::Pending => Poll::Pending,
         Poll::Ready(Err(e)) => {
+            panic!("tokio error: {}", e)
+        }
+        Poll::Ready(Ok(Err(e))) => {
             error!(
                 "Error getting posts starting at {} ({}): {}",
                 this_id,
                 Base36::new(this_id),
                 e
             );
-            getter_fut = Box::pin(get_100(Instant::now() + ERROR_WAIT, this_id..this_id + 100));
+            getter_fut = Box::pin(tokio::spawn(get_100(Instant::now() + ERROR_WAIT, this_id..this_id + 100)));
 
             ctx.waker().wake_by_ref();
 
             Poll::Pending
         }
-        Poll::Ready(Ok(this_100)) => {
+        Poll::Ready(Ok(Ok(this_100))) => {
             this_id = this_100
                 .iter()
                 .map(|p| p.id_int)
@@ -161,10 +163,10 @@ async fn main() -> Result<(), UserError> {
                 .unwrap()
                 + 1;
 
-            getter_fut = Box::pin(get_100(
+            getter_fut = Box::pin(tokio::spawn(get_100(
                 Instant::now() + RATE_LIMIT_WAIT,
                 this_id..this_id + 100,
-            ));
+            )));
 
             info!(
                 "Ingesting {} posts within {} ({}) and {} ({})",

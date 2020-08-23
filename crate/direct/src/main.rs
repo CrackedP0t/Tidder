@@ -12,7 +12,7 @@ mod info;
 
 const BASE_GET_URL: &str = "https://api.reddit.com/api/info/?id=";
 
-const RATE_LIMIT_WAIT: Duration = Duration::from_secs(1);
+const RATE_LIMIT_WAIT: Duration = Duration::from_millis(500);
 const ERROR_WAIT: Duration = Duration::from_secs(5);
 
 async fn ingest_post(post: Submission) -> bool {

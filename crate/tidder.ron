@@ -59,5 +59,6 @@ Config(
         "redd.it",
         "reddit.com",
     ],
-    worker_count: 256
+    worker_count: 256,
+    reddit_rate_limit: 1
 )

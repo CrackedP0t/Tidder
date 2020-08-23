@@ -505,6 +505,7 @@ pub mod config {
         pub max_results: i64,
         pub no_blacklist: Vec<String>,
         pub worker_count: usize,
+        pub reddit_rate_limit: u64
     }
 
     pub fn load() -> Result<Config, Error> {

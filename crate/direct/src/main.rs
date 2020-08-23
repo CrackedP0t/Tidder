@@ -12,7 +12,6 @@ mod info;
 
 const BASE_GET_URL: &str = "https://api.reddit.com/api/info/?id=";
 
-const RATE_LIMIT_WAIT: Duration = Duration::from_millis(500);
 const ERROR_WAIT: Duration = Duration::from_secs(5);
 
 async fn ingest_post(post: Submission) -> bool {
@@ -172,7 +171,7 @@ async fn main() -> Result<(), UserError> {
             this_id = this_100.iter().map(|p| p.id_int).max().unwrap() + 1;
 
             getter_fut = Box::pin(tokio::spawn(get_100(
-                Instant::now() + RATE_LIMIT_WAIT,
+                Instant::now() + Duration::from_millis(CONFIG.reddit_rate_limit),
                 this_id..this_id + 100,
             )));
 

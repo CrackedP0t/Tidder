@@ -5,7 +5,7 @@ use futures::stream::poll_fn;
 use futures::task::Poll;
 use std::borrow::Cow;
 use std::error::Error;
-use tokio::time::{delay_for, delay_until, Duration, Instant};
+use tokio::time::{delay_until, Duration, Instant};
 use tracing_futures::Instrument;
 
 mod info;
@@ -101,7 +101,7 @@ async fn ingest_post(post: Submission) -> bool {
 async fn get_100(
     next_req: Instant,
     range: impl Iterator<Item = i64>,
-) -> Result<Vec<Submission>, UserError> {
+) -> Result<(u64, Vec<Submission>), UserError> {
     delay_until(next_req).await;
 
     let client = reqwest::Client::builder().user_agent(USER_AGENT).build()?;
@@ -114,7 +114,7 @@ async fn get_100(
 
     let res = client.get(&url).send().await?;
 
-    if res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+    let wait = if res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
         let wait = res
             .headers()
             .get("x-ratelimit-reset")
@@ -124,17 +124,19 @@ async fn get_100(
             .parse()
             .expect("Non-integer reset header value");
         error!("Too many requests; waiting for {} seconds", wait);
-        delay_for(Duration::from_secs(wait)).await;
-    }
+        wait
+    } else {
+        0
+    };
 
     let info = res.error_for_status()?.json::<info::Info>().await?;
 
-    Ok(info
+    Ok((wait, info
         .data
         .children
         .into_iter()
         .map(|c| c.data.finalize().unwrap())
-        .collect())
+        .collect()))
 }
 
 #[tokio::main]
@@ -167,11 +169,11 @@ async fn main() -> Result<(), UserError> {
 
             Poll::Pending
         }
-        Poll::Ready(Ok(Ok(this_100))) => {
+        Poll::Ready(Ok(Ok((wait, this_100)))) => {
             this_id = this_100.iter().map(|p| p.id_int).max().unwrap() + 1;
 
             getter_fut = Box::pin(tokio::spawn(get_100(
-                Instant::now() + Duration::from_millis(CONFIG.reddit_rate_limit),
+                Instant::now() + Duration::from_secs(wait),
                 this_id..this_id + 100,
             )));
 

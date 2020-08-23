@@ -9,9 +9,9 @@ use regex::Regex;
 use reqwest::header::{self, HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use std::fmt;
 use std::string::ToString;
 use std::time::Duration;
-use std::fmt;
 
 mod banned;
 pub use banned::*;
@@ -270,12 +270,12 @@ pub mod user_error {
 pub use user_error::*;
 
 pub struct Base36 {
-    x: i64
+    x: i64,
 }
 
 impl Base36 {
     pub fn new(x: i64) -> Self {
-        Self {x}
+        Self { x }
     }
 }
 
@@ -287,7 +287,7 @@ impl fmt::Display for Base36 {
         let mut used = 0;
         let negative = x < 0;
         if negative {
-            x*=-1;
+            x *= -1;
         }
         let mut x = x as u32;
         loop {
@@ -505,7 +505,6 @@ pub mod config {
         pub max_results: i64,
         pub no_blacklist: Vec<String>,
         pub worker_count: usize,
-        pub reddit_rate_limit: u64
     }
 
     pub fn load() -> Result<Config, Error> {

@@ -172,23 +172,43 @@ async fn main() -> Result<(), UserError> {
             Poll::Pending
         }
         Poll::Ready(Ok(Ok((wait, this_100)))) => {
-            this_id = this_100.iter().map(|p| p.id_int).max().unwrap() + 1;
+            if let Some(next_id) = this_100.iter().map(|p| p.id_int).max() {
+                this_id = next_id + 1;
 
-            getter_fut = Box::pin(tokio::spawn(get_100(
-                wait.map(|wait| Instant::now() + Duration::from_secs(wait)),
-                this_id..this_id + 100,
-            )));
+                getter_fut = Box::pin(tokio::spawn(get_100(
+                    wait.map(|wait| Instant::now() + Duration::from_secs(wait)),
+                    this_id..this_id + 100,
+                )));
 
-            info!(
-                "Ingesting {} posts within {} ({}) and {} ({})",
-                this_100.len(),
-                this_id,
-                Base36::new(this_id),
-                this_id + 99,
-                Base36::new(this_id + 99)
-            );
+                info!(
+                    "Ingesting {} posts within {} ({}) and {} ({})",
+                    this_100.len(),
+                    this_id,
+                    Base36::new(this_id),
+                    this_id + 99,
+                    Base36::new(this_id + 99)
+                );
 
-            Poll::Ready(Some(futures::stream::iter(this_100)))
+                Poll::Ready(Some(futures::stream::iter(this_100)))
+            } else {
+                info!("Got no posts within {} ({}) and {} ({})",
+                      this_id,
+                      Base36::new(this_id),
+                      this_id + 99,
+                      Base36::new(this_id + 99)
+                );
+
+                this_id += 100;
+
+                getter_fut = Box::pin(tokio::spawn(get_100(
+                    wait.map(|wait| Instant::now() + Duration::from_secs(wait)),
+                    this_id..this_id + 100,
+                )));
+
+                ctx.waker().wake_by_ref();
+
+                Poll::Pending
+            }
         }
     });
 

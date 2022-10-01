@@ -21,6 +21,7 @@ pub struct Submission {
     pub promoted: Option<bool>,
     pub score: i64,
     pub spoiler: Option<bool>,
+    #[serde(default)]
     pub subreddit: String,
     pub title: String,
     pub thumbnail: Option<String>,

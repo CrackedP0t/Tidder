@@ -6,13 +6,13 @@ edition = "2018"
 description = "Tool for automatically ingesting PushShift downloads"
 
 [dependencies]
-zstd = "0.4.24"
+zstd = "0.11.2"
 serde = { version = "1.0.92", features = ["derive"] }
 serde_json = "1.0.39"
 clap = "2.33.0"
 common = { path = "../common" }
 tokio-postgres = { version = "0.5.1", features = ["with-chrono-0_4"] }
-log = "0.4.6"
+log = "0.4.17"
 bzip2 = "0.3.3"
 xz2 = "0.1.6"
 regex = "1.1.6"

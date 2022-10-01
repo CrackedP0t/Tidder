@@ -29,7 +29,7 @@ async fn ingest_post(
     in_flight: &DashMap<String, u32>,
 ) {
     if verbose {
-        info!("Starting to ingest");
+        info!("Starting to ingest {}", post.url);
     }
 
     let post_url_res = (|| async {
@@ -183,7 +183,7 @@ async fn ingest_post(
     }
 }
 
-async fn ingest_json<R: Read + Send + 'static>(
+async fn ingest_json<R: Read + 'static>(
     verbose: bool,
     mut already_have: Option<BTreeSet<i64>>,
     json_stream: R,
@@ -196,11 +196,12 @@ async fn ingest_json<R: Read + Send + 'static>(
             Err(e) => {
                 if e.is_data() {
                     if verbose {
-                        warn!("{}", e);
+                        warn!("{:?}", e);
                     }
                     return None;
                 } else {
-                    panic!("{}", e)
+
+                    panic!("{:?}", e)
                 }
             }
         };
@@ -233,6 +234,8 @@ async fn ingest_json<R: Read + Send + 'static>(
     futures::stream::iter(json_iter.map(|post| {
         let blacklist = blacklist.clone();
         let in_flight = in_flight.clone();
+
+        eprintln!("{:?}", post);
 
         tokio::spawn(Box::pin(async move {
             let span = info_span!(
@@ -339,7 +342,7 @@ async fn main() -> Result<(), UserError> {
                     .create_new(true)
                     .read(true)
                     .write(true)
-                    .open(&arch_path)?;
+                    .open(&arch_path).map_err(map_ue!("archive file couldn't be opened"))?;
 
                 let no_timeout_client = reqwest::Client::builder().build()?;
 
@@ -403,10 +406,12 @@ async fn main() -> Result<(), UserError> {
     } else if path.ends_with("xz") {
         ingest_json(verbose, already_have, xz2::bufread::XzDecoder::new(input)).await;
     } else if path.ends_with("zst") {
+        let mut zstd_decoder = zstd::Decoder::new(input)?;
+        zstd_decoder.set_parameter(zstd::stream::raw::DParameter::WindowLogMax(31))?;
         ingest_json(
             verbose,
             already_have,
-            zstd::stream::read::Decoder::new(input)?,
+            zstd_decoder,
         )
         .await;
     } else if path.ends_with("gz") {

@@ -460,6 +460,8 @@ pub mod secrets {
     use serde::Deserialize;
     use std::io::Read;
 
+    use tracing::info;
+
     #[derive(Debug, Deserialize)]
     pub struct Imgur {
         pub client_id: String,

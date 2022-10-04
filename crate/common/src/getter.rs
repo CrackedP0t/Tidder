@@ -64,11 +64,11 @@ pub async fn follow_link(url: Url) -> Result<String, UserError> {
     } else if is_link_gifsound(url.as_str()) {
         follow_gifsound(url)?
     } else if EXT_RE.is_match(url.as_str()) {
-        url.into_string()
+        url.into()
     } else if is_link_gfycat(url.as_str()) {
         follow_gfycat(url).await?
     } else {
-        url.into_string()
+        url.into()
     };
     Ok(utf8_percent_encode(link.as_str(), FRAGMENT).collect::<String>())
 }
@@ -272,7 +272,7 @@ async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
     let host = url.host_str().unwrap();
 
     if EXT_RE.is_match(url.as_str()) {
-        return Ok(url.into_string());
+        return Ok(url.into());
     }
 
     let path = url.path();
@@ -285,7 +285,7 @@ async fn follow_imgur(mut url: Url) -> Result<String, UserError> {
     if host == "i.imgur.com" && GIFV_RE.is_match(path) {
         Ok(GIFV_RE.replace(url.as_str(), ".gif$1").to_string())
     } else if EXT_RE.is_match(path) || path_start == "download" {
-        Ok(url.into_string())
+        Ok(url.into())
     } else if path_start == "a" {
         if !CONFIG.enable_imgur_api {
             return Err(ue_save!(

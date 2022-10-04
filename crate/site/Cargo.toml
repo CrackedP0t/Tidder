@@ -7,7 +7,7 @@ edition = "2018"
 [dependencies]
 chrono = { version = "0.4.7", features = ["serde"] }
 common = { path = "../common" }
-serde = { version = "1.0.92", features = ["derive"] }
+serde = { version = "1.0.145", features = ["derive"] }
 tera = "1.0.1"
 url = "2.1.0"
 tokio-postgres = { version = "0.5.1", features = ["with-chrono-0_4"] }

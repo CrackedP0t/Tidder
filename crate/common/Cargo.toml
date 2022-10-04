@@ -11,7 +11,7 @@ failure = "0.1.5"
 fern = "0.5.8"
 log = "0.4.6"
 regex = "1.1.6"
-serde = { version = "1.0.92", features = ["derive"] }
+serde = { version = "1.0.145", features = ["derive"] }
 tokio-postgres = { version = "0.5.1", features = ["with-chrono-0_4"] }
 toml = "0.5.1"
 url = "2.1.0"

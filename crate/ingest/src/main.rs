@@ -177,7 +177,7 @@ async fn ingest_post(
             info!("successfully saved");
         }
         Err(e) => {
-            eprintln!("failed to save: {:?}", e);
+            error!("post \n{:#?} \nfailed to save:\n{:?}", post, e);
             std::process::exit(1);
         }
     }
@@ -221,7 +221,7 @@ async fn ingest_json<R: Read + 'static>(
             }
         {
             Some(post)
-        } else {
+        } else {    
             None
         }
     });
@@ -234,8 +234,6 @@ async fn ingest_json<R: Read + 'static>(
     futures::stream::iter(json_iter.map(|post| {
         let blacklist = blacklist.clone();
         let in_flight = in_flight.clone();
-
-        eprintln!("{:?}", post);
 
         tokio::spawn(Box::pin(async move {
             let span = info_span!(

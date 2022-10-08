@@ -1,7 +1,7 @@
 #![recursion_limit = "128"]
 
 use chrono::prelude::*;
-use clap::{clap_app, crate_authors, crate_description, crate_version};
+use clap::Parser;
 use common::*;
 use dashmap::DashMap;
 use future::poll_fn;
@@ -9,24 +9,32 @@ use futures::prelude::*;
 use futures::task::Poll;
 use once_cell::sync::Lazy;
 use regex::Regex;
+use serde::Serialize;
 use serde_json::Deserializer;
 use std::borrow::Cow;
 use std::collections::BTreeSet;
+use std::convert::TryInto;
 use std::error::Error as _;
-use std::fs::{remove_file, File, OpenOptions};
+use std::fs::{remove_file, File};
 use std::io::{BufReader, Read, Seek, SeekFrom, Write};
 use std::iter::Iterator;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
+use tokio::time::{interval_at, Duration, Instant};
 use tokio_postgres::types::ToSql;
 use tracing_futures::Instrument;
 use url::Url;
+
+static POST_COUNT: AtomicU64 = AtomicU64::new(0);
+static POSTS_PER_MINUTE: AtomicU64 = AtomicU64::new(0);
 
 async fn ingest_post(
     post: Submission,
     verbose: bool,
     blacklist: &DashMap<String, ()>,
-    in_flight: &DashMap<String, u32>,
+    domains_in_flight: &DashMap<String, u32>,
 ) {
     if verbose {
         info!("Starting to ingest {}", post.url);
@@ -61,7 +69,7 @@ async fn ingest_post(
             let custom_limit: Option<&Option<_>> = CONFIG.custom_limits.get(host);
 
             let limit = match custom_limit {
-                None => Some(CONFIG.in_flight_limit),
+                None => Some(CONFIG.domains_in_flight_limit),
                 Some(&Some(limit)) => Some(limit),
                 Some(&None) => None,
             };
@@ -69,15 +77,15 @@ async fn ingest_post(
             poll_fn(|context| {
                 let ready = limit
                     .map(|limit| {
-                        in_flight
+                        domains_in_flight
                             .get(host)
-                            .map(|in_flight| *in_flight < limit)
+                            .map(|domains_in_flight| *domains_in_flight < limit)
                             .unwrap_or(true)
                     })
                     .unwrap_or(true);
 
                 if ready {
-                    *(in_flight.entry(host.to_owned()).or_insert(0)) += 1;
+                    *(domains_in_flight.entry(host.to_owned()).or_insert(0)) += 1;
 
                     Poll::Ready(host.to_owned())
                 } else {
@@ -93,7 +101,7 @@ async fn ingest_post(
 
             let res = save_hash(post_url.as_str(), HashDest::Images).await;
 
-            *in_flight.get_mut(host).unwrap() -= 1;
+            *domains_in_flight.get_mut(host).unwrap() -= 1;
 
             res
         }
@@ -174,6 +182,7 @@ async fn ingest_post(
 
     match post.save(image_id).await {
         Ok(_) => {
+            POST_COUNT.fetch_add(1, Ordering::SeqCst);
             info!("successfully saved");
         }
         Err(e) => {
@@ -190,6 +199,8 @@ async fn ingest_json<R: Read + 'static>(
 ) {
     let json_iter = Deserializer::from_reader(json_stream).into_iter::<Submission>();
 
+    let mut ff_day = None;
+
     let json_iter = json_iter.filter_map(move |post| {
         let post = match post {
             Ok(post) => post,
@@ -200,7 +211,6 @@ async fn ingest_json<R: Read + 'static>(
                     }
                     return None;
                 } else {
-
                     panic!("{:?}", e)
                 }
             }
@@ -212,8 +222,14 @@ async fn ingest_json<R: Read + 'static>(
             && match already_have {
                 None => true,
                 Some(ref mut set) => {
+                    let day = post.created_utc.day();
+                    if ff_day.map(|ff_day| day > ff_day).unwrap_or(true) {
+                        info!("Fast forwarding through {}", post.created_utc.date());
+                        ff_day = Some(day);
+                    }
                     let had = set.remove(&post.id_int);
                     if set.is_empty() {
+                        info!("Done fast forwarding!");
                         already_have = None;
                     }
                     !had
@@ -221,19 +237,73 @@ async fn ingest_json<R: Read + 'static>(
             }
         {
             Some(post)
-        } else {    
+        } else {
             None
         }
     });
 
+    tokio::spawn(async move {
+        #[derive(Serialize)]
+        struct Speed {
+            as_of: NaiveDateTime,
+            posts_per_minute: u64,
+        }
+
+        let minute = Duration::from_secs(60);
+
+        let mut count_interval = interval_at(Instant::now() + minute, minute);
+        let mut state_file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .create(true)
+            .open(&CONFIG.state_file)
+            .await
+            .map_err(map_ue!())
+            .unwrap();
+        let mut previous_count = 0u64;
+        let mut previous_time = Instant::now();
+
+        loop {
+            count_interval.tick().await;
+
+            let current_count = POST_COUNT.load(Ordering::SeqCst);
+            let current_time = Instant::now();
+            let current_speed = (u128::from(current_count - previous_count)
+                * (current_time - previous_time).as_nanos()
+                / minute.as_nanos())
+            .try_into()
+            .map_err(map_ue!())
+            .unwrap();
+
+            POSTS_PER_MINUTE.store(current_speed, Ordering::SeqCst);
+
+            state_file.set_len(0).await.map_err(map_ue!()).unwrap();
+            state_file
+                .write_all(
+                    ron::ser::to_string(&Speed {
+                        as_of: Utc::now().naive_utc(),
+                        posts_per_minute: current_speed,
+                    })
+                    .map_err(map_ue!())
+                    .unwrap()
+                    .as_bytes(),
+                )
+                .await
+                .map_err(map_ue!())
+                .unwrap();
+            previous_count = current_count;
+            previous_time = current_time;
+        }
+    });
+
     let blacklist = Arc::new(DashMap::<String, ()>::new());
-    let in_flight = Arc::new(DashMap::<String, u32>::new());
+    let domains_in_flight = Arc::new(DashMap::<String, u32>::new());
 
     info!("Starting ingestion!");
 
     futures::stream::iter(json_iter.map(|post| {
         let blacklist = blacklist.clone();
-        let in_flight = in_flight.clone();
+        let domains_in_flight = domains_in_flight.clone();
 
         tokio::spawn(Box::pin(async move {
             let span = info_span!(
@@ -242,7 +312,7 @@ async fn ingest_json<R: Read + 'static>(
                 date = post.created_utc.to_string().as_str(),
                 url = post.url.as_str()
             );
-            ingest_post(post, verbose, &blacklist, &in_flight)
+            ingest_post(post, verbose, &blacklist, &domains_in_flight)
                 .instrument(span)
                 .await;
         }))
@@ -253,6 +323,16 @@ async fn ingest_json<R: Read + 'static>(
     .await
 }
 
+#[derive(Parser)]
+#[command(author, version, about, long_about = "none")]
+struct Cli {
+    #[arg(long, short = 'D')]
+    no_delete: bool,
+    #[arg(long, short)]
+    verbose: bool,
+    path: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), UserError> {
     static DATE_RE: Lazy<Regex> =
@@ -260,20 +340,10 @@ async fn main() -> Result<(), UserError> {
 
     tracing_subscriber::fmt::init();
 
-    let matches = clap_app!(
-        ingest =>
-            (version: crate_version!())
-            (author: crate_authors!(","))
-            (about: crate_description!())
-            (@arg NO_DELETE: -D --("no-delete") "Don't delete archive files when done")
-            (@arg PATH: +required "The URL or path of the file to ingest")
-            (@arg VERBOSE: -v --verbose "Print out each step in processing an image")
-    )
-    .get_matches();
-
-    let no_delete = matches.is_present("NO_DELETE");
-    let path = matches.value_of("PATH").unwrap().to_string();
-    let verbose = matches.is_present("VERBOSE");
+    let args = Cli::parse();
+    
+    let verbose = args.verbose;
+    let path = args.path;
 
     let (year, month, day): (i32, u32, Option<u32>) = DATE_RE
         .captures(&path)
@@ -333,14 +403,15 @@ async fn main() -> Result<(), UserError> {
             let arch_file = if Path::exists(Path::new(&arch_path)) {
                 info!("Found existing archive file");
 
-                OpenOptions::new().read(true).open(&arch_path)?
+                File::options().read(true).open(&arch_path)?
             } else {
                 info!("Downloading archive file");
-                let mut arch_file = OpenOptions::new()
+                let mut arch_file = File::options()
                     .create_new(true)
                     .read(true)
                     .write(true)
-                    .open(&arch_path).map_err(map_ue!("archive file couldn't be opened"))?;
+                    .open(&arch_path)
+                    .map_err(map_ue!("archive file couldn't be opened"))?;
 
                 let no_timeout_client = reqwest::Client::builder().build()?;
 
@@ -406,12 +477,7 @@ async fn main() -> Result<(), UserError> {
     } else if path.ends_with("zst") {
         let mut zstd_decoder = zstd::Decoder::new(input)?;
         zstd_decoder.set_parameter(zstd::stream::raw::DParameter::WindowLogMax(31))?;
-        ingest_json(
-            verbose,
-            already_have,
-            zstd_decoder,
-        )
-        .await;
+        ingest_json(verbose, already_have, zstd_decoder).await;
     } else if path.ends_with("gz") {
         ingest_json(
             verbose,
@@ -423,7 +489,7 @@ async fn main() -> Result<(), UserError> {
         ingest_json(verbose, already_have, input).await;
     };
 
-    if !no_delete {
+    if !args.no_delete {
         if let Some(arch_path) = arch_path {
             remove_file(arch_path)?;
         }

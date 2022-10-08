@@ -37,7 +37,7 @@ Config(
         "v.redd.it": None
     },
     enable_imgur_api: false,
-    in_flight_limit: 1,
+    domains_in_flight_limit: 1,
     max_distance: 3,
     max_results: 500,
     no_blacklist: [
@@ -60,4 +60,5 @@ Config(
         "reddit.com",
     ],
     worker_count: 256,
+    state_file: "/tmp/tidder_state.ron",
 )

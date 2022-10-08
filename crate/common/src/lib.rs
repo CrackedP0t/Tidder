@@ -1,6 +1,6 @@
 use cache_control::CacheControl;
 use chrono::{DateTime, NaiveDateTime};
-use deadpool_postgres::Pool;
+use deadpool_postgres::{Pool, Runtime};
 pub use failure::{self, format_err, Error};
 use futures::prelude::*;
 use log::LevelFilter;
@@ -34,7 +34,7 @@ pub static EXT_RE: Lazy<Regex> =
 pub static URL_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^(?i)https?://(?:[a-z0-9.-]+|\[[0-9a-f:]+\])(?:$|[:/?#])").unwrap());
 pub static PG_POOL: Lazy<Pool> =
-    Lazy::new(|| SECRETS.postgres.create_pool(tokio_postgres::NoTls).unwrap());
+    Lazy::new(|| SECRETS.postgres.create_pool(Some(Runtime::Tokio1), tokio_postgres::NoTls).unwrap());
 pub static COMMON_HEADERS: Lazy<HeaderMap<HeaderValue>> = Lazy::new(|| {
     let mut headers = HeaderMap::new();
     headers.insert(header::USER_AGENT, HeaderValue::from_static(USER_AGENT));
@@ -460,8 +460,6 @@ pub mod secrets {
     use serde::Deserialize;
     use std::io::Read;
 
-    use tracing::info;
-
     #[derive(Debug, Deserialize)]
     pub struct Imgur {
         pub client_id: String,
@@ -502,11 +500,12 @@ pub mod config {
         pub banned: Vec<super::Banned>,
         pub custom_limits: std::collections::HashMap<String, Option<u32>>,
         pub enable_imgur_api: bool,
-        pub in_flight_limit: u32,
+        pub domains_in_flight_limit: u32,
         pub max_distance: u8,
         pub max_results: i64,
         pub no_blacklist: Vec<String>,
         pub worker_count: usize,
+        pub state_file: String,
     }
 
     pub fn load() -> Result<Config, Error> {

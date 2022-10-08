@@ -1,6 +1,6 @@
 use super::{map_ue_save, ue_save, Source, UserError};
 use bytes::BytesMut;
-use image::{imageops, load_from_memory, DynamicImage, GenericImageView, GrayImage};
+use image::{imageops, load_from_memory, DynamicImage, GrayImage};
 use std::fmt::{self, Display, Formatter};
 use tokio_postgres::types;
 
@@ -83,22 +83,6 @@ pub fn grayscale(img: &DynamicImage) -> Result<DynamicImage, UserError> {
             height,
             rgba.chunks_exact(4)
                 .map(|data| rgb_to_luma(data[0], data[1], data[2]))
-                .collect(),
-        )
-        .unwrap(),
-        ImageBgr8(bgr) => GrayImage::from_vec(
-            width,
-            height,
-            bgr.chunks_exact(3)
-                .map(|data| rgb_to_luma(data[2], data[1], data[0]))
-                .collect(),
-        )
-        .unwrap(),
-        ImageBgra8(bgra) => GrayImage::from_vec(
-            width,
-            height,
-            bgra.chunks_exact(4)
-                .map(|data| rgb_to_luma(data[2], data[1], data[0]))
                 .collect(),
         )
         .unwrap(),

@@ -496,6 +496,13 @@ pub mod config {
     use serde::Deserialize;
 
     #[derive(Deserialize)]
+    pub struct TimeLimits {
+        pub start: chrono::NaiveTime,
+        pub end: chrono::NaiveTime,
+        pub count: usize
+    }
+
+    #[derive(Deserialize)]
     pub struct Config {
         pub banned: Vec<super::Banned>,
         pub custom_limits: std::collections::HashMap<String, Option<u32>>,
@@ -506,6 +513,7 @@ pub mod config {
         pub no_blacklist: Vec<String>,
         pub worker_count: usize,
         pub state_file: String,
+        pub time_limits: TimeLimits,
     }
 
     pub fn load() -> Result<Config, Error> {

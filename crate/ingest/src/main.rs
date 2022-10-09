@@ -1,5 +1,6 @@
 #![recursion_limit = "128"]
 
+mod worker_limit;
 use chrono::prelude::*;
 use clap::Parser;
 use common::*;
@@ -244,9 +245,10 @@ async fn ingest_json<R: Read + 'static>(
 
     tokio::spawn(async move {
         #[derive(Serialize)]
-        struct Speed {
+        struct State {
             as_of: NaiveDateTime,
             posts_per_minute: u64,
+            limited: bool
         }
 
         let minute = Duration::from_secs(60);
@@ -280,9 +282,10 @@ async fn ingest_json<R: Read + 'static>(
             state_file.set_len(0).await.map_err(map_ue!()).unwrap();
             state_file
                 .write_all(
-                    ron::ser::to_string(&Speed {
+                    ron::ser::to_string(&State {
                         as_of: Utc::now().naive_utc(),
                         posts_per_minute: current_speed,
+                        limited: worker_limit::is_limited()
                     })
                     .map_err(map_ue!())
                     .unwrap()
@@ -301,6 +304,7 @@ async fn ingest_json<R: Read + 'static>(
 
     info!("Starting ingestion!");
 
+    worker_limit::BufferUnordered::new(
     futures::stream::iter(json_iter.map(|post| {
         let blacklist = blacklist.clone();
         let domains_in_flight = domains_in_flight.clone();
@@ -316,8 +320,7 @@ async fn ingest_json<R: Read + 'static>(
                 .instrument(span)
                 .await;
         }))
-    }))
-    .buffer_unordered(CONFIG.worker_count)
+    })))
     .map(|t| t.unwrap())
     .collect::<()>()
     .await

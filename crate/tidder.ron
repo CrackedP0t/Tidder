@@ -60,5 +60,10 @@ Config(
         "reddit.com",
     ],
     worker_count: 256,
+    time_limits: (
+        start: "08:00:00",
+        end: "00:00:00",
+        count: 16,
+    ),
     state_file: "/tmp/tidder_state.ron",
 )

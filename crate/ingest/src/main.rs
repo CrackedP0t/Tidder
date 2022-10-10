@@ -31,6 +31,12 @@ use url::Url;
 static POST_COUNT: AtomicU64 = AtomicU64::new(0);
 static POSTS_PER_MINUTE: AtomicU64 = AtomicU64::new(0);
 
+struct IngestInfo {
+    month: u32,
+    year: i32,
+    already_have: Option<BTreeSet<i64>>
+}
+
 async fn ingest_post(
     post: Submission,
     verbose: bool,
@@ -195,7 +201,7 @@ async fn ingest_post(
 
 async fn ingest_json<R: Read + 'static>(
     verbose: bool,
-    mut already_have: Option<BTreeSet<i64>>,
+    IngestInfo {month, year, mut already_have}: IngestInfo,
     json_stream: R,
 ) {
     let json_iter = Deserializer::from_reader(json_stream).into_iter::<Submission>();
@@ -247,6 +253,8 @@ async fn ingest_json<R: Read + 'static>(
         #[derive(Serialize)]
         struct State {
             as_of: NaiveDateTime,
+            month: u32,
+            year: i32,
             posts_per_minute: u64,
             limited: bool
         }
@@ -284,6 +292,8 @@ async fn ingest_json<R: Read + 'static>(
                 .write_all(
                     ron::ser::to_string(&State {
                         as_of: Utc::now().naive_utc(),
+                        month,
+                        year,
                         posts_per_minute: current_speed,
                         limited: worker_limit::is_limited()
                     })
@@ -473,23 +483,29 @@ async fn main() -> Result<(), UserError> {
 
     let input = BufReader::new(input_file);
 
+    let ingest_info = IngestInfo {
+        month,
+        year,
+        already_have
+    };
+
     if path.ends_with("bz2") {
-        ingest_json(verbose, already_have, bzip2::bufread::BzDecoder::new(input)).await;
+        ingest_json(verbose, ingest_info, bzip2::bufread::BzDecoder::new(input)).await;
     } else if path.ends_with("xz") {
-        ingest_json(verbose, already_have, xz2::bufread::XzDecoder::new(input)).await;
+        ingest_json(verbose, ingest_info, xz2::bufread::XzDecoder::new(input)).await;
     } else if path.ends_with("zst") {
         let mut zstd_decoder = zstd::Decoder::new(input)?;
         zstd_decoder.set_parameter(zstd::stream::raw::DParameter::WindowLogMax(31))?;
-        ingest_json(verbose, already_have, zstd_decoder).await;
+        ingest_json(verbose, ingest_info, zstd_decoder).await;
     } else if path.ends_with("gz") {
         ingest_json(
             verbose,
-            already_have,
+            ingest_info,
             flate2::bufread::GzDecoder::new(input),
         )
         .await;
     } else {
-        ingest_json(verbose, already_have, input).await;
+        ingest_json(verbose, ingest_info, input).await;
     };
 
     if !args.no_delete {

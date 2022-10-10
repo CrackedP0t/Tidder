@@ -1170,6 +1170,7 @@ dependencies = [
  "hyper",
  "log",
  "once_cell",
+ "pin-project-lite",
  "regex",
  "reqwest",
  "ron",

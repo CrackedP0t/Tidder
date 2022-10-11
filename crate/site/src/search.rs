@@ -1,4 +1,5 @@
 use bytes::Buf;
+use std::io::Read;
 use common::*;
 use futures::prelude::*;
 use http::StatusCode;
@@ -353,8 +354,7 @@ async fn post_search(mut form: FormData) -> Search {
             let mut data = Vec::<u8>::new();
 
             while let Some(b) = part.data().await {
-                let b = b?;
-                data.extend(b.bytes());
+                b?.reader().read_to_end(&mut data);
             }
 
             map.insert(name, data);

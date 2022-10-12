@@ -33,7 +33,7 @@ static POSTS_PER_MINUTE: AtomicU64 = AtomicU64::new(0);
 struct IngestInfo {
     month: u32,
     year: i32,
-    already_have: Option<BTreeSet<i64>>
+    already_have: Option<BTreeSet<i64>>,
 }
 
 async fn ingest_post(
@@ -200,7 +200,11 @@ async fn ingest_post(
 
 async fn ingest_json<R: Read + 'static>(
     verbose: bool,
-    IngestInfo {month, year, mut already_have}: IngestInfo,
+    IngestInfo {
+        month,
+        year,
+        mut already_have,
+    }: IngestInfo,
     json_stream: R,
 ) {
     let json_iter = Deserializer::from_reader(json_stream).into_iter::<Submission>();
@@ -282,13 +286,16 @@ async fn ingest_json<R: Read + 'static>(
             state_file.set_len(0).await.map_err(map_ue!()).unwrap();
             state_file
                 .write_all(
-                    ron::ser::to_string_pretty(&IngestState {
-                        as_of: Utc::now().naive_utc(),
-                        month,
-                        year,
-                        posts_per_minute: current_speed,
-                        limited: worker_limit::is_limited()
-                    }, pretty_config)
+                    ron::ser::to_string_pretty(
+                        &IngestState {
+                            as_of: Utc::now().naive_utc(),
+                            month,
+                            year,
+                            posts_per_minute: current_speed,
+                            limited: worker_limit::is_limited(),
+                        },
+                        pretty_config,
+                    )
                     .map_err(map_ue!())
                     .unwrap()
                     .as_bytes(),
@@ -306,8 +313,7 @@ async fn ingest_json<R: Read + 'static>(
 
     info!("Starting ingestion!");
 
-    worker_limit::BufferUnordered::new(
-    futures::stream::iter(json_iter.map(|post| {
+    worker_limit::BufferUnordered::new(futures::stream::iter(json_iter.map(|post| {
         let blacklist = blacklist.clone();
         let domains_in_flight = domains_in_flight.clone();
 
@@ -346,7 +352,7 @@ async fn main() -> Result<(), UserError> {
     tracing_subscriber::fmt::init();
 
     let args = Cli::parse();
-    
+
     let verbose = args.verbose;
     let path = args.path;
 
@@ -478,7 +484,7 @@ async fn main() -> Result<(), UserError> {
     let ingest_info = IngestInfo {
         month,
         year,
-        already_have
+        already_have,
     };
 
     if path.ends_with("bz2") {
@@ -490,12 +496,7 @@ async fn main() -> Result<(), UserError> {
         zstd_decoder.set_parameter(zstd::stream::raw::DParameter::WindowLogMax(31))?;
         ingest_json(verbose, ingest_info, zstd_decoder).await;
     } else if path.ends_with("gz") {
-        ingest_json(
-            verbose,
-            ingest_info,
-            flate2::bufread::GzDecoder::new(input),
-        )
-        .await;
+        ingest_json(verbose, ingest_info, flate2::bufread::GzDecoder::new(input)).await;
     } else {
         ingest_json(verbose, ingest_info, input).await;
     };

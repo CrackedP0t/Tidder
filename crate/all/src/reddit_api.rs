@@ -1,9 +1,9 @@
-use serde::Deserialize;
 use common::*;
+use serde::Deserialize;
 
 #[derive(Deserialize)]
 pub struct Child {
-    pub data: Submission
+    pub data: Submission,
 }
 
 #[derive(Deserialize)]
@@ -11,7 +11,7 @@ pub struct Data {
     pub children: Vec<Child>,
     pub after: String,
     pub dist: u32,
-    pub modhash: String
+    pub modhash: String,
 }
 
 #[derive(Deserialize)]

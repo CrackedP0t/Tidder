@@ -1,10 +1,10 @@
+use chrono::{DateTime, NaiveDateTime};
 use common::*;
 use futures::prelude::*;
 use std::borrow::Cow;
 use std::error::Error;
 use tokio::time::{Duration, Instant};
 use tracing_futures::Instrument;
-use chrono::{DateTime, NaiveDateTime};
 
 mod reddit_api;
 use reddit_api::SubredditListing;
@@ -29,7 +29,10 @@ impl RedditClient {
         }
     }
 
-    pub async fn get_sub_listing(&mut self, url: &str) -> Result<(SubredditListing, NaiveDateTime), UserError> {
+    pub async fn get_sub_listing(
+        &mut self,
+        url: &str,
+    ) -> Result<(SubredditListing, NaiveDateTime), UserError> {
         tokio::time::delay_until(self.next_request).await;
 
         let mut req = self.client.get(url);
@@ -57,9 +60,7 @@ impl RedditClient {
                 self.last_modhash = Some(listing.data.modhash.clone());
                 Ok((listing, date))
             }
-            Err(e) => {
-                Err(e.into())
-            }
+            Err(e) => Err(e.into()),
         }
     }
 }
@@ -73,9 +74,7 @@ async fn ingest_post(post: Submission) -> bool {
     };
 
     let image_id = match save_res {
-        Ok(hash_gotten) => {
-            Ok(hash_gotten.id)
-        }
+        Ok(hash_gotten) => Ok(hash_gotten.id),
         Err(ue) => match ue.source {
             Source::Internal => {
                 eprintln!(
@@ -195,7 +194,10 @@ async fn get_latest(client: &mut RedditClient) -> Result<(), UserError> {
         .await;
 
         if old {
-            info!("found posts we already have after {} posts; going to start!", count);
+            info!(
+                "found posts we already have after {} posts; going to start!",
+                count
+            );
             break Ok(());
         }
 

@@ -33,8 +33,12 @@ pub static EXT_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"(?i)\W(?:png|jpe?g|gif|webp|p[bgpn]m|tiff?|bmp|ico|hdr)\b").unwrap());
 pub static URL_RE: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^(?i)https?://(?:[a-z0-9.-]+|\[[0-9a-f:]+\])(?:$|[:/?#])").unwrap());
-pub static PG_POOL: Lazy<Pool> =
-    Lazy::new(|| SECRETS.postgres.create_pool(Some(Runtime::Tokio1), tokio_postgres::NoTls).unwrap());
+pub static PG_POOL: Lazy<Pool> = Lazy::new(|| {
+    SECRETS
+        .postgres
+        .create_pool(Some(Runtime::Tokio1), tokio_postgres::NoTls)
+        .unwrap()
+});
 pub static COMMON_HEADERS: Lazy<HeaderMap<HeaderValue>> = Lazy::new(|| {
     let mut headers = HeaderMap::new();
     headers.insert(header::USER_AGENT, HeaderValue::from_static(USER_AGENT));
@@ -461,7 +465,7 @@ pub struct IngestState {
     pub month: u32,
     pub year: i32,
     pub posts_per_minute: u64,
-    pub limited: bool
+    pub limited: bool,
 }
 
 pub mod secrets {
@@ -508,7 +512,7 @@ pub mod config {
     pub struct TimeLimits {
         pub start: chrono::NaiveTime,
         pub end: chrono::NaiveTime,
-        pub count: usize
+        pub count: usize,
     }
 
     #[derive(Deserialize)]

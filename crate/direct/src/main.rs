@@ -133,12 +133,14 @@ async fn get_100(
 
     let info = res.error_for_status()?.json::<info::Info>().await?;
 
-    Ok((wait, info
-        .data
-        .children
-        .into_iter()
-        .map(|c| c.data.finalize().unwrap())
-        .collect()))
+    Ok((
+        wait,
+        info.data
+            .children
+            .into_iter()
+            .map(|c| c.data.finalize().unwrap())
+            .collect(),
+    ))
 }
 
 #[tokio::main]
@@ -147,10 +149,7 @@ async fn main() -> Result<(), UserError> {
 
     let start_id = i64::from_str_radix(&std::env::args().nth(1).unwrap(), 36)?;
 
-    let mut getter_fut = Box::pin(tokio::spawn(get_100(
-        None,
-        start_id..start_id + 100,
-    )));
+    let mut getter_fut = Box::pin(tokio::spawn(get_100(None, start_id..start_id + 100)));
     let mut this_id = start_id;
     let get_stream = poll_fn(|ctx| match Future::poll(getter_fut.as_mut(), ctx) {
         Poll::Pending => Poll::Pending,
@@ -191,11 +190,12 @@ async fn main() -> Result<(), UserError> {
 
                 Poll::Ready(Some(futures::stream::iter(this_100)))
             } else {
-                info!("Got no posts within {} ({}) and {} ({})",
-                      this_id,
-                      Base36::new(this_id),
-                      this_id + 99,
-                      Base36::new(this_id + 99)
+                info!(
+                    "Got no posts within {} ({}) and {} ({})",
+                    this_id,
+                    Base36::new(this_id),
+                    this_id + 99,
+                    Base36::new(this_id + 99)
                 );
 
                 this_id += 100;

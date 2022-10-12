@@ -1,19 +1,19 @@
 use bytes::Buf;
-use std::io::Read;
+use chrono::offset::Utc;
+use chrono::Duration;
 use common::*;
 use futures::prelude::*;
 use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error as _;
+use std::io::Read;
 use std::time::Instant;
 use std::vec::Vec;
 use tera::Context;
 use tokio_postgres::error::{DbError, SqlState};
 use url::Url;
 use warp::multipart::FormData;
-use chrono::offset::Utc;
-use chrono::Duration;
 
 #[derive(Deserialize)]
 pub struct SearchQuery {
@@ -110,18 +110,20 @@ impl Search {
             Err(e) => {
                 warn!("Error reading ingest state file: {}", e);
                 None
-            },
+            }
             Ok(s) => match ron::from_str::<IngestState>(&s) {
                 Err(e) => {
-                        warn!("Error parsing ingest state file: {}", e);
-                        None
-                }
-                Ok(s) => if (Utc::now().naive_utc() - s.as_of) < Duration::minutes(2) {
-                    Some(s)
-                } else {
+                    warn!("Error parsing ingest state file: {}", e);
                     None
-                },
-            }
+                }
+                Ok(s) => {
+                    if (Utc::now().naive_utc() - s.as_of) < Duration::minutes(2) {
+                        Some(s)
+                    } else {
+                        None
+                    }
+                }
+            },
         };
 
         Search {

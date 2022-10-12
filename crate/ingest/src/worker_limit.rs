@@ -1,11 +1,11 @@
-use futures::stream::{Fuse, FuturesUnordered, StreamExt};
+use common::CONFIG;
 use core::fmt;
 use core::pin::Pin;
 use futures::future::Future;
+use futures::stream::{Fuse, FuturesUnordered, StreamExt};
 use futures::stream::{FusedStream, Stream};
 use futures::task::{Context, Poll};
 use pin_project_lite::pin_project;
-use common::CONFIG;
 
 pub fn is_limited() -> bool {
     let now = chrono::Local::now().time();

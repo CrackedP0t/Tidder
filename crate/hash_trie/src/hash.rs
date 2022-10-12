@@ -4,22 +4,16 @@ pub fn get_bit(hash: u64, pos: u8) -> u8 {
 
 pub struct HashBits {
     hash: u64,
-    pos: u8
+    pos: u8,
 }
 
 impl HashBits {
     pub fn new(hash: u64) -> Self {
-        Self {
-            hash,
-            pos: 0
-        }
+        Self { hash, pos: 0 }
     }
 
     pub fn new_at(hash: u64, pos: u8) -> Self {
-        Self {
-            hash,
-            pos
-        }
+        Self { hash, pos }
     }
 }
 

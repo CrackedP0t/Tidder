@@ -105,7 +105,9 @@ impl HashTreeStorage for FileMap {
         out[0..4].copy_from_slice(&zero.to_le_bytes());
         out[4..8].copy_from_slice(&one.to_le_bytes());
 
-        self.file.write_all_at(&out, self.len() as u64 * NODE_SIZE as u64).unwrap();
+        self.file
+            .write_all_at(&out, self.len() as u64 * NODE_SIZE as u64)
+            .unwrap();
 
         std::mem::replace(&mut self.mmap, unsafe {
             MmapMut::map_mut(&self.file).unwrap()
@@ -392,11 +394,7 @@ impl<'a, S: HashTreeStorage> Iterator for HashIter<'a, S> {
                         index
                     }
                     (zero_index, one_index) => {
-                        self.branches.push((
-                            hash | 1 << pos,
-                            pos + 1,
-                            one_index,
-                        ));
+                        self.branches.push((hash | 1 << pos, pos + 1, one_index));
                         zero_index
                     }
                 };

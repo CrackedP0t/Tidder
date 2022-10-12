@@ -76,18 +76,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ip: std::net::IpAddr = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "127.0.0.1".to_string()).parse()
+        .unwrap_or_else(|| "127.0.0.1".to_string())
+        .parse()
         .map_err(|_| "Invalid IP address")?;
     let port = std::env::args()
-            .nth(2)
-            .unwrap_or_else(|| "7878".to_string()).parse()
-            .map_err(|_| "Invalid port number")?;
+        .nth(2)
+        .unwrap_or_else(|| "7878".to_string())
+        .parse()
+        .map_err(|_| "Invalid port number")?;
 
     println!("Serving on http://{}:{}", ip, port);
 
-    warp::serve(router)
-        .run((ip, port))
-        .await;
+    warp::serve(router).run((ip, port)).await;
 
     Ok(())
 }

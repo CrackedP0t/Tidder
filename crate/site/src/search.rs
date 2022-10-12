@@ -12,6 +12,8 @@ use tera::Context;
 use tokio_postgres::error::{DbError, SqlState};
 use url::Url;
 use warp::multipart::FormData;
+use chrono::offset::Utc;
+use chrono::Duration;
 
 #[derive(Deserialize)]
 pub struct SearchQuery {
@@ -98,10 +100,30 @@ struct Search {
     error: Option<UserError>,
     upload: bool,
     max_distance: u8,
+    ingest_state: Option<IngestState>,
 }
 
-impl Default for Search {
-    fn default() -> Search {
+impl Search {
+    async fn default() -> Search {
+        let state_string = tokio::fs::read_to_string(&CONFIG.state_file).await;
+        let state = match state_string {
+            Err(e) => {
+                warn!("Error reading ingest state file: {}", e);
+                None
+            },
+            Ok(s) => match ron::from_str::<IngestState>(&s) {
+                Err(e) => {
+                        warn!("Error parsing ingest state file: {}", e);
+                        None
+                }
+                Ok(s) => if (Utc::now().naive_utc() - s.as_of) < Duration::minutes(2) {
+                    Some(s)
+                } else {
+                    None
+                },
+            }
+        };
+
         Search {
             form: Form::default(),
             default_form: Form::default(),
@@ -109,6 +131,7 @@ impl Default for Search {
             error: None,
             upload: false,
             max_distance: CONFIG.max_distance,
+            ingest_state: state,
         }
     }
 }
@@ -328,14 +351,14 @@ async fn get_search(qs: SearchQuery) -> Search {
             error: None,
             findings,
             upload: false,
-            ..Default::default()
+            ..Search::default().await
         },
         Err(error) => Search {
             form: err_form,
             error: Some(error),
             findings: None,
             upload: false,
-            ..Default::default()
+            ..Search::default().await
         },
     }
 }
@@ -354,7 +377,7 @@ async fn post_search(mut form: FormData) -> Search {
             let mut data = Vec::<u8>::new();
 
             while let Some(b) = part.data().await {
-                b?.reader().read_to_end(&mut data);
+                b?.reader().read_to_end(&mut data)?;
             }
 
             map.insert(name, data);
@@ -406,7 +429,7 @@ async fn post_search(mut form: FormData) -> Search {
         error,
         findings,
         upload: true,
-        ..Default::default()
+        ..Search::default().await
     }
 }
 

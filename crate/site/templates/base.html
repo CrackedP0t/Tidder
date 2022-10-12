@@ -65,9 +65,12 @@
         </style>
     </head>
     <body>
+        {% if ingest_state %}
+        {% set months = ["January", "February", "March", "April", "May", "June","July", "August", "September", "October", "November", "December"] %}
         <div class="progress-box top-box">
-            <span>Currently searches through all posts before 2020</span>
+            Currently ingesting {{ ingest_state.posts_per_minute }} posts per minute from {{ months[ingest_state.month] }} of {{ ingest_state.year }}
         </div>
+        {% endif %}
         <div class="info-box top-box">
             <span>Made by Elaina Martineau</span>
             <span><a href="https://github.com/CrackedP0t">GitHub</a> • <a href="https://linkedin.com/in/elainamartineau">LinkedIn</a></span>

@@ -10,7 +10,6 @@ use futures::prelude::*;
 use futures::task::Poll;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use serde::Serialize;
 use serde_json::Deserializer;
 use std::borrow::Cow;
 use std::collections::BTreeSet;
@@ -250,28 +249,11 @@ async fn ingest_json<R: Read + 'static>(
     });
 
     tokio::spawn(async move {
-        #[derive(Serialize)]
-        struct State {
-            as_of: NaiveDateTime,
-            month: u32,
-            year: i32,
-            posts_per_minute: u64,
-            limited: bool
-        }
-
         let minute = Duration::from_secs(60);
 
-        let mut count_interval = interval_at(Instant::now() + minute, minute);
-        let mut state_file = tokio::fs::OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .create(true)
-            .open(&CONFIG.state_file)
-            .await
-            .map_err(map_ue!())
-            .unwrap();
         let mut previous_count = 0u64;
         let mut previous_time = Instant::now();
+        let mut count_interval = interval_at(Instant::now() + minute, minute);
 
         loop {
             count_interval.tick().await;
@@ -287,16 +269,26 @@ async fn ingest_json<R: Read + 'static>(
 
             POSTS_PER_MINUTE.store(current_speed, Ordering::SeqCst);
 
+            let pretty_config = ron::ser::PrettyConfig::new();
+
+            let mut state_file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .truncate(true)
+                .create(true)
+                .open(&CONFIG.state_file)
+                .await
+                .map_err(map_ue!())
+                .unwrap();
             state_file.set_len(0).await.map_err(map_ue!()).unwrap();
             state_file
                 .write_all(
-                    ron::ser::to_string(&State {
+                    ron::ser::to_string_pretty(&IngestState {
                         as_of: Utc::now().naive_utc(),
                         month,
                         year,
                         posts_per_minute: current_speed,
                         limited: worker_limit::is_limited()
-                    })
+                    }, pretty_config)
                     .map_err(map_ue!())
                     .unwrap()
                     .as_bytes(),

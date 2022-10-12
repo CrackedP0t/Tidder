@@ -455,6 +455,15 @@ macro_rules! setup_logging {
     };
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct IngestState {
+    pub as_of: NaiveDateTime,
+    pub month: u32,
+    pub year: i32,
+    pub posts_per_minute: u64,
+    pub limited: bool
+}
+
 pub mod secrets {
     use failure::Error;
     use serde::Deserialize;

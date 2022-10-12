@@ -20,7 +20,7 @@ struct UEReject(UserError);
 impl warp::reject::Reject for UEReject {}
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
     Lazy::force(&render::TERA);
@@ -74,18 +74,20 @@ async fn main() {
         ))
         .with(warp::log("site"));
 
-    let ip = std::env::args()
+    let ip: std::net::IpAddr = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "127.0.0.1".to_string());
-
+        .unwrap_or_else(|| "127.0.0.1".to_string()).parse()
+        .map_err(|_| "Invalid IP address")?;
     let port = std::env::args()
-        .nth(2)
-        .map(|p| p.parse().unwrap())
-        .unwrap_or(7878);
+            .nth(2)
+            .unwrap_or_else(|| "7878".to_string()).parse()
+            .map_err(|_| "Invalid port number")?;
 
     println!("Serving on http://{}:{}", ip, port);
 
     warp::serve(router)
-        .run((ip.parse::<std::net::IpAddr>().unwrap(), port))
+        .run((ip, port))
         .await;
+
+    Ok(())
 }

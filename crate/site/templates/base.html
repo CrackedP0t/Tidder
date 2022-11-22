@@ -67,8 +67,9 @@
     <body>
         {% if ingest_state %}
         {% set months = ["January", "February", "March", "April", "May", "June","July", "August", "September", "October", "November", "December"] %}
+        {% set month_index = ingest_state.month - 1 %}
         <div class="progress-box top-box">
-            Currently ingesting {{ ingest_state.posts_per_minute }} posts per minute from {{ months[ingest_state.month] }} of {{ ingest_state.year }}
+            Currently ingesting {{ ingest_state.posts_per_minute }} posts per minute from {{ months[month_index] }} of {{ ingest_state.year }} {% if ingest_state.limited %}(throttled){% endif %}
         </div>
         {% endif %}
         <div class="info-box top-box">
